@@ -1,0 +1,283 @@
+pub mod metadata;
+pub mod ssa_manager;
+pub mod visitor;
+
+use super::ir::{
+    BasicBlock, BlockId, Function, Instruction, InstructionKind, SourceLocation, Type, Value,
+};
+use rustpython_ast as ast;
+use std::collections::{HashMap, HashSet};
+
+pub struct CFGBuilder {
+    pub func: Function,
+    pub current_block: BlockId,
+    pub current_location: Option<SourceLocation>,
+    pub type_aliases: HashMap<String, String>,
+    // Maps variable name -> (BlockId -> Value)
+    pub variable_defs: HashMap<String, HashMap<BlockId, Value>>,
+    // Track Phi nodes that need to be filled once all predecessors are processed (for loops)
+    pub incomplete_phis: HashMap<BlockId, HashMap<String, Value>>,
+    pub sealed_blocks: HashSet<BlockId>,
+    // Stack of (header_block, exit_block) for loops
+    pub loop_stack: Vec<(BlockId, BlockId)>,
+}
+impl CFGBuilder {
+    pub fn get_type_size(&self, ty: &Type) -> usize {
+        ty.size(&self.func.struct_layouts)
+    }
+
+    pub fn get_type_align(&self, ty: &Type) -> usize {
+        ty.align(&self.func.struct_layouts)
+    }
+
+    pub fn get_field_offset(&self, struct_name: &str, field_name: &str) -> Option<usize> {
+        let fields = self.func.struct_layouts.get(struct_name)?;
+        let mut offset = 0;
+        for (f_name, f_ty) in fields {
+            let align = f_ty.align(&self.func.struct_layouts);
+            offset = (offset + align - 1) & !(align - 1);
+            if f_name == field_name {
+                return Some(offset);
+            }
+            offset += f_ty.size(&self.func.struct_layouts);
+        }
+        None
+    }
+
+    pub fn new(
+        name: String,
+        layouts: HashMap<String, Vec<(String, String)>>,
+        type_aliases: HashMap<String, String>,
+    ) -> Self {
+        let mut struct_layouts = HashMap::new();
+        for (s_name, fields) in layouts {
+            let mut field_types = Vec::new();
+            for (f_name, f_ty_str) in fields {
+                let ty = match f_ty_str.as_str() {
+                    "i8" => Type::I8,
+                    "u8" => Type::U8,
+                    "i16" => Type::I16,
+                    "u16" => Type::U16,
+                    "i32" => Type::I32,
+                    "u32" => Type::U32,
+                    "i64" => Type::I64,
+                    "u64" => Type::U64,
+                    "f32" => Type::F32,
+                    "f64" => Type::F64,
+                    "bool" => Type::Bool,
+                    _ => {
+                        if f_ty_str == "unknown" {
+                            Type::Unknown
+                        } else {
+                            Type::Struct(f_ty_str.clone())
+                        }
+                    }
+                };
+                field_types.push((f_name, ty));
+            }
+            struct_layouts.insert(s_name, field_types);
+        }
+
+        let mut builder = Self {
+            func: Function {
+                struct_layouts,
+                ..Function::new(name)
+            },
+            current_block: BlockId(0),
+            current_location: None,
+            type_aliases,
+            variable_defs: HashMap::new(),
+            incomplete_phis: HashMap::new(),
+            sealed_blocks: HashSet::new(),
+            loop_stack: Vec::new(),
+        };
+
+        let entry = builder.create_block();
+        builder.current_block = entry;
+        builder.sealed_blocks.insert(entry);
+        builder
+    }
+
+    pub fn build(&mut self, suite: ast::Suite) -> Result<(), String> {
+        for stmt in suite {
+            if let ast::Stmt::FunctionDef(s) = stmt {
+                if s.name.as_str() == self.func.name {
+                    self.visit_function_def(s)?;
+                    return Ok(());
+                }
+            }
+        }
+        Err(format!("Function '{}' not found in source", self.func.name))
+    }
+
+    // SSA Management Methods
+    pub fn write_variable(&mut self, variable: String, block: BlockId, value: Value) {
+        self.variable_defs
+            .entry(variable)
+            .or_default()
+            .insert(block, value);
+    }
+
+    pub fn read_variable(&mut self, variable: String, block: BlockId) -> Result<Value, String> {
+        if let Some(defs) = self.variable_defs.get(&variable) {
+            if let Some(val) = defs.get(&block) {
+                return Ok(*val);
+            }
+        }
+        self.read_variable_recursive(variable, block)
+    }
+
+    pub fn read_variable_recursive(
+        &mut self,
+        variable: String,
+        block: BlockId,
+    ) -> Result<Value, String> {
+        let mut val: Value;
+
+        if !self.sealed_blocks.contains(&block) {
+            val = self.func.next_value();
+            self.incomplete_phis
+                .entry(block)
+                .or_default()
+                .insert(variable.clone(), val);
+            self.add_instruction_to_block(block, InstructionKind::Phi(val, HashMap::new()));
+
+            // Try to set initial type from current definition if available
+            if let Some(defs) = self.variable_defs.get(&variable) {
+                if let Some(prev_val) = defs.values().next() {
+                    let ty = self.func.get_type(*prev_val);
+                    if ty != Type::Unknown {
+                        self.func.set_type(val, ty);
+                    }
+                }
+            }
+        } else {
+            let predecessors = self.get_predecessors(block);
+            if predecessors.is_empty() {
+                return Err(format!("Undefined variable: {}", variable));
+            } else if predecessors.len() == 1 {
+                val = self.read_variable(variable.clone(), predecessors[0])?;
+            } else {
+                val = self.func.next_value();
+                self.write_variable(variable.clone(), block, val);
+                self.add_instruction_to_block(block, InstructionKind::Phi(val, HashMap::new()));
+                val = self.add_phi_operands(variable.clone(), val, block)?;
+            }
+        }
+
+        self.write_variable(variable, block, val);
+        Ok(val)
+    }
+
+    pub fn add_phi_operands(
+        &mut self,
+        variable: String,
+        phi_val: Value,
+        block: BlockId,
+    ) -> Result<Value, String> {
+        let predecessors = self.get_predecessors(block);
+        let mut operands = HashMap::new();
+        let mut phi_type = Type::Unknown;
+
+        for pred in predecessors {
+            let val = self.read_variable(variable.clone(), pred)?;
+            operands.insert(pred, val);
+
+            if phi_type == Type::Unknown {
+                phi_type = self.func.get_type(val);
+            }
+        }
+
+        if phi_type != Type::Unknown {
+            self.func.set_type(phi_val, phi_type);
+        }
+
+        if let Some(b) = self.func.blocks.iter_mut().find(|b| b.id == block) {
+            for inst in &mut b.instructions {
+                if let InstructionKind::Phi(v, ops) = &mut inst.kind {
+                    if *v == phi_val {
+                        *ops = operands;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(phi_val)
+    }
+
+    pub fn seal_block(&mut self, block: BlockId) -> Result<(), String> {
+        self.sealed_blocks.insert(block);
+        let phis = self.incomplete_phis.remove(&block).unwrap_or_default();
+        for (variable, phi_val) in phis {
+            self.add_phi_operands(variable, phi_val, block)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_predecessors(&self, block_id: BlockId) -> Vec<BlockId> {
+        self.func
+            .blocks
+            .iter()
+            .find(|b| b.id == block_id)
+            .map(|b| b.predecessors.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn add_instruction(&mut self, kind: InstructionKind) {
+        let block_id = self.current_block;
+        self.add_instruction_to_block(block_id, kind);
+    }
+
+    pub fn add_instruction_to_block(&mut self, block_id: BlockId, kind: InstructionKind) {
+        if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == block_id) {
+            let inst = Instruction::new(kind, self.current_location);
+            if let InstructionKind::Phi(_, _) = &inst.kind {
+                block.instructions.insert(0, inst);
+            } else {
+                block.instructions.push(inst);
+            }
+        }
+    }
+
+    pub fn create_block(&mut self) -> BlockId {
+        let id = self.func.next_block();
+        self.func.blocks.push(BasicBlock {
+            id,
+            instructions: Vec::new(),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        });
+        id
+    }
+
+    pub fn start_block(&mut self, id: BlockId) {
+        self.current_block = id;
+    }
+
+    pub fn link_blocks(&mut self, from: BlockId, to: BlockId) {
+        if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == from) {
+            if !block.successors.contains(&to) {
+                block.successors.push(to);
+            }
+        }
+        if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == to) {
+            if !block.predecessors.contains(&from) {
+                block.predecessors.push(from);
+            }
+        }
+    }
+
+    pub fn is_terminated(&self, block_id: BlockId) -> bool {
+        if let Some(block) = self.func.blocks.iter().find(|b| b.id == block_id) {
+            if let Some(last) = block.instructions.last() {
+                return matches!(
+                    &last.kind,
+                    InstructionKind::Jump(_)
+                        | InstructionKind::Branch(_, _, _)
+                        | InstructionKind::Return(_)
+                );
+            }
+        }
+        false
+    }
+}

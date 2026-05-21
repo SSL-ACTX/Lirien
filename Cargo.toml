@@ -1,0 +1,39 @@
+[package]
+name = "lila"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lila_core"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["extension-module", "auto-initialize"] }
+rustpython-parser = "0.4"
+rustpython-ast = "0.4"
+cranelift = "0.100"
+cranelift-jit = "0.100"
+cranelift-module = "0.100"
+cranelift-native = "0.100"
+z3 = "0.12"
+target-lexicon = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+lazy_static = "1.4"
+libc = "0.2.186"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = 0
+strip = true
+panic = "unwind"
+incremental = true
+lto = false
+codegen-units = 256

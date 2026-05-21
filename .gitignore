@@ -1,0 +1,12 @@
+target
+.env
+*.txt
+conductor/
+/fstar/
+fstar*.tar.gz
+.zig-cache/
+zig-out/
+.venv/*
+.venv
+__pycache__
+__pycache__/*

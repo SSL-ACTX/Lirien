@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "lila"
+version = "0.1.0"
+description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift"
+requires-python = ">=3.8"
+dependencies = [
+    "typing_extensions; python_version < '3.9'",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "lila.lila_core"
