@@ -5,7 +5,7 @@ pub mod z3;
 use self::z3::verify_with_context;
 use crate::ssa::analysis::interval;
 use crate::ssa::ir::Function;
-use ::z3::{Config, Context, Solver};
+use ::z3::{Context, Solver};
 use tracing::info;
 
 pub fn verify(func: &Function) -> Result<(), String> {
@@ -19,9 +19,8 @@ pub fn verify(func: &Function) -> Result<(), String> {
     let analysis_results = interval::analyze(func);
 
     // 3. Logic Verification with Z3
-    let cfg = Config::new();
-    let ctx = Context::new(&cfg);
-    let solver = Solver::new(&ctx);
+    let ctx = Context::thread_local();
+    let solver = Solver::new();
 
     verify_with_context(&ctx, &solver, func, analysis_results)
 }

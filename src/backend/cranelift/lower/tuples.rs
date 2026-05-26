@@ -1,5 +1,5 @@
 use super::{get_val, CodegenContext};
-use crate::ssa::ir::{InstructionKind, Value as SsaValue};
+use crate::ssa::ir::InstructionKind;
 use cranelift::prelude::*;
 use cranelift_module::Module;
 
@@ -41,10 +41,10 @@ pub fn lower<M: Module>(
 
             if let crate::ssa::ir::Type::Tuple(elt_types) = tuple_ty {
                 let mut offset = 0;
-                for i in 0..*idx {
-                    let elt_align = elt_types[i].align(&ctx.ssa_func.struct_layouts);
+                for elt_ty in elt_types.iter().take(*idx) {
+                    let elt_align = elt_ty.align(&ctx.ssa_func.struct_layouts);
                     offset = (offset + elt_align - 1) & !(elt_align - 1);
-                    offset += elt_types[i].size(&ctx.ssa_func.struct_layouts);
+                    offset += elt_ty.size(&ctx.ssa_func.struct_layouts);
                 }
                 let dest_ty = &elt_types[*idx];
                 let dest_align = dest_ty.align(&ctx.ssa_func.struct_layouts);

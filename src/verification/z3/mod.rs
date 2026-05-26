@@ -1,7 +1,7 @@
 use crate::ssa::analysis::interval::{Bound, IntervalAnalysisResults};
 use crate::ssa::ir::{BlockId, Function, InstructionKind, Value};
 use std::collections::HashMap;
-use z3::ast::{Array, Ast, Bool, Int, Real, BV};
+use z3::ast::{Array, Bool, Float, Int, BV};
 use z3::{Context, Solver};
 
 pub mod arithmetic;
@@ -9,22 +9,22 @@ pub mod control_flow;
 pub mod memory;
 pub mod tuples;
 
-pub struct TranslationContext<'ctx> {
-    pub ctx: &'ctx Context,
-    pub solver: &'ctx Solver<'ctx>,
-    pub func: &'ctx Function,
-    pub z3_ints: HashMap<Value, Int<'ctx>>, // Kept for refinement parsing if needed, but we will minimize its use
-    pub z3_reals: HashMap<Value, Real<'ctx>>,
-    pub z3_bvs: HashMap<Value, BV<'ctx>>,
-    pub z3_arrays: HashMap<Value, Array<'ctx>>,
+pub struct TranslationContext<'a> {
+    pub ctx: &'a Context,
+    pub solver: &'a Solver,
+    pub func: &'a Function,
+    pub z3_ints: HashMap<Value, Int>, // Kept for refinement parsing
+    pub z3_floats: HashMap<Value, Float>,
+    pub z3_bvs: HashMap<Value, BV>,
+    pub z3_arrays: HashMap<Value, Array>,
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
-    pub block_conditions: HashMap<BlockId, Bool<'ctx>>,
-    pub edge_conditions: HashMap<(BlockId, BlockId), Bool<'ctx>>,
+    pub block_conditions: HashMap<BlockId, Bool>,
+    pub edge_conditions: HashMap<(BlockId, BlockId), Bool>,
 }
 
-pub fn verify_with_context<'ctx>(
-    ctx: &'ctx Context,
-    solver: &Solver<'ctx>,
+pub fn verify_with_context(
+    ctx: &Context,
+    solver: &Solver,
     func: &Function,
     analysis: IntervalAnalysisResults,
 ) -> Result<(), String> {
@@ -33,7 +33,7 @@ pub fn verify_with_context<'ctx>(
         solver,
         func,
         z3_ints: HashMap::new(),
-        z3_reals: HashMap::new(),
+        z3_floats: HashMap::new(),
         z3_bvs: HashMap::new(),
         z3_arrays: HashMap::new(),
         tuple_mappings: HashMap::new(),
@@ -50,10 +50,10 @@ pub fn verify_with_context<'ctx>(
         {
             if let Some(bit_width) = ty.int_bit_width() {
                 if let Bound::Finite(low) = interval.low {
-                    solver.assert(&z3_bv.bvsge(&BV::from_i64(ctx, low as i64, bit_width)));
+                    solver.assert(z3_bv.bvsge(BV::from_i64(low as i64, bit_width)));
                 }
                 if let Bound::Finite(high) = interval.high {
-                    solver.assert(&z3_bv.bvsle(&BV::from_i64(ctx, high as i64, bit_width)));
+                    solver.assert(z3_bv.bvsle(BV::from_i64(high as i64, bit_width)));
                 }
             }
         }
@@ -61,22 +61,20 @@ pub fn verify_with_context<'ctx>(
 
     // Declare Booleans for all blocks and known edges
     for block in &func.blocks {
-        let b_cond = Bool::new_const(ctx, format!("block_{}", block.id.0));
+        let b_cond = Bool::new_const(format!("block_{}", block.id.0));
         t_ctx.block_conditions.insert(block.id, b_cond);
 
         // Find outgoing edges
         if let Some(last_inst) = block.instructions.last() {
             match &last_inst.kind {
                 InstructionKind::Jump(target) => {
-                    let e_cond = Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, target.0));
+                    let e_cond = Bool::new_const(format!("edge_{}_{}", block.id.0, target.0));
                     t_ctx.edge_conditions.insert((block.id, *target), e_cond);
                 }
                 InstructionKind::Branch(_, t_block, f_block) => {
-                    let et_cond =
-                        Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, t_block.0));
+                    let et_cond = Bool::new_const(format!("edge_{}_{}", block.id.0, t_block.0));
                     t_ctx.edge_conditions.insert((block.id, *t_block), et_cond);
-                    let ef_cond =
-                        Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, f_block.0));
+                    let ef_cond = Bool::new_const(format!("edge_{}_{}", block.id.0, f_block.0));
                     t_ctx.edge_conditions.insert((block.id, *f_block), ef_cond);
                 }
                 _ => {}
@@ -85,12 +83,12 @@ pub fn verify_with_context<'ctx>(
     }
 
     // Assert Structural CFG Constraints
-    let true_cond = Bool::from_bool(ctx, true);
-    let false_cond = Bool::from_bool(ctx, false);
+    let true_cond = Bool::from_bool(true);
+    let false_cond = Bool::from_bool(false);
 
     // Entry block is always true
     if let Some(entry_cond) = t_ctx.block_conditions.get(&func.entry_block) {
-        solver.assert(&entry_cond._eq(&true_cond));
+        solver.assert(entry_cond.eq(&true_cond));
     }
 
     for block in &func.blocks {
@@ -106,10 +104,10 @@ pub fn verify_with_context<'ctx>(
                 }
             }
             if incoming_edges.is_empty() {
-                solver.assert(&path_cond._eq(&false_cond));
+                solver.assert(path_cond.eq(&false_cond));
             } else {
-                let or_expr = Bool::or(ctx, &incoming_edges.iter().map(|&e| e).collect::<Vec<_>>());
-                solver.assert(&path_cond._eq(&or_expr));
+                let or_expr = Bool::or(&incoming_edges.to_vec());
+                solver.assert(path_cond.eq(&or_expr));
             }
         }
     }
@@ -123,16 +121,13 @@ pub fn verify_with_context<'ctx>(
                 if let Some(bit_width) = ty.int_bit_width() {
                     if let Bound::Finite(low) = interval.low {
                         solver.assert(
-                            &path_cond
-                                .implies(&z3_bv.bvsge(&BV::from_i64(ctx, low as i64, bit_width))),
+                            path_cond.implies(z3_bv.bvsge(BV::from_i64(low as i64, bit_width))),
                         );
                     }
                     if let Bound::Finite(high) = interval.high {
-                        solver.assert(&path_cond.implies(&z3_bv.bvsle(&BV::from_i64(
-                            ctx,
-                            high as i64,
-                            bit_width,
-                        ))));
+                        solver.assert(
+                            path_cond.implies(z3_bv.bvsle(BV::from_i64(high as i64, bit_width))),
+                        );
                     }
                 }
             }

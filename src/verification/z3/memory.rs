@@ -1,10 +1,10 @@
 use super::TranslationContext;
 use crate::ssa::ir::{Instruction, InstructionKind, Type, Value};
 use crate::verification::refinement_parser::{parse_array_refinement, parse_refinement};
-use z3::ast::{Array, Ast, Bool, Real, BV};
+use z3::ast::{Array, Bool, Float, BV};
 use z3::{SatResult, Sort};
 
-pub fn init_values<'ctx>(ctx: &mut TranslationContext<'ctx>) -> Result<(), String> {
+pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
     for i in 0..ctx.func.value_count {
         let val = Value(i);
         let ty = ctx.func.get_type(val);
@@ -34,43 +34,49 @@ pub fn init_values<'ctx>(ctx: &mut TranslationContext<'ctx>) -> Result<(), Strin
 
         if is_mem_obj {
             let value_sort = if inner_ty.is_float() {
-                Sort::real(ctx.ctx)
+                if matches!(inner_ty, Type::F32) {
+                    Sort::float(8, 24)
+                } else {
+                    Sort::float(11, 53)
+                }
             } else {
                 let bit_width = inner_ty.int_bit_width().unwrap_or(64);
-                Sort::bitvector(ctx.ctx, bit_width)
+                Sort::bitvector(bit_width)
             };
-            let z3_val =
-                Array::new_const(ctx.ctx, format!("v{}", i), &Sort::int(ctx.ctx), &value_sort);
+            let z3_val = Array::new_const(format!("v{}", i), &Sort::int(), &value_sort);
             if let Some(refinement) = ctx.func.refinements.get(&val) {
-                let ref_expr =
-                    parse_array_refinement(ctx.ctx, refinement, &z3_val, inner_ty.is_float())?;
-                ctx.solver.assert(&ref_expr);
+                let ref_expr = parse_array_refinement(refinement, &z3_val, inner_ty.is_float())?;
+                ctx.solver.assert(ref_expr);
             }
 
             ctx.z3_arrays.insert(val, z3_val);
         } else if let Type::Buffer(_) = ty {
-            let z3_len = BV::new_const(ctx.ctx, format!("v{}_len", i), 64);
-            let zero = BV::from_i64(ctx.ctx, 0, 64);
-            ctx.solver.assert(&z3_len.bvsge(&zero));
+            let z3_len = BV::new_const(format!("v{}_len", i), 64);
+            let zero = BV::from_i64(0, 64);
+            ctx.solver.assert(z3_len.bvsge(&zero));
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let z3_int = z3_len.to_int(true);
-                let ref_expr = parse_refinement(ctx.ctx, refinement, &z3_int)?;
-                ctx.solver.assert(&ref_expr);
+                let ref_expr = parse_refinement(refinement, &z3_int)?;
+                ctx.solver.assert(ref_expr);
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_len);
         } else if ty.is_float() {
-            let z3_val = Real::new_const(ctx.ctx, format!("v{}", i));
+            let z3_val = if matches!(ty, Type::F32) {
+                Float::new_const_float32(format!("v{}", i))
+            } else {
+                Float::new_const_double(format!("v{}", i))
+            };
             if let Some(refinement) = ctx.func.refinements.get(&val) {
-                let ref_expr = crate::verification::refinement_parser::parse_real_refinement(
-                    ctx.ctx, refinement, &z3_val,
+                let ref_expr = crate::verification::refinement_parser::parse_float_refinement(
+                    refinement, &z3_val,
                 )?;
-                ctx.solver.assert(&ref_expr);
+                ctx.solver.assert(ref_expr);
             }
-            ctx.z3_reals.insert(val, z3_val);
+            ctx.z3_floats.insert(val, z3_val);
         } else {
             let bit_width = ty.int_bit_width().unwrap_or(64);
-            let z3_val = BV::new_const(ctx.ctx, format!("v{}", i), bit_width);
+            let z3_val = BV::new_const(format!("v{}", i), bit_width);
 
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let is_signed = !matches!(
@@ -78,8 +84,8 @@ pub fn init_values<'ctx>(ctx: &mut TranslationContext<'ctx>) -> Result<(), Strin
                     Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
                 );
                 let z3_int = z3_val.to_int(is_signed);
-                let ref_expr = parse_refinement(ctx.ctx, refinement, &z3_int)?;
-                ctx.solver.assert(&ref_expr);
+                let ref_expr = parse_refinement(refinement, &z3_int)?;
+                ctx.solver.assert(ref_expr);
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_val);
@@ -88,10 +94,10 @@ pub fn init_values<'ctx>(ctx: &mut TranslationContext<'ctx>) -> Result<(), Strin
     Ok(())
 }
 
-pub fn translate<'ctx>(
-    ctx: &mut TranslationContext<'ctx>,
+pub fn translate(
+    ctx: &mut TranslationContext,
     inst: &Instruction,
-    path_cond: &Bool<'ctx>,
+    path_cond: &Bool,
 ) -> Result<(), String> {
     match &inst.kind {
         InstructionKind::ArrayLoad(dest, arr, idx) => {
@@ -109,18 +115,16 @@ pub fn translate<'ctx>(
             }
 
             // z3_arr is indexed by Int internally in our modeling (see Sort::int)
-            // Wait, we need to select using an Int!
             let z3_idx_int = z3_idx.to_int(true);
 
             if let Some(z3_dest) = ctx.z3_bvs.get(dest) {
                 let select_res = z3_arr.select(&z3_idx_int);
                 let res = select_res.as_bv().unwrap();
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&res)));
-            } else if let Some(z3_dest) = ctx.z3_reals.get(dest) {
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(&res)));
+            } else if let Some(z3_dest) = ctx.z3_floats.get(dest) {
                 let select_res = z3_arr.select(&z3_idx_int);
-                if let Some(res) = select_res.as_real() {
-                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&res)));
-                }
+                let res = select_res.as_float().unwrap();
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(&res)));
             }
         }
         InstructionKind::ArrayStore(dest, arr, idx, val, _ty) => {
@@ -136,12 +140,12 @@ pub fn translate<'ctx>(
 
             if let Some(z3_val) = ctx.z3_bvs.get(val) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&z3_arr.store(&z3_idx_int, z3_val))));
-            } else if let Some(z3_val) = ctx.z3_reals.get(val) {
+                    .assert(path_cond.implies(z3_dest.eq(z3_arr.store(&z3_idx_int, z3_val))));
+            } else if let Some(z3_val) = ctx.z3_floats.get(val) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&z3_arr.store(&z3_idx_int, z3_val))));
+                    .assert(path_cond.implies(z3_dest.eq(z3_arr.store(&z3_idx_int, z3_val))));
             } else {
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_arr)));
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_arr)));
             }
         }
         InstructionKind::BufferLoad(dest, buf, idx) => {
@@ -157,58 +161,57 @@ pub fn translate<'ctx>(
                 (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(buf))
             {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest_len._eq(z3_buf_len)));
+                    .assert(path_cond.implies(z3_dest_len.eq(z3_buf_len)));
             }
         }
         InstructionKind::BufferLen(dest, buf) => {
             let z3_len = ctx.z3_bvs.get(buf).unwrap();
             let z3_dest = ctx.z3_bvs.get(dest).unwrap();
-            ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_len)));
+            ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_len)));
         }
         InstructionKind::StructLoad(dest, obj, offset) => {
             let z3_obj = ctx.z3_arrays.get(obj).unwrap();
-            let z3_offset = z3::ast::Int::from_i64(ctx.ctx, *offset as i64);
+            let z3_offset = z3::ast::Int::from_i64(*offset as i64);
             if let Some(z3_dest) = ctx.z3_bvs.get(dest) {
                 let select_res = z3_obj.select(&z3_offset);
                 let res = select_res.as_bv().unwrap();
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&res)));
-            } else if let Some(z3_dest) = ctx.z3_reals.get(dest) {
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(&res)));
+            } else if let Some(z3_dest) = ctx.z3_floats.get(dest) {
                 let select_res = z3_obj.select(&z3_offset);
-                if let Some(res) = select_res.as_real() {
-                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&res)));
-                }
+                let res = select_res.as_float().unwrap();
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(&res)));
             }
         }
         InstructionKind::StructOffset(dest, obj, _offset) => {
             if let Some(z3_dest) = ctx.z3_arrays.get(dest) {
                 let z3_obj = ctx.z3_arrays.get(obj).unwrap();
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_obj)));
+                ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_obj)));
             }
         }
         InstructionKind::StructSet(dest, obj, offset, val, _ty) => {
             let z3_dest = ctx.z3_arrays.get(dest).unwrap();
             let z3_obj = ctx.z3_arrays.get(obj).unwrap();
-            let z3_offset = z3::ast::Int::from_i64(ctx.ctx, *offset as i64);
+            let z3_offset = z3::ast::Int::from_i64(*offset as i64);
             if let Some(z3_val) = ctx.z3_bvs.get(val) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&z3_obj.store(&z3_offset, z3_val))));
-            } else if let Some(z3_val) = ctx.z3_reals.get(val) {
+                    .assert(path_cond.implies(z3_dest.eq(z3_obj.store(&z3_offset, z3_val))));
+            } else if let Some(z3_val) = ctx.z3_floats.get(val) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&z3_obj.store(&z3_offset, z3_val))));
+                    .assert(path_cond.implies(z3_dest.eq(z3_obj.store(&z3_offset, z3_val))));
             }
         }
         InstructionKind::Borrow(dest, src) | InstructionKind::MutBorrow(dest, src) => {
             if let Some(z3_dest) = ctx.z3_bvs.get(dest) {
                 if let Some(z3_src) = ctx.z3_bvs.get(src) {
-                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_src)));
+                    ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
                 }
-            } else if let Some(z3_dest) = ctx.z3_reals.get(dest) {
-                if let Some(z3_src) = ctx.z3_reals.get(src) {
-                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_src)));
+            } else if let Some(z3_dest) = ctx.z3_floats.get(dest) {
+                if let Some(z3_src) = ctx.z3_floats.get(src) {
+                    ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
                 }
             } else if let Some(z3_dest) = ctx.z3_arrays.get(dest) {
                 if let Some(z3_src) = ctx.z3_arrays.get(src) {
-                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(z3_src)));
+                    ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
                 }
             }
         }
@@ -225,12 +228,12 @@ fn check_bounds(
     dest_id: usize,
 ) -> Result<(), String> {
     let bit_width = idx.get_size();
-    let zero = BV::from_i64(ctx.ctx, 0, bit_width);
-    let sz = BV::from_i64(ctx.ctx, size, bit_width);
+    let zero = BV::from_i64(0, bit_width);
+    let sz = BV::from_i64(size, bit_width);
 
     ctx.solver.push();
     ctx.solver.assert(path_cond);
-    ctx.solver.assert(&idx.bvslt(&zero));
+    ctx.solver.assert(idx.bvslt(&zero));
     if ctx.solver.check() != SatResult::Unsat {
         return Err(format!(
             "Potential out-of-bounds access (index < 0) at v{}",
@@ -241,7 +244,7 @@ fn check_bounds(
 
     ctx.solver.push();
     ctx.solver.assert(path_cond);
-    ctx.solver.assert(&idx.bvsge(&sz));
+    ctx.solver.assert(idx.bvsge(&sz));
     if ctx.solver.check() != SatResult::Unsat {
         return Err(format!(
             "Potential out-of-bounds access (index >= {}) at v{}",
@@ -260,11 +263,11 @@ fn check_buffer_bounds(
     dest_id: usize,
 ) -> Result<(), String> {
     let bit_width = idx.get_size();
-    let zero = BV::from_i64(ctx.ctx, 0, bit_width);
+    let zero = BV::from_i64(0, bit_width);
 
     ctx.solver.push();
     ctx.solver.assert(path_cond);
-    ctx.solver.assert(&idx.bvslt(&zero));
+    ctx.solver.assert(idx.bvslt(&zero));
     if ctx.solver.check() != SatResult::Unsat {
         return Err(format!(
             "Potential out-of-bounds buffer access (index < 0) at v{}",
@@ -285,7 +288,7 @@ fn check_buffer_bounds(
         check_len = len.extract(bit_width - 1, 0);
     }
 
-    ctx.solver.assert(&idx.bvsge(&check_len));
+    ctx.solver.assert(idx.bvsge(&check_len));
     if ctx.solver.check() != SatResult::Unsat {
         return Err(format!(
             "Potential out-of-bounds buffer access (index >= len) at v{}",

@@ -16,21 +16,21 @@ impl Bound {
 
 impl PartialOrd for Bound {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Bound::NegInf, Bound::NegInf) => Some(std::cmp::Ordering::Equal),
-            (Bound::NegInf, _) => Some(std::cmp::Ordering::Less),
-            (_, Bound::NegInf) => Some(std::cmp::Ordering::Greater),
-            (Bound::PosInf, Bound::PosInf) => Some(std::cmp::Ordering::Equal),
-            (Bound::PosInf, _) => Some(std::cmp::Ordering::Greater),
-            (_, Bound::PosInf) => Some(std::cmp::Ordering::Less),
-            (Bound::Finite(x), Bound::Finite(y)) => x.partial_cmp(y),
-        }
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Bound {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
+        match (self, other) {
+            (Bound::NegInf, Bound::NegInf) => std::cmp::Ordering::Equal,
+            (Bound::NegInf, _) => std::cmp::Ordering::Less,
+            (_, Bound::NegInf) => std::cmp::Ordering::Greater,
+            (Bound::PosInf, Bound::PosInf) => std::cmp::Ordering::Equal,
+            (Bound::PosInf, _) => std::cmp::Ordering::Greater,
+            (_, Bound::PosInf) => std::cmp::Ordering::Less,
+            (Bound::Finite(x), Bound::Finite(y)) => x.cmp(y),
+        }
     }
 }
 

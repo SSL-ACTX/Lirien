@@ -82,7 +82,7 @@ pub fn lower<M: Module>(
     let registry = crate::bridge::registry::GLOBAL_REGISTRY.lock().unwrap();
 
     let mut is_sret = false;
-    let mut ret_ty = SsaType::Unknown;
+    let ret_ty;
 
     if let Some(sig) = registry.get(func) {
         ret_ty = sig.return_type.clone();
@@ -130,7 +130,6 @@ pub fn lower<M: Module>(
 
     if is_sret {
         let size = ret_ty.size(&ctx.ssa_func.struct_layouts);
-        let align = ret_ty.align(&ctx.ssa_func.struct_layouts) as u32;
         let slot = ctx
             .builder
             .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size as u32));
