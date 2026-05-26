@@ -31,8 +31,12 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         }
         SsaType::F32 => types::F32,
         SsaType::F64 => types::F64,
-        SsaType::Array(_, _) | SsaType::Buffer(_) | SsaType::Struct(_) | SsaType::Tuple(_) => {
-            types::I64
+        SsaType::Array(_, _)
+        | SsaType::Buffer(_)
+        | SsaType::Struct(_)
+        | SsaType::Enum(_)
+        | SsaType::Tuple(_) => {
+            types::I64 // Pointer
         }
         SsaType::Unknown => types::I64,
     }
@@ -158,7 +162,6 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             sret_ptr,
         };
 
-        // Pass 1: Handle block parameters for Phis
         for ssa_block in &ssa_func.blocks {
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
             cg_ctx.builder.switch_to_block(current_cl_block);
@@ -179,7 +182,6 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             }
         }
 
-        // Pass 2: Lower instructions
         for ssa_block in &ssa_func.blocks {
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
             cg_ctx.builder.switch_to_block(current_cl_block);

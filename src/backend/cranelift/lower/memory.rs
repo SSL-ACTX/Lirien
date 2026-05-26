@@ -96,6 +96,43 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 .store(MemFlags::new(), val_to_store, addr, 0);
             ctx.values.insert(*dest, arr_ptr);
         }
+        InstructionKind::StructCreate(dest, struct_name, args) => {
+            let dest_ty = ctx.ssa_func.get_type(*dest);
+            let size = dest_ty.size(&ctx.ssa_func.struct_layouts);
+
+            let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                size as u32,
+            ));
+
+            let fields = ctx.ssa_func.struct_layouts.get(struct_name).unwrap();
+            let mut field_offset = 0;
+            for (i, p_val) in args.iter().enumerate() {
+                let cl_p_val = get_val(&ctx.values, p_val);
+                let f_ty = &fields[i].1;
+                let f_align = f_ty.align(&ctx.ssa_func.struct_layouts);
+                field_offset = (field_offset + f_align - 1) & !(f_align - 1);
+
+                let cl_ty = super::translate_type(f_ty);
+                let val_to_store = if ctx.builder.func.dfg.value_type(cl_p_val) != cl_ty {
+                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(cl_p_val).is_int() {
+                        ctx.builder.ins().ireduce(cl_ty, cl_p_val)
+                    } else {
+                        cl_p_val
+                    }
+                } else {
+                    cl_p_val
+                };
+
+                ctx.builder
+                    .ins()
+                    .stack_store(val_to_store, slot, field_offset as i32);
+                field_offset += f_ty.size(&ctx.ssa_func.struct_layouts);
+            }
+
+            let dest_addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
+            ctx.values.insert(*dest, dest_addr);
+        }
         InstructionKind::StructLoad(dest, obj, offset) => {
             let obj_ptr = get_val(&ctx.values, obj);
             let dest_ty = ctx.ssa_func.get_type(*dest);
@@ -128,6 +165,132 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 .ins()
                 .store(MemFlags::new(), val_to_store, obj_ptr, *offset as i32);
             ctx.values.insert(*dest, obj_ptr);
+        }
+        InstructionKind::EnumCreate(dest, enum_name, tag_idx, payload) => {
+            let mut size = 0;
+            if let Some(variants) = ctx.ssa_func.enum_layouts.get(enum_name) {
+                let mut max_payload_size = 0;
+                let mut max_align = 1;
+                for (_, f_ty) in variants {
+                    let sz = f_ty.size(&ctx.ssa_func.struct_layouts);
+                    if sz > max_payload_size {
+                        max_payload_size = sz;
+                    }
+                    let a = f_ty.align(&ctx.ssa_func.struct_layouts);
+                    if a > max_align {
+                        max_align = a;
+                    }
+                }
+                let mut offset = 1;
+                offset = (offset + max_align - 1) & !(max_align - 1);
+                offset += max_payload_size;
+                size = (offset + max_align - 1) & !(max_align - 1);
+            }
+
+            let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                size as u32,
+            ));
+
+            let tag_val = ctx.builder.ins().iconst(types::I8, *tag_idx as i64);
+            ctx.builder.ins().stack_store(tag_val, slot, 0);
+
+            if let Some(p) = payload {
+                let p_val = get_val(&ctx.values, p);
+                let variants = ctx.ssa_func.enum_layouts.get(enum_name).unwrap();
+                let payload_ty = &variants[*tag_idx].1;
+
+                let p_align = payload_ty.align(&ctx.ssa_func.struct_layouts);
+                let mut offset = 1;
+                offset = (offset + p_align - 1) & !(p_align - 1);
+
+                let p_size = payload_ty.size(&ctx.ssa_func.struct_layouts);
+                let mut curr_offset = 0;
+                while curr_offset < p_size {
+                    let bytes_left = p_size - curr_offset;
+                    if bytes_left >= 8 {
+                        let val = ctx.builder.ins().load(
+                            types::I64,
+                            MemFlags::new(),
+                            p_val,
+                            curr_offset as i32,
+                        );
+                        ctx.builder
+                            .ins()
+                            .stack_store(val, slot, (offset + curr_offset) as i32);
+                        curr_offset += 8;
+                    } else if bytes_left >= 4 {
+                        let val = ctx.builder.ins().load(
+                            types::I32,
+                            MemFlags::new(),
+                            p_val,
+                            curr_offset as i32,
+                        );
+                        ctx.builder
+                            .ins()
+                            .stack_store(val, slot, (offset + curr_offset) as i32);
+                        curr_offset += 4;
+                    } else if bytes_left >= 2 {
+                        let val = ctx.builder.ins().load(
+                            types::I16,
+                            MemFlags::new(),
+                            p_val,
+                            curr_offset as i32,
+                        );
+                        ctx.builder
+                            .ins()
+                            .stack_store(val, slot, (offset + curr_offset) as i32);
+                        curr_offset += 2;
+                    } else {
+                        let val = ctx.builder.ins().load(
+                            types::I8,
+                            MemFlags::new(),
+                            p_val,
+                            curr_offset as i32,
+                        );
+                        ctx.builder
+                            .ins()
+                            .stack_store(val, slot, (offset + curr_offset) as i32);
+                        curr_offset += 1;
+                    }
+                }
+            }
+
+            let dest_addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
+            ctx.values.insert(*dest, dest_addr);
+        }
+        InstructionKind::EnumIsVariant(dest, obj, tag_idx) => {
+            let obj_ptr = get_val(&ctx.values, obj);
+            let tag_val = ctx
+                .builder
+                .ins()
+                .load(types::I8, MemFlags::new(), obj_ptr, 0);
+            let expected_tag = ctx.builder.ins().iconst(types::I8, *tag_idx as i64);
+            let is_match =
+                ctx.builder
+                    .ins()
+                    .icmp(cranelift::prelude::IntCC::Equal, tag_val, expected_tag);
+
+            let dest_ty = ctx.ssa_func.get_type(*dest);
+            let cl_ty = translate_type(&dest_ty);
+            let res = ctx.builder.ins().bmask(cl_ty, is_match);
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::EnumExtract(dest, obj, tag_idx) => {
+            let obj_ptr = get_val(&ctx.values, obj);
+            let enum_name = match ctx.ssa_func.get_type(*obj) {
+                SsaType::Enum(ref name) => name.clone(),
+                _ => unreachable!(),
+            };
+            let variants = ctx.ssa_func.enum_layouts.get(&enum_name).unwrap();
+            let payload_ty = &variants[*tag_idx].1;
+            let p_align = payload_ty.align(&ctx.ssa_func.struct_layouts);
+
+            let mut offset = 1;
+            offset = (offset + p_align - 1) & !(p_align - 1);
+
+            let res = ctx.builder.ins().iadd_imm(obj_ptr, offset as i64);
+            ctx.values.insert(*dest, res);
         }
         InstructionKind::Borrow(dest, src) | InstructionKind::MutBorrow(dest, src) => {
             let s = get_val(&ctx.values, src);

@@ -194,9 +194,13 @@ pub fn verify_with_context(
                 | crate::ssa::ir::InstructionKind::BufferLoad(_, _, _)
                 | crate::ssa::ir::InstructionKind::BufferStore(_, _, _, _, _)
                 | crate::ssa::ir::InstructionKind::BufferLen(_, _)
+                | crate::ssa::ir::InstructionKind::StructCreate(_, _, _)
                 | crate::ssa::ir::InstructionKind::StructLoad(_, _, _)
                 | crate::ssa::ir::InstructionKind::StructOffset(_, _, _)
                 | crate::ssa::ir::InstructionKind::StructSet(_, _, _, _, _)
+                | crate::ssa::ir::InstructionKind::EnumCreate(_, _, _, _)
+                | crate::ssa::ir::InstructionKind::EnumIsVariant(_, _, _)
+                | crate::ssa::ir::InstructionKind::EnumExtract(_, _, _)
                 | crate::ssa::ir::InstructionKind::Borrow(_, _)
                 | crate::ssa::ir::InstructionKind::MutBorrow(_, _) => {
                     memory::translate(&mut t_ctx, inst, &path_cond)?;

@@ -101,9 +101,13 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::BufferLoad(d, _, _)
         | InstructionKind::BufferStore(d, _, _, _, _)
         | InstructionKind::BufferLen(d, _)
+        | InstructionKind::StructCreate(d, _, _)
         | InstructionKind::StructLoad(d, _, _)
         | InstructionKind::StructOffset(d, _, _)
         | InstructionKind::StructSet(d, _, _, _, _)
+        | InstructionKind::EnumCreate(d, _, _, _)
+        | InstructionKind::EnumIsVariant(d, _, _)
+        | InstructionKind::EnumExtract(d, _, _)
         | InstructionKind::TupleCreate(d, _)
         | InstructionKind::TupleExtract(d, _, _) => Some(*d),
         _ => None,
@@ -205,6 +209,21 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         }
         InstructionKind::TupleExtract(_, tuple, _) => {
             operands.push(*tuple);
+        }
+        InstructionKind::StructCreate(_, _, args) => {
+            for v in args {
+                operands.push(*v);
+            }
+        }
+        InstructionKind::EnumCreate(_, _, _, Some(v)) => {
+            operands.push(*v);
+        }
+        InstructionKind::EnumCreate(_, _, _, None) => {}
+        InstructionKind::EnumIsVariant(_, obj, _) => {
+            operands.push(*obj);
+        }
+        InstructionKind::EnumExtract(_, obj, _) => {
+            operands.push(*obj);
         }
         _ => {}
     }

@@ -50,8 +50,9 @@ def verify(
                         )
                 source = ast.unparse(tree)
 
-            # Scan for struct layouts and type aliases referenced in the function's scope
+            # Scan for struct layouts, enum layouts, and type aliases referenced in the function's scope
             struct_layouts = _struct_layouts.copy() if _struct_layouts else {}
+            enum_layouts = {}
             type_aliases = {}
 
             # Combine globals and closure variables
@@ -77,6 +78,17 @@ def verify(
                     and name not in struct_layouts
                 ):
                     struct_layouts[name] = obj.__lila_fields__
+                elif getattr(obj, "__lila_enum__", False) and name not in enum_layouts:
+                    layout = []
+                    for v_name in getattr(obj, "__lila_variants__", []):
+                        v_ty = obj.__lila_variant_types__[v_name]
+                        v_ty_name = v_ty.__name__
+                        layout.append((v_name, v_ty_name))
+                        if v_ty_name not in struct_layouts:
+                            struct_layouts[v_ty_name] = getattr(
+                                v_ty, "__lila_fields__", []
+                            )
+                    enum_layouts[name] = layout
                 elif hasattr(obj, "base_type") and hasattr(obj, "predicate"):
                     # It's likely a Refined type instance
                     try:
@@ -108,7 +120,7 @@ def verify(
                         pass
 
             code_ptr = lila_core.verify_and_compile(
-                source, target_func_name, struct_layouts, type_aliases
+                source, target_func_name, struct_layouts, enum_layouts, type_aliases
             )
 
             # Create a ctypes function pointer

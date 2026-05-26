@@ -382,11 +382,93 @@ def struct(cls):
     return cls
 
 
+def enum(cls):
+    """
+    Decorator to mark a class as a Tagged Union (Enum) for Lila.
+    Generates a ctypes Structure with a tag and a Union payload.
+    """
+    # Grab the annotations, which define the variants.
+    fields = getattr(cls, "__annotations__", {})
+
+    variant_names = []
+    variant_types = {}
+    union_fields = []
+
+    for idx, (name, ty) in enumerate(fields.items()):
+        variant_names.append(name)
+        variant_types[name] = ty
+        if hasattr(ty, "__lila_ctypes__"):
+            union_fields.append((name, ty.__lila_ctypes__))
+        else:
+            raise TypeError(f"Enum variant {name} must be a @struct")
+
+    class LilaCtypesUnion(ctypes.Union):
+        _fields_ = union_fields
+
+    class LilaCtypesEnum(ctypes.Structure):
+        _fields_ = [("tag", ctypes.c_uint8), ("payload", LilaCtypesUnion)]
+
+    cls.__lila_enum__ = True
+    cls.__lila_variants__ = variant_names
+    cls.__lila_variant_types__ = variant_types
+    cls.__lila_ctypes__ = LilaCtypesEnum
+
+    # We don't override __init__ in the same way; instead, we provide classmethods for variants
+    original_init = cls.__init__
+
+    def new_init(self, *args, **kwargs):
+        self._ctypes_obj = LilaCtypesEnum()
+        if original_init is not object.__init__:
+            original_init(self, *args, **kwargs)
+
+    cls.__init__ = new_init
+
+    # Generate constructor and accessor methods for each variant
+    for idx, (name, ty) in enumerate(variant_types.items()):
+
+        def make_variant_methods(variant_name, variant_type, tag_idx):
+            @classmethod
+            def constructor(cls_ref, *args, **kwargs):
+                instance = cls_ref.__new__(cls_ref)
+                instance._ctypes_obj = LilaCtypesEnum()
+                instance._ctypes_obj.tag = tag_idx
+                # Construct the payload struct
+                payload_instance = variant_type(*args, **kwargs)
+                setattr(
+                    instance._ctypes_obj.payload,
+                    variant_name,
+                    payload_instance._ctypes_obj,
+                )
+                return instance
+
+            def is_variant(self):
+                return self._ctypes_obj.tag == tag_idx
+
+            def as_variant(self):
+                if self._ctypes_obj.tag != tag_idx:
+                    raise ValueError(
+                        f"Tried to access Enum as {variant_name} but tag is {self._ctypes_obj.tag}"
+                    )
+                wrapper = variant_type.__new__(variant_type)
+                wrapper._ctypes_obj = getattr(self._ctypes_obj.payload, variant_name)
+                return wrapper
+
+            return constructor, is_variant, as_variant
+
+        ctor, is_var, as_var = make_variant_methods(name, ty, idx)
+        setattr(cls, name, ctor)
+        setattr(cls, f"is_{name}", is_var)
+        setattr(cls, f"as_{name}", as_var)
+
+    return cls
+
+
 __all__ = [
     "Mut",
     "Ref",
     "Owned",
     "struct",
+    "enum",
     "i8",
     "u8",
     "i16",

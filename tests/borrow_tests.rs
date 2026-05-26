@@ -21,6 +21,7 @@ def consume_owned(x: Owned[i64]) -> i64:
         func_name,
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
     );
     assert!(result.is_ok(), "Expected OK, got {:?}", result.err());
 }
@@ -43,6 +44,7 @@ def consume_owned(x: Owned[i64]) -> i64:
     let result = verify_and_compile(
         source,
         func_name,
+        std::collections::HashMap::new(),
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
     );
@@ -74,6 +76,7 @@ def consume_owned(x: Owned[i64]) -> i64:
         func_name,
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
     );
 
     assert!(result.is_err(), "Expected error due to move in loop");
@@ -96,6 +99,7 @@ def consume_owned(x: Owned[i64]) -> i64:
     let result = verify_and_compile(
         source,
         "multiple_refs".to_string(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
     );
@@ -121,6 +125,7 @@ def mut_and_ref(x: i64) -> i64:
         "mut_and_ref".to_string(),
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
     );
     assert!(result.is_err(), "Expected error for Mut and Ref aliasing");
     assert!(result
@@ -142,6 +147,7 @@ def mut_and_mut(x: i64) -> i64:
     let result = verify_and_compile(
         source,
         "mut_and_mut".to_string(),
+        std::collections::HashMap::new(),
         std::collections::HashMap::new(),
         std::collections::HashMap::new(),
     );

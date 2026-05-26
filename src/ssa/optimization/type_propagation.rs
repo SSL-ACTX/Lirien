@@ -24,8 +24,28 @@ pub fn propagate_types(func: &mut Function) {
                     | InstructionKind::Xor(d, l, r)
                     | InstructionKind::Shl(d, l, r)
                     | InstructionKind::LShr(d, l, r)
-                    | InstructionKind::AShr(d, l, r)
-                    | InstructionKind::Eq(d, l, r)
+                    | InstructionKind::AShr(d, l, r) => {
+                        let l_ty = func.get_type(*l);
+                        let r_ty = func.get_type(*r);
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            if l_ty != Type::Unknown {
+                                new_types.insert(*d, l_ty);
+                            } else if r_ty != Type::Unknown {
+                                new_types.insert(*d, r_ty);
+                            }
+                        }
+                    }
+                    InstructionKind::Not(d, s) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let s_ty = func.get_type(*s);
+                            if s_ty != Type::Unknown {
+                                new_types.insert(*d, s_ty);
+                            }
+                        }
+                    }
+                    InstructionKind::Eq(d, l, r)
                     | InstructionKind::Ne(d, l, r)
                     | InstructionKind::SLt(d, l, r)
                     | InstructionKind::SLe(d, l, r)
@@ -118,7 +138,7 @@ pub fn propagate_types(func: &mut Function) {
         }
     }
 
-    // Second pass: Fix instruction kinds based on propagated types
+    // Fix instruction kinds based on propagated types
     let mut instruction_updates = Vec::new();
 
     for block in &func.blocks {

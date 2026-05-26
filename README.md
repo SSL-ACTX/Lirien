@@ -94,7 +94,31 @@ class Point:
         self.y += dy
 ```
 
-### 4. Verified Buffer and NumPy Interop
+### 4. Tagged Unions: Formally Verified Enums
+Lila supports type-safe tagged unions (Enums) with Z3-proven variant access.
+```python
+from lila import verify, i64, struct, enum
+
+@struct
+class SomePayload:
+    val: i64
+
+@enum
+class Option:
+    Some: SomePayload
+    NoneVariant: None
+
+@verify
+def create_some(x: i64) -> i64:
+    s = SomePayload(x)
+    opt = Option.Some(s)
+    if opt.is_Some():
+        # Z3 proves this extraction is safe because of the branch above
+        return opt.as_Some().val
+    return -1
+```
+
+### 5. Verified Buffer and NumPy Interop
 Seamlessly operate on high-performance memory buffers (like NumPy arrays) with Z3-proven bounds checking.
 ```python
 from lila import verify, Buffer, f64
@@ -107,7 +131,7 @@ def scale_vector(vec: Buffer[f64], factor: f64) -> None:
         vec[i] *= factor
 ```
 
-### 5. GIL-less Parallelism
+### 6. GIL-less Parallelism
 Since Lila code operates on raw memory and avoids `PyObject` manipulation, it can execute across multiple threads without ever acquiring the Global Interpreter Lock.
 
 ---
@@ -117,6 +141,7 @@ Since Lila code operates on raw memory and avoids `PyObject` manipulation, it ca
 | Feature | Support |
 | :--- | :--- |
 | **Numeric Types** | `i8` through `u64`, `f32`, `f64` |
+| **Complex Types** | Structs, Tagged Unions (Enums), Tuples |
 | **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |

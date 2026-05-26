@@ -9,9 +9,6 @@ pub fn lower<M: Module>(
 ) -> Result<(), String> {
     match inst_kind {
         InstructionKind::TupleCreate(dest, elts) => {
-            // For now, we'll represent the tuple as a stack slot if it's large,
-            // or just a group of values.
-            // But since we need to return it, let's use a stack slot.
             let tuple_ty = ctx.ssa_func.get_type(*dest);
             let size = tuple_ty.size(&ctx.ssa_func.struct_layouts);
             let _align = tuple_ty.align(&ctx.ssa_func.struct_layouts) as u32;

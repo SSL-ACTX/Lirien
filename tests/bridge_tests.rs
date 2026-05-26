@@ -15,6 +15,7 @@ def simple_add(a: i64, b: i64) -> i64:
             func_name,
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
         );
         assert!(result.is_ok());
         let ptr = result.unwrap();
@@ -44,6 +45,7 @@ def factorial(n: i64) -> i64:
             func_name,
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
         );
         assert!(result.is_ok());
         let ptr = result.unwrap();
@@ -70,6 +72,7 @@ def unsafe_div(n: i64, d: i64) -> i64:
             func_name,
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
         );
         assert!(result.is_err());
         assert!(result
@@ -92,6 +95,7 @@ def array_test(arr: Array[i64], idx: i64) -> i64:
         let result = verify_and_compile(
             source,
             func_name,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
         );
@@ -122,6 +126,7 @@ def bounds_fail(arr: SizedArray[i64, 10], idx: i64) -> i64:
         let result = verify_and_compile(
             source,
             func_name,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
         );
@@ -155,6 +160,7 @@ def struct_test(p: Mut[Point]) -> i64:
             source,
             "struct_test".to_string(),
             layouts,
+            std::collections::HashMap::new(),
             std::collections::HashMap::new(),
         );
         assert!(result.is_ok(), "Error: {:?}", result.err());

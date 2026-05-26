@@ -53,7 +53,13 @@ When adding a new capability to the DSL:
 1.  Update `Type` and `InstructionKind` in `src/ssa/ir.rs`.
 2.  Update the AST `visitor.rs` to generate the new IR.
 3.  Update the `CFGBuilder` layout engine if the size/alignment changes.
-4.  Update the Z3 formal model in `src/verification/z3_translator.rs`.
-5.  Update the Cranelift lowering in `src/backend/mod.rs`.
-6.  Update `src/ssa/optimization/dce.rs` to ensure it isn't incorrectly stripped.
+4.  Update the Z3 formal model in `src/verification/z3/` (arithmetic, memory, or control_flow).
+5.  Update the Cranelift lowering in `src/backend/cranelift/lower/`.
+6.  Update `src/ssa/optimization/dce.rs` and `type_propagation.rs` to ensure the instruction is handled.
 7.  Write a Python integration test verifying the full pipeline.
+
+### 3.4 Z3 0.20 API Usage
+The project uses `z3-rs` v0.20.0, which has been configured/modified for ergonomics using `thread_local` contexts.
+*   **No Explicit Context:** Most AST constructor methods (e.g., `BV::from_i64`, `Int::from_i64`, `Bool::from_bool`, `BV::new_const`) do **not** take a `&Context` argument. They use `Context::thread_local()` internally.
+*   **Comparison Methods:** Use standard `eq`, `lt`, `gt`, etc.
+*   **Verification Entry:** The Z3 context is initialized in `src/verification/mod.rs` via `Context::thread_local()`.

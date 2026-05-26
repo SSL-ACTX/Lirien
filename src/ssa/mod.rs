@@ -12,16 +12,17 @@ pub fn transform(
     name: String,
     suite: ast::Suite,
     struct_layouts: HashMap<String, Vec<(String, String)>>,
+    enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
 ) -> Result<Function, String> {
     info!(target: "lila::ssa", "Transforming AST to IR for '{}'...", name);
 
-    let mut builder = CFGBuilder::new(name, struct_layouts, type_aliases);
+    let mut builder = CFGBuilder::new(name, struct_layouts, enum_layouts, type_aliases);
     builder.build(suite)?;
 
     let mut func = builder.func;
 
-    // Optimization Passes
+    // Optimization
     optimization::optimize(&mut func);
 
     func.dump();

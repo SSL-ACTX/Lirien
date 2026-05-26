@@ -550,25 +550,53 @@ impl CFGBuilder {
             }
             ast::Expr::Name(n) => self.read_variable(n.id.to_string(), self.current_block),
             ast::Expr::Attribute(s) => {
-                // Handle .val for Mut/Ref as before
-                if let ast::Expr::Name(n) = *s.value.clone() {
-                    if s.attr.as_str() == "val" {
-                        return self.read_variable(n.id.to_string(), self.current_block);
+                let obj = self.visit_expr(*s.value.clone())?;
+                let mut curr_ty = self.func.get_type(obj);
+
+                if s.attr.as_str() == "val" {
+                    if let Type::Mut(_inner) | Type::Ref(_inner) | Type::Owned(_inner) = curr_ty {
+                        return Ok(obj);
                     }
                 }
 
-                let (root_name, offset, leaf_ty) =
-                    self.resolve_attribute_path(ast::Expr::Attribute(s.clone()))?;
-                let root_val = self.read_variable(root_name, self.current_block)?;
-
-                let dest = self.func.next_value();
-                if let Type::Struct(_) = leaf_ty {
-                    self.add_instruction(InstructionKind::StructOffset(dest, root_val, offset));
-                } else {
-                    self.add_instruction(InstructionKind::StructLoad(dest, root_val, offset));
+                while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) = curr_ty {
+                    curr_ty = *inner;
                 }
-                self.func.set_type(dest, leaf_ty);
-                Ok(dest)
+
+                if let Type::Struct(struct_name) = curr_ty {
+                    let field_offset = self
+                        .get_field_offset(&struct_name, s.attr.as_str())
+                        .ok_or_else(|| {
+                            format!("Field '{}' not found in struct '{}'", s.attr, struct_name)
+                        })?;
+
+                    let fields = self.func.struct_layouts.get(&struct_name).unwrap();
+                    let field_ty = fields
+                        .iter()
+                        .find(|(f, _)| f == s.attr.as_str())
+                        .unwrap()
+                        .1
+                        .clone();
+
+                    let dest = self.func.next_value();
+                    if let Type::Struct(_) = field_ty {
+                        self.add_instruction(InstructionKind::StructOffset(
+                            dest,
+                            obj,
+                            field_offset,
+                        ));
+                    } else {
+                        self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
+                    }
+                    self.func.set_type(dest, field_ty);
+                    Ok(dest)
+                } else {
+                    Err(format!(
+                        "Cannot resolve attribute '{}' on non-struct type {:?}",
+                        s.attr,
+                        self.func.get_type(obj)
+                    ))
+                }
             }
             ast::Expr::Subscript(s) => {
                 let arr = self.visit_expr(*s.value)?;
@@ -598,41 +626,46 @@ impl CFGBuilder {
                     elt_types.push(self.func.get_type(val));
                 }
                 let dest = self.func.next_value();
-                // We'll use the TupleCreate instruction which the backend will handle.
                 self.add_instruction(InstructionKind::TupleCreate(dest, elts));
                 self.func.set_type(dest, Type::Tuple(elt_types));
                 Ok(dest)
             }
             ast::Expr::Call(s) => {
-                let (func_name, method_obj) = match *s.func {
+                let (func_name, method_obj) = match &*s.func {
                     ast::Expr::Name(n) => (n.id.to_string(), None),
                     ast::Expr::Attribute(attr) => {
                         if let ast::Expr::Name(n) = &*attr.value {
                             if n.id.as_str() == "math" {
                                 (format!("math.{}", attr.attr), None)
+                            } else if self.func.enum_layouts.contains_key(n.id.as_str()) {
+                                // Static enum variant constructor: EnumName.Variant(...)
+                                (format!("{}_{}", n.id.as_str(), attr.attr), None)
                             } else {
-                                let obj = self.visit_expr(*attr.value)?;
+                                let obj = self.visit_expr((*attr.value).clone())?;
                                 let mut curr_ty = self.func.get_type(obj);
 
                                 // Unwrap Mut/Ref/Owned to get the base struct type
-                                while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) =
-                                    curr_ty
+                                while let Type::Mut(_inner)
+                                | Type::Ref(_inner)
+                                | Type::Owned(_inner) = curr_ty
                                 {
-                                    curr_ty = *inner;
+                                    curr_ty = (*_inner).clone();
                                 }
 
                                 if let Type::Struct(struct_name) = curr_ty {
                                     (format!("{}_{}", struct_name, attr.attr), Some(obj))
+                                } else if let Type::Enum(enum_name) = curr_ty {
+                                    (format!("{}_{}", enum_name, attr.attr), Some(obj))
                                 } else {
                                     return Err(format!(
-                                        "Cannot call method '{}' on non-struct type {:?}",
+                                        "Cannot call method '{}' on non-struct/enum type {:?}",
                                         attr.attr,
                                         self.func.get_type(obj)
                                     ));
                                 }
                             }
                         } else {
-                            let obj = self.visit_expr(*attr.value)?;
+                            let obj = self.visit_expr((*attr.value).clone())?;
                             let mut curr_ty = self.func.get_type(obj);
 
                             // Unwrap Mut/Ref/Owned to get the base struct type
@@ -644,9 +677,11 @@ impl CFGBuilder {
 
                             if let Type::Struct(struct_name) = curr_ty {
                                 (format!("{}_{}", struct_name, attr.attr), Some(obj))
+                            } else if let Type::Enum(enum_name) = curr_ty {
+                                (format!("{}_{}", enum_name, attr.attr), Some(obj))
                             } else {
                                 return Err(format!(
-                                    "Cannot call method '{}' on non-struct type {:?}",
+                                    "Cannot call method '{}' on non-struct/enum type {:?}",
                                     attr.attr,
                                     self.func.get_type(obj)
                                 ));
@@ -655,6 +690,104 @@ impl CFGBuilder {
                     }
                     _ => return Err("Complex calls not supported yet".to_string()),
                 };
+
+                // Check for Enum Creation
+                if let Some(enum_name) = func_name.split('_').next() {
+                    if self.func.enum_layouts.contains_key(enum_name) && method_obj.is_none() {
+                        let variant_name =
+                            func_name.split('_').skip(1).collect::<Vec<_>>().join("_");
+                        let variants = self.func.enum_layouts.get(enum_name).unwrap();
+                        let tag_idx = variants
+                            .iter()
+                            .position(|(name, _)| name == &variant_name)
+                            .ok_or_else(|| {
+                                format!(
+                                    "Unknown variant '{}' for enum '{}'",
+                                    variant_name, enum_name
+                                )
+                            })?;
+
+                        let payload = if s.args.is_empty() {
+                            None
+                        } else if s.args.len() == 1 {
+                            Some(self.visit_expr(s.args[0].clone())?)
+                        } else {
+                            return Err(
+                                "Enum variant constructor takes at most 1 argument".to_string()
+                            );
+                        };
+
+                        let dest = self.func.next_value();
+                        self.add_instruction(InstructionKind::EnumCreate(
+                            dest,
+                            enum_name.to_string(),
+                            tag_idx,
+                            payload,
+                        ));
+                        self.func.set_type(dest, Type::Enum(enum_name.to_string()));
+                        return Ok(dest);
+                    }
+                }
+
+                // Check for Enum Methods (is_Variant, as_Variant)
+                if let Some(obj) = method_obj {
+                    if let Type::Enum(enum_name) = self.func.get_type(obj) {
+                        let method = func_name.strip_prefix(&format!("{}_", enum_name)).unwrap();
+                        if method.starts_with("is_") {
+                            let variant_name = method.strip_prefix("is_").unwrap();
+                            let variants = self.func.enum_layouts.get(&enum_name).unwrap();
+                            let tag_idx = variants
+                                .iter()
+                                .position(|(name, _)| name == variant_name)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Unknown variant '{}' for enum '{}'",
+                                        variant_name, enum_name
+                                    )
+                                })?;
+
+                            let dest = self.func.next_value();
+                            self.add_instruction(InstructionKind::EnumIsVariant(
+                                dest, obj, tag_idx,
+                            ));
+                            self.func.set_type(dest, Type::Bool);
+                            return Ok(dest);
+                        } else if method.starts_with("as_") {
+                            let variant_name = method.strip_prefix("as_").unwrap();
+                            let variants = self.func.enum_layouts.get(&enum_name).unwrap();
+                            let tag_idx = variants
+                                .iter()
+                                .position(|(name, _)| name == variant_name)
+                                .ok_or_else(|| {
+                                    format!(
+                                        "Unknown variant '{}' for enum '{}'",
+                                        variant_name, enum_name
+                                    )
+                                })?;
+
+                            let payload_ty = variants[tag_idx].1.clone();
+                            let dest = self.func.next_value();
+                            self.add_instruction(InstructionKind::EnumExtract(dest, obj, tag_idx));
+                            self.func.set_type(dest, payload_ty);
+                            return Ok(dest);
+                        }
+                    }
+                }
+
+                if self.func.struct_layouts.contains_key(&func_name) {
+                    let mut struct_args = Vec::new();
+                    for arg in s.args.clone() {
+                        struct_args.push(self.visit_expr(arg)?);
+                    }
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::StructCreate(
+                        dest,
+                        func_name.clone(),
+                        struct_args,
+                    ));
+                    self.func.set_type(dest, Type::Struct(func_name.clone()));
+                    return Ok(dest);
+                }
 
                 if func_name == "Ref" {
                     if s.args.len() != 1 {
@@ -979,7 +1112,10 @@ impl CFGBuilder {
                     ))
                 }
             }
-            _ => Err("Invalid attribute path: must start with a variable name".to_string()),
+            _ => Err(format!(
+                "Invalid attribute path: must start with a variable name, found {:?}",
+                expr
+            )),
         }
     }
 }

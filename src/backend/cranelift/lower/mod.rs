@@ -79,11 +79,15 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::BufferLoad(_, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::BufferLen(_, _)
+        | InstructionKind::StructCreate(_, _, _)
         | InstructionKind::StructLoad(_, _, _)
         | InstructionKind::StructOffset(_, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
         | InstructionKind::Borrow(_, _)
-        | InstructionKind::MutBorrow(_, _) => memory::lower(ctx, &inst.kind),
+        | InstructionKind::MutBorrow(_, _)
+        | InstructionKind::EnumCreate(_, _, _, _)
+        | InstructionKind::EnumIsVariant(_, _, _)
+        | InstructionKind::EnumExtract(_, _, _) => memory::lower(ctx, &inst.kind),
 
         InstructionKind::TupleCreate(_, _) | InstructionKind::TupleExtract(_, _, _) => {
             tuples::lower(ctx, &inst.kind)

@@ -18,6 +18,7 @@ def fold_test():
         suite,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     )
     .unwrap();
 
@@ -57,6 +58,7 @@ def dce_test():
         suite,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     )
     .unwrap();
 
@@ -94,6 +96,7 @@ def loop_type_test(max_iter: i64) -> f64:
     let func = transform(
         "loop_type_test".to_string(),
         suite,
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
     )

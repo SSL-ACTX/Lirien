@@ -20,6 +20,7 @@ pub enum Type {
     Array(Box<Type>, Option<usize>),
     Buffer(Box<Type>),
     Struct(String),
+    Enum(String),
     Tuple(Vec<Type>),
     Unknown,
 }
@@ -47,6 +48,7 @@ impl fmt::Display for Type {
             },
             Type::Buffer(t) => write!(f, "Buffer<{}>", t),
             Type::Struct(name) => write!(f, "Struct<{}>", name),
+            Type::Enum(name) => write!(f, "Enum<{}>", name),
             Type::Tuple(types) => {
                 let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
                 write!(f, "Tuple<{}>", inner.join(", "))
@@ -106,6 +108,38 @@ impl Type {
                 let total_align = self.align(struct_layouts);
                 (offset + total_align - 1) & !(total_align - 1)
             }
+            Type::Enum(name) => {
+                if let Some(variants) = struct_layouts.get(name) {
+                    let mut max_payload_size = 0;
+                    for (_, f_ty) in variants {
+                        let sz = f_ty.size(struct_layouts);
+                        if sz > max_payload_size {
+                            max_payload_size = sz;
+                        }
+                    }
+                    let tag_size = 1;
+                    let payload_align = {
+                        let mut max_align = 1;
+                        for (_, f_ty) in variants {
+                            let align = f_ty.align(struct_layouts);
+                            if align > max_align {
+                                max_align = align;
+                            }
+                        }
+                        max_align
+                    };
+
+                    let mut offset = tag_size;
+                    // Pad for payload alignment
+                    offset = (offset + payload_align - 1) & !(payload_align - 1);
+                    offset += max_payload_size;
+
+                    let total_align = self.align(struct_layouts);
+                    (offset + total_align - 1) & !(total_align - 1)
+                } else {
+                    0
+                }
+            }
             _ => 8,
         }
     }
@@ -123,6 +157,20 @@ impl Type {
                 if let Some(fields) = struct_layouts.get(name) {
                     let mut max_align = 1;
                     for (_, f_ty) in fields {
+                        let align = f_ty.align(struct_layouts);
+                        if align > max_align {
+                            max_align = align;
+                        }
+                    }
+                    max_align
+                } else {
+                    1
+                }
+            }
+            Type::Enum(name) => {
+                if let Some(variants) = struct_layouts.get(name) {
+                    let mut max_align = 1; // tag is u8 (align 1)
+                    for (_, f_ty) in variants {
                         let align = f_ty.align(struct_layouts);
                         if align > max_align {
                             max_align = align;
@@ -247,9 +295,15 @@ pub enum InstructionKind {
     BufferLoad(Value, Value, Value),
     BufferStore(Value, Value, Value, Value, Type),
     BufferLen(Value, Value),
+    StructCreate(Value, String, Vec<Value>),
     StructLoad(Value, Value, usize),
     StructOffset(Value, Value, usize),
     StructSet(Value, Value, usize, Value, Type),
+
+    // Enums
+    EnumCreate(Value, String, usize, Option<Value>), // dest, name, tag_idx, payload
+    EnumIsVariant(Value, Value, usize),              // dest, enum_val, tag_idx
+    EnumExtract(Value, Value, usize),                // dest, enum_val, tag_idx
 
     // Tuples
     TupleCreate(Value, Vec<Value>),
@@ -359,6 +413,17 @@ impl fmt::Display for Instruction {
             InstructionKind::BufferLen(d, buf) => {
                 write!(f, "  {} = buflen {}{}", d, buf, loc_str)
             }
+            InstructionKind::StructCreate(d, name, args) => {
+                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  {} = struct {} ({}){}",
+                    d,
+                    name,
+                    args_str.join(", "),
+                    loc_str
+                )
+            }
             InstructionKind::StructLoad(d, obj, offset) => {
                 write!(f, "  {} = load {} + {}{}", d, obj, offset, loc_str)
             }
@@ -370,6 +435,23 @@ impl fmt::Display for Instruction {
                     f,
                     "  {} = set {} + {} <- {} (as {}){}",
                     d, obj, offset, val, ty, loc_str
+                )
+            }
+            InstructionKind::EnumCreate(d, name, tag_idx, payload) => {
+                if let Some(p) = payload {
+                    write!(f, "  {} = enum {}::{} ({}){}", d, name, tag_idx, p, loc_str)
+                } else {
+                    write!(f, "  {} = enum {}::{}{}", d, name, tag_idx, loc_str)
+                }
+            }
+            InstructionKind::EnumIsVariant(d, e, tag_idx) => {
+                write!(f, "  {} = is_variant {} == {}{}", d, e, tag_idx, loc_str)
+            }
+            InstructionKind::EnumExtract(d, e, tag_idx) => {
+                write!(
+                    f,
+                    "  {} = extract_variant {} as {}{}",
+                    d, e, tag_idx, loc_str
                 )
             }
             InstructionKind::TupleCreate(d, elts) => {
@@ -410,6 +492,7 @@ pub struct Function {
     pub value_types: HashMap<Value, Type>,
     pub refinements: HashMap<Value, String>,
     pub struct_layouts: HashMap<String, Vec<(String, Type)>>,
+    pub enum_layouts: HashMap<String, Vec<(String, Type)>>,
 }
 
 impl Function {
@@ -425,6 +508,7 @@ impl Function {
             value_types: HashMap::new(),
             refinements: HashMap::new(),
             struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
         }
     }
 

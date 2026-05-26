@@ -20,6 +20,7 @@ def buffer_test(data: Buffer[f64], factor: f64) -> None:
         ast,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     )
     .unwrap();
 
@@ -57,6 +58,7 @@ def oob_buffer(data: Buffer[i64]) -> i64:
     let result = verify_and_compile(
         source,
         "oob_buffer".to_string(),
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
     );

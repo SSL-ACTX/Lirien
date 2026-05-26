@@ -333,7 +333,6 @@ fn parse_float_expr(
         }
         "-" => {
             if parts.len() == 2 {
-                // For Negate, we might need a workaround if Neg trait is not enough
                 Ok(parse_float_expr(parts[1], v_float, v_arr)?.neg())
             } else if parts.len() == 3 {
                 let lhs = parse_float_expr(parts[1], v_float, v_arr)?;

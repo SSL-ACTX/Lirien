@@ -47,6 +47,7 @@ impl CFGBuilder {
     pub fn new(
         name: String,
         layouts: HashMap<String, Vec<(String, String)>>,
+        enum_layouts_raw: HashMap<String, Vec<(String, String)>>,
         type_aliases: HashMap<String, String>,
     ) -> Self {
         let mut struct_layouts = HashMap::new();
@@ -78,9 +79,39 @@ impl CFGBuilder {
             struct_layouts.insert(s_name, field_types);
         }
 
+        let mut enum_layouts = HashMap::new();
+        for (e_name, variants) in enum_layouts_raw {
+            let mut variant_types = Vec::new();
+            for (v_name, v_ty_str) in variants {
+                let ty = match v_ty_str.as_str() {
+                    "i8" => Type::I8,
+                    "u8" => Type::U8,
+                    "i16" => Type::I16,
+                    "u16" => Type::U16,
+                    "i32" => Type::I32,
+                    "u32" => Type::U32,
+                    "i64" => Type::I64,
+                    "u64" => Type::U64,
+                    "f32" => Type::F32,
+                    "f64" => Type::F64,
+                    "bool" => Type::Bool,
+                    _ => {
+                        if v_ty_str == "unknown" {
+                            Type::Unknown
+                        } else {
+                            Type::Struct(v_ty_str.clone())
+                        }
+                    }
+                };
+                variant_types.push((v_name, ty));
+            }
+            enum_layouts.insert(e_name, variant_types);
+        }
+
         let mut builder = Self {
             func: Function {
                 struct_layouts,
+                enum_layouts,
                 ..Function::new(name)
             },
             current_block: BlockId(0),

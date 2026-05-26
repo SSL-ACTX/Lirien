@@ -3,15 +3,8 @@ use std::collections::HashMap;
 
 pub fn fold_constants(func: &mut Function) {
     let mut constants: HashMap<Value, Constant> = HashMap::new();
-    // Track values that are redefined (e.g. in loops or different blocks)
-    // Actually, in SSA, values should NEVER be redefined.
-    // But our "optimization" is a bit naive and processes blocks sequentially.
-    // Let's at least clear constants between blocks if we are not doing proper dataflow.
 
     for block in &mut func.blocks {
-        // constants.clear(); // If we clear, we lose cross-block constants.
-        // If it's true SSA, we don't need to clear.
-
         let mut folded_instructions = Vec::new();
 
         for inst in block.instructions.drain(..) {

@@ -8,12 +8,12 @@ use tracing::info;
 pub fn optimize(func: &mut Function) {
     info!(target: "lila::ssa::opt", "Optimizing IR for '{}'...", func.name);
 
-    // Type Propagation Pass (crucial for loops)
+    // Type Propagation
     type_propagation::propagate_types(func);
 
-    // Constant Folding Pass
+    // Constant Folding
     constant_folding::fold_constants(func);
 
-    // Dead Code Elimination Pass
+    // Dead Code Elimination
     dce::eliminate_dead_code(func);
 }
