@@ -11,7 +11,6 @@ pub fn lower<M: Module>(
         InstructionKind::TupleCreate(dest, elts) => {
             let tuple_ty = ctx.ssa_func.get_type(*dest);
             let size = tuple_ty.size(&ctx.ssa_func.struct_layouts);
-            let _align = tuple_ty.align(&ctx.ssa_func.struct_layouts) as u32;
 
             let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
@@ -25,7 +24,12 @@ pub fn lower<M: Module>(
                 let elt_align = elt_ty.align(&ctx.ssa_func.struct_layouts);
                 offset = (offset + elt_align - 1) & !(elt_align - 1);
 
-                ctx.builder.ins().stack_store(elt_val, slot, offset as i32);
+                if elt_ty.is_composite() {
+                    let elt_size = elt_ty.size(&ctx.ssa_func.struct_layouts);
+                    super::copy_to_stack(&mut ctx.builder, elt_val, slot, offset as i32, elt_size);
+                } else {
+                    ctx.builder.ins().stack_store(elt_val, slot, offset as i32);
+                }
                 offset += elt_ty.size(&ctx.ssa_func.struct_layouts);
             }
 
@@ -47,12 +51,18 @@ pub fn lower<M: Module>(
                 let dest_align = dest_ty.align(&ctx.ssa_func.struct_layouts);
                 offset = (offset + dest_align - 1) & !(dest_align - 1);
 
-                let cl_ty = super::translate_type(dest_ty);
-                let res = ctx
-                    .builder
-                    .ins()
-                    .load(cl_ty, MemFlags::new(), tuple_addr, offset as i32);
-                ctx.values.insert(*dest, res);
+                if dest_ty.is_composite() {
+                    // For composite types, return the address into the tuple
+                    let res = ctx.builder.ins().iadd_imm(tuple_addr, offset as i64);
+                    ctx.values.insert(*dest, res);
+                } else {
+                    let cl_ty = super::translate_type(dest_ty);
+                    let res =
+                        ctx.builder
+                            .ins()
+                            .load(cl_ty, MemFlags::new(), tuple_addr, offset as i32);
+                    ctx.values.insert(*dest, res);
+                }
             }
         }
         _ => {}

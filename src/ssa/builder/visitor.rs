@@ -578,8 +578,15 @@ impl CFGBuilder {
                         .1
                         .clone();
 
+                    if matches!(field_ty, Type::Unknown) {
+                        return Err(format!(
+                            "Field '{}' has unknown type in struct '{}'",
+                            s.attr, struct_name
+                        ));
+                    }
+
                     let dest = self.func.next_value();
-                    if let Type::Struct(_) = field_ty {
+                    if field_ty.is_composite() {
                         self.add_instruction(InstructionKind::StructOffset(
                             dest,
                             obj,
@@ -610,6 +617,32 @@ impl CFGBuilder {
                     Type::Array(inner, _) => {
                         self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));
                         self.func.set_type(dest, *inner);
+                    }
+                    Type::Tuple(elt_types) => {
+                        // Find the constant index
+                        let mut idx_val = None;
+                        for block in &self.func.blocks {
+                            for inst in &block.instructions {
+                                if let InstructionKind::ConstInt(v, val) = inst.kind {
+                                    if v == idx {
+                                        idx_val = Some(val as usize);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(i) = idx_val {
+                            if i < elt_types.len() {
+                                let elt_ty = elt_types[i].clone();
+                                self.add_instruction(InstructionKind::TupleExtract(dest, arr, i));
+                                self.func.set_type(dest, elt_ty);
+                            } else {
+                                return Err(format!("Tuple index out of bounds: {}", i));
+                            }
+                        } else {
+                            return Err("Tuple index must be a constant".to_string());
+                        }
                     }
                     _ => {
                         self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));

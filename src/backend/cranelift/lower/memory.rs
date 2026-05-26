@@ -105,7 +105,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 size as u32,
             ));
 
-            let fields = ctx.ssa_func.struct_layouts.get(struct_name).unwrap();
+            let fields = ctx
+                .ssa_func
+                .struct_layouts
+                .get(struct_name)
+                .unwrap()
+                .clone();
             let mut field_offset = 0;
             for (i, p_val) in args.iter().enumerate() {
                 let cl_p_val = get_val(&ctx.values, p_val);
@@ -113,20 +118,31 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 let f_align = f_ty.align(&ctx.ssa_func.struct_layouts);
                 field_offset = (field_offset + f_align - 1) & !(f_align - 1);
 
-                let cl_ty = super::translate_type(f_ty);
-                let val_to_store = if ctx.builder.func.dfg.value_type(cl_p_val) != cl_ty {
-                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(cl_p_val).is_int() {
-                        ctx.builder.ins().ireduce(cl_ty, cl_p_val)
+                if f_ty.is_composite() {
+                    let f_size = f_ty.size(&ctx.ssa_func.struct_layouts);
+                    super::copy_to_stack(
+                        &mut ctx.builder,
+                        cl_p_val,
+                        slot,
+                        field_offset as i32,
+                        f_size,
+                    );
+                } else {
+                    let cl_ty = super::translate_type(f_ty);
+                    let val_to_store = if ctx.builder.func.dfg.value_type(cl_p_val) != cl_ty {
+                        if cl_ty.is_int() && ctx.builder.func.dfg.value_type(cl_p_val).is_int() {
+                            ctx.builder.ins().ireduce(cl_ty, cl_p_val)
+                        } else {
+                            cl_p_val
+                        }
                     } else {
                         cl_p_val
-                    }
-                } else {
-                    cl_p_val
-                };
+                    };
 
-                ctx.builder
-                    .ins()
-                    .stack_store(val_to_store, slot, field_offset as i32);
+                    ctx.builder
+                        .ins()
+                        .stack_store(val_to_store, slot, field_offset as i32);
+                }
                 field_offset += f_ty.size(&ctx.ssa_func.struct_layouts);
             }
 
@@ -136,12 +152,17 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::StructLoad(dest, obj, offset) => {
             let obj_ptr = get_val(&ctx.values, obj);
             let dest_ty = ctx.ssa_func.get_type(*dest);
-            let cl_ty = translate_type(&dest_ty);
-            let res = ctx
-                .builder
-                .ins()
-                .load(cl_ty, MemFlags::new(), obj_ptr, *offset as i32);
-            ctx.values.insert(*dest, res);
+            if dest_ty.is_composite() {
+                let res = ctx.builder.ins().iadd_imm(obj_ptr, *offset as i64);
+                ctx.values.insert(*dest, res);
+            } else {
+                let cl_ty = translate_type(&dest_ty);
+                let res = ctx
+                    .builder
+                    .ins()
+                    .load(cl_ty, MemFlags::new(), obj_ptr, *offset as i32);
+                ctx.values.insert(*dest, res);
+            }
         }
         InstructionKind::StructOffset(dest, obj, offset) => {
             let obj_ptr = get_val(&ctx.values, obj);
@@ -205,55 +226,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 offset = (offset + p_align - 1) & !(p_align - 1);
 
                 let p_size = payload_ty.size(&ctx.ssa_func.struct_layouts);
-                let mut curr_offset = 0;
-                while curr_offset < p_size {
-                    let bytes_left = p_size - curr_offset;
-                    if bytes_left >= 8 {
-                        let val = ctx.builder.ins().load(
-                            types::I64,
-                            MemFlags::new(),
-                            p_val,
-                            curr_offset as i32,
-                        );
-                        ctx.builder
-                            .ins()
-                            .stack_store(val, slot, (offset + curr_offset) as i32);
-                        curr_offset += 8;
-                    } else if bytes_left >= 4 {
-                        let val = ctx.builder.ins().load(
-                            types::I32,
-                            MemFlags::new(),
-                            p_val,
-                            curr_offset as i32,
-                        );
-                        ctx.builder
-                            .ins()
-                            .stack_store(val, slot, (offset + curr_offset) as i32);
-                        curr_offset += 4;
-                    } else if bytes_left >= 2 {
-                        let val = ctx.builder.ins().load(
-                            types::I16,
-                            MemFlags::new(),
-                            p_val,
-                            curr_offset as i32,
-                        );
-                        ctx.builder
-                            .ins()
-                            .stack_store(val, slot, (offset + curr_offset) as i32);
-                        curr_offset += 2;
-                    } else {
-                        let val = ctx.builder.ins().load(
-                            types::I8,
-                            MemFlags::new(),
-                            p_val,
-                            curr_offset as i32,
-                        );
-                        ctx.builder
-                            .ins()
-                            .stack_store(val, slot, (offset + curr_offset) as i32);
-                        curr_offset += 1;
-                    }
-                }
+                super::copy_to_stack(&mut ctx.builder, p_val, slot, offset as i32, p_size);
             }
 
             let dest_addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);

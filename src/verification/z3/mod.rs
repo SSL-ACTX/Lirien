@@ -10,6 +10,61 @@ pub mod control_flow;
 pub mod memory;
 pub mod tuples;
 
+pub fn get_leaf_offsets(
+    ty: &Type,
+    struct_layouts: &HashMap<String, Vec<(String, Type)>>,
+    base_offset: usize,
+    offsets: &mut Vec<(usize, Type)>,
+) {
+    match ty {
+        Type::Struct(name) => {
+            if let Some(fields) = struct_layouts.get(name) {
+                let mut offset = 0;
+                for (_, f_ty) in fields {
+                    let align = f_ty.align(struct_layouts);
+                    offset = (offset + align - 1) & !(align - 1);
+                    get_leaf_offsets(f_ty, struct_layouts, base_offset + offset, offsets);
+                    offset += f_ty.size(struct_layouts);
+                }
+            }
+        }
+        Type::Tuple(types) => {
+            let mut offset = 0;
+            for f_ty in types {
+                let align = f_ty.align(struct_layouts);
+                offset = (offset + align - 1) & !(align - 1);
+                get_leaf_offsets(f_ty, struct_layouts, base_offset + offset, offsets);
+                offset += f_ty.size(struct_layouts);
+            }
+        }
+        _ => {
+            offsets.push((base_offset, ty.clone()));
+        }
+    }
+}
+
+pub fn copy_composite_z3<'a>(
+    t_ctx: &TranslationContext<'a>,
+    current_state: Array,
+    src_val: Value,
+    src_ty: &Type,
+    dest_base_offset: i64,
+) -> Array {
+    let mut new_state = current_state;
+    let mut leaves = Vec::new();
+    get_leaf_offsets(src_ty, &t_ctx.func.struct_layouts, 0, &mut leaves);
+
+    if let Some(src_array) = t_ctx.z3_arrays.get(&src_val) {
+        for (offset, _leaf_ty) in leaves {
+            let src_offset_z3 = Int::from_i64(offset as i64);
+            let dest_offset_z3 = Int::from_i64(dest_base_offset + offset as i64);
+            let val = src_array.select(&src_offset_z3);
+            new_state = new_state.store(&dest_offset_z3, &val);
+        }
+    }
+    new_state
+}
+
 pub struct TranslationContext<'a> {
     pub ctx: &'a Context,
     pub solver: &'a Solver,

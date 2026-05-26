@@ -19,9 +19,9 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     inner_ty = *inner;
                     break;
                 }
-                Type::Struct(_) => {
+                Type::Struct(_) | Type::Tuple(_) => {
                     is_mem_obj = true;
-                    // Structs are modeled as Int -> BV for now (field addressed via byte offsets)
+                    // Composite types are modeled as Int -> BV for now (field addressed via byte offsets)
                     inner_ty = Type::I64;
                     break;
                 }
@@ -205,11 +205,21 @@ pub fn translate(
                     let f_align = f_ty.align(&ctx.func.struct_layouts);
                     offset = (offset + f_align - 1) & !(f_align - 1);
 
-                    let z3_offset = z3::ast::Int::from_i64(offset as i64);
-                    if let Some(z3_v) = ctx.z3_bvs.get(p_val) {
-                        current_state = current_state.store(&z3_offset, z3_v);
-                    } else if let Some(z3_v) = ctx.z3_floats.get(p_val) {
-                        current_state = current_state.store(&z3_offset, z3_v);
+                    if f_ty.is_composite() {
+                        current_state = super::copy_composite_z3(
+                            ctx,
+                            current_state,
+                            *p_val,
+                            f_ty,
+                            offset as i64,
+                        );
+                    } else {
+                        let z3_offset = z3::ast::Int::from_i64(offset as i64);
+                        if let Some(z3_v) = ctx.z3_bvs.get(p_val) {
+                            current_state = current_state.store(&z3_offset, z3_v);
+                        } else if let Some(z3_v) = ctx.z3_floats.get(p_val) {
+                            current_state = current_state.store(&z3_offset, z3_v);
+                        }
                     }
                     offset += f_ty.size(&ctx.func.struct_layouts);
                 }
@@ -265,9 +275,19 @@ pub fn translate(
                 let mut current_state = z3_zero_arr.clone();
 
                 if let Some(payload_val) = payload {
-                    if let Some(z3_src_payload) = ctx.z3_arrays.get(payload_val) {
-                        current_state = z3_src_payload.clone();
-                    }
+                    let enum_layouts = ctx.func.enum_layouts.get(_enum_name).unwrap();
+                    let payload_ty = &enum_layouts[*tag_idx].1;
+                    let p_align = payload_ty.align(&ctx.func.struct_layouts);
+                    let mut offset = 1;
+                    offset = (offset + p_align - 1) & !(p_align - 1);
+
+                    current_state = super::copy_composite_z3(
+                        ctx,
+                        current_state,
+                        *payload_val,
+                        payload_ty,
+                        offset as i64,
+                    );
                 }
                 ctx.solver
                     .assert(path_cond.implies(z3_dest_payload.eq(&current_state)));

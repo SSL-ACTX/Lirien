@@ -1,5 +1,6 @@
 use super::{translate_type, CodegenContext};
 use crate::ssa::ir::{BlockId as SsaBlockId, Instruction, InstructionKind, Value as SsaValue};
+use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_module::Module;
 
@@ -8,6 +9,60 @@ pub mod control_flow;
 pub mod intrinsics;
 pub mod memory;
 pub mod tuples;
+
+pub fn copy_memory(builder: &mut FunctionBuilder, src_ptr: Value, dest_ptr: Value, size: usize) {
+    let mut curr_offset = 0;
+    while curr_offset < size {
+        let bytes_left = size - curr_offset;
+        let (cl_ty, chunk_size) = if bytes_left >= 8 {
+            (types::I64, 8)
+        } else if bytes_left >= 4 {
+            (types::I32, 4)
+        } else if bytes_left >= 2 {
+            (types::I16, 2)
+        } else {
+            (types::I8, 1)
+        };
+
+        let val = builder
+            .ins()
+            .load(cl_ty, MemFlags::new(), src_ptr, curr_offset as i32);
+        builder
+            .ins()
+            .store(MemFlags::new(), val, dest_ptr, curr_offset as i32);
+        curr_offset += chunk_size;
+    }
+}
+
+pub fn copy_to_stack(
+    builder: &mut FunctionBuilder,
+    src_ptr: Value,
+    slot: StackSlot,
+    slot_offset: i32,
+    size: usize,
+) {
+    let mut curr_offset = 0;
+    while curr_offset < size {
+        let bytes_left = size - curr_offset;
+        let (cl_ty, chunk_size) = if bytes_left >= 8 {
+            (types::I64, 8)
+        } else if bytes_left >= 4 {
+            (types::I32, 4)
+        } else if bytes_left >= 2 {
+            (types::I16, 2)
+        } else {
+            (types::I8, 1)
+        };
+
+        let val = builder
+            .ins()
+            .load(cl_ty, MemFlags::new(), src_ptr, curr_offset as i32);
+        builder
+            .ins()
+            .stack_store(val, slot, slot_offset + curr_offset as i32);
+        curr_offset += chunk_size;
+    }
+}
 
 pub fn lower_instruction<M: Module>(
     ctx: &mut CodegenContext<M>,

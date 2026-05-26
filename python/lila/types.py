@@ -268,6 +268,8 @@ def struct(cls):
         if hasattr(ty, "__lila_struct__"):
             is_lila_struct = True
             lila_ty = ty.__name__
+        elif "tuple" in ty_str:
+            lila_ty = ty_str
         elif "i8" in ty_str:
             lila_ty = "i8"
         elif "u8" in ty_str:
@@ -290,6 +292,8 @@ def struct(cls):
             lila_ty = "f64"
         elif "bool" in ty_str:
             lila_ty = "bool"
+        elif "tuple" in ty_str:
+            lila_ty = ty_str
         else:
             lila_ty = "unknown"
 

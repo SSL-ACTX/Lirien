@@ -74,6 +74,14 @@ impl Type {
         }
     }
 
+    pub fn is_composite(&self) -> bool {
+        match self {
+            Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
+            Type::Array(_, Some(_)) => true,
+            _ => false,
+        }
+    }
+
     pub fn size(&self, struct_layouts: &HashMap<String, Vec<(String, Type)>>) -> usize {
         match self {
             Type::I8 | Type::U8 | Type::Bool => 1,
@@ -725,5 +733,35 @@ impl Function {
             }
         }
         println!("}}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_composite() {
+        assert!(
+            Type::Struct("S".to_string()).is_composite(),
+            "Struct should be composite"
+        );
+        assert!(
+            Type::Tuple(vec![Type::I64]).is_composite(),
+            "Tuple should be composite"
+        );
+        assert!(
+            Type::Enum("E".to_string()).is_composite(),
+            "Enum should be composite"
+        );
+        assert!(
+            Type::Array(Box::new(Type::I64), Some(10)).is_composite(),
+            "Sized array should be composite"
+        );
+        assert!(!Type::I64.is_composite(), "i64 should not be composite");
+        assert!(
+            !Type::Array(Box::new(Type::I64), None).is_composite(),
+            "Unsized array should not be composite"
+        );
     }
 }

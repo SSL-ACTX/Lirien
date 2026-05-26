@@ -1,11 +1,14 @@
 pub mod metadata;
 pub mod ssa_manager;
 pub mod visitor;
+#[cfg(test)]
+pub mod visitor_tests;
 
 use super::ir::{
     BasicBlock, BlockId, Function, Instruction, InstructionKind, SourceLocation, Type, Value,
 };
 use rustpython_ast as ast;
+use rustpython_parser::Parse;
 use std::collections::{HashMap, HashSet};
 
 pub struct CFGBuilder {
@@ -54,23 +57,27 @@ impl CFGBuilder {
         for (s_name, fields) in layouts {
             let mut field_types = Vec::new();
             for (f_name, f_ty_str) in fields {
-                let ty = match f_ty_str.as_str() {
-                    "i8" => Type::I8,
-                    "u8" => Type::U8,
-                    "i16" => Type::I16,
-                    "u16" => Type::U16,
-                    "i32" => Type::I32,
-                    "u32" => Type::U32,
-                    "i64" => Type::I64,
-                    "u64" => Type::U64,
-                    "f32" => Type::F32,
-                    "f64" => Type::F64,
-                    "bool" => Type::Bool,
-                    _ => {
-                        if f_ty_str == "unknown" {
-                            Type::Unknown
-                        } else {
-                            Type::Struct(f_ty_str.clone())
+                let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
+                    metadata::parse_type(&expr, &type_aliases).unwrap_or(Type::Unknown)
+                } else {
+                    match f_ty_str.as_str() {
+                        "i8" => Type::I8,
+                        "u8" => Type::U8,
+                        "i16" => Type::I16,
+                        "u16" => Type::U16,
+                        "i32" => Type::I32,
+                        "u32" => Type::U32,
+                        "i64" => Type::I64,
+                        "u64" => Type::U64,
+                        "f32" => Type::F32,
+                        "f64" => Type::F64,
+                        "bool" => Type::Bool,
+                        _ => {
+                            if f_ty_str == "unknown" {
+                                Type::Unknown
+                            } else {
+                                Type::Struct(f_ty_str.clone())
+                            }
                         }
                     }
                 };
@@ -83,23 +90,27 @@ impl CFGBuilder {
         for (e_name, variants) in enum_layouts_raw {
             let mut variant_types = Vec::new();
             for (v_name, v_ty_str) in variants {
-                let ty = match v_ty_str.as_str() {
-                    "i8" => Type::I8,
-                    "u8" => Type::U8,
-                    "i16" => Type::I16,
-                    "u16" => Type::U16,
-                    "i32" => Type::I32,
-                    "u32" => Type::U32,
-                    "i64" => Type::I64,
-                    "u64" => Type::U64,
-                    "f32" => Type::F32,
-                    "f64" => Type::F64,
-                    "bool" => Type::Bool,
-                    _ => {
-                        if v_ty_str == "unknown" {
-                            Type::Unknown
-                        } else {
-                            Type::Struct(v_ty_str.clone())
+                let ty = if let Ok(expr) = ast::Expr::parse(&v_ty_str, "<variant>") {
+                    metadata::parse_type(&expr, &type_aliases).unwrap_or(Type::Unknown)
+                } else {
+                    match v_ty_str.as_str() {
+                        "i8" => Type::I8,
+                        "u8" => Type::U8,
+                        "i16" => Type::I16,
+                        "u16" => Type::U16,
+                        "i32" => Type::I32,
+                        "u32" => Type::U32,
+                        "i64" => Type::I64,
+                        "u64" => Type::U64,
+                        "f32" => Type::F32,
+                        "f64" => Type::F64,
+                        "bool" => Type::Bool,
+                        _ => {
+                            if v_ty_str == "unknown" {
+                                Type::Unknown
+                            } else {
+                                Type::Struct(v_ty_str.clone())
+                            }
                         }
                     }
                 };
