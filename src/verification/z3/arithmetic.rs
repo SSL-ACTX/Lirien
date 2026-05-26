@@ -1,6 +1,6 @@
 use super::TranslationContext;
-use crate::ssa::ir::{Instruction, InstructionKind};
-use z3::ast::{Ast, Bool, Int, Real};
+use crate::ssa::ir::{Instruction, InstructionKind, Type};
+use z3::ast::{Ast, Bool, Int, Real, BV};
 use z3::SatResult;
 
 pub fn translate<'ctx>(
@@ -10,8 +10,9 @@ pub fn translate<'ctx>(
 ) -> Result<(), String> {
     match &inst.kind {
         InstructionKind::ConstInt(dest, val) => {
-            if let Some(z3_dest) = ctx.z3_ints.get(dest) {
-                let z3_val = Int::from_i64(ctx.ctx, *val);
+            if let Some(z3_dest) = ctx.z3_bvs.get(dest) {
+                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let z3_val = BV::from_i64(ctx.ctx, *val, bit_width);
                 ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&z3_val)));
             }
         }
@@ -24,12 +25,12 @@ pub fn translate<'ctx>(
         }
         InstructionKind::Add(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&Int::add(ctx.ctx, &[z3_l, z3_r]))));
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvadd(z3_r))));
             }
         }
         InstructionKind::FAdd(dest, lhs, rhs) => {
@@ -44,12 +45,12 @@ pub fn translate<'ctx>(
         }
         InstructionKind::Sub(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&Int::sub(ctx.ctx, &[z3_l, z3_r]))));
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvsub(z3_r))));
             }
         }
         InstructionKind::FSub(dest, lhs, rhs) => {
@@ -64,12 +65,12 @@ pub fn translate<'ctx>(
         }
         InstructionKind::Mul(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
                 ctx.solver
-                    .assert(&path_cond.implies(&z3_dest._eq(&Int::mul(ctx.ctx, &[z3_l, z3_r]))));
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvmul(z3_r))));
             }
         }
         InstructionKind::FMul(dest, lhs, rhs) => {
@@ -84,17 +85,18 @@ pub fn translate<'ctx>(
         }
         InstructionKind::SDiv(dest, lhs, rhs) | InstructionKind::SRem(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
-                let zero = Int::from_i64(ctx.ctx, 0);
+                let bit_width = ctx.func.get_type(*rhs).int_bit_width().unwrap_or(64);
+                let zero = BV::from_i64(ctx.ctx, 0, bit_width);
                 let is_zero = z3_r._eq(&zero);
 
                 ctx.solver.push();
                 ctx.solver.assert(path_cond);
                 ctx.solver.assert(&is_zero);
-                if ctx.solver.check() == SatResult::Sat {
+                if ctx.solver.check() != SatResult::Unsat {
                     let loc_info = inst
                         .location
                         .map(|l| format!(" at {}", l))
@@ -108,10 +110,10 @@ pub fn translate<'ctx>(
 
                 if let InstructionKind::SDiv(_, _, _) = &inst.kind {
                     ctx.solver
-                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.div(z3_r))));
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvsdiv(z3_r))));
                 } else {
                     ctx.solver
-                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.rem(z3_r))));
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvsrem(z3_r))));
                 }
             }
         }
@@ -127,7 +129,7 @@ pub fn translate<'ctx>(
                 ctx.solver.push();
                 ctx.solver.assert(path_cond);
                 ctx.solver.assert(&is_zero);
-                if ctx.solver.check() == SatResult::Sat {
+                if ctx.solver.check() != SatResult::Unsat {
                     let loc_info = inst
                         .location
                         .map(|l| format!(" at {}", l))
@@ -145,16 +147,16 @@ pub fn translate<'ctx>(
         }
         InstructionKind::UDiv(dest, lhs, rhs) | InstructionKind::URem(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
                 if let InstructionKind::UDiv(_, _, _) = &inst.kind {
                     ctx.solver
-                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.div(z3_r))));
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvudiv(z3_r))));
                 } else {
                     ctx.solver
-                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.rem(z3_r))));
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvurem(z3_r))));
                 }
             }
         }
@@ -169,27 +171,30 @@ pub fn translate<'ctx>(
         | InstructionKind::UGt(dest, lhs, rhs)
         | InstructionKind::UGe(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(l), Some(r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
                 let is_true = match &inst.kind {
                     InstructionKind::Eq(_, _, _) => l._eq(r),
                     InstructionKind::Ne(_, _, _) => l._eq(r).not(),
-                    InstructionKind::SLt(_, _, _) | InstructionKind::ULt(_, _, _) => l.lt(r),
-                    InstructionKind::SLe(_, _, _) | InstructionKind::ULe(_, _, _) => l.le(r),
-                    InstructionKind::SGt(_, _, _) | InstructionKind::UGt(_, _, _) => l.gt(r),
-                    InstructionKind::SGe(_, _, _) | InstructionKind::UGe(_, _, _) => l.ge(r),
+                    InstructionKind::SLt(_, _, _) => l.bvslt(r),
+                    InstructionKind::SLe(_, _, _) => l.bvsle(r),
+                    InstructionKind::SGt(_, _, _) => l.bvsgt(r),
+                    InstructionKind::SGe(_, _, _) => l.bvsge(r),
+                    InstructionKind::ULt(_, _, _) => l.bvult(r),
+                    InstructionKind::ULe(_, _, _) => l.bvule(r),
+                    InstructionKind::UGt(_, _, _) => l.bvugt(r),
+                    InstructionKind::UGe(_, _, _) => l.bvuge(r),
                     _ => unreachable!(),
                 };
-                let val = Bool::ite(
-                    &is_true,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
+                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let one = BV::from_i64(ctx.ctx, 1, bit_width);
+                let zero = BV::from_i64(ctx.ctx, 0, bit_width);
+                let val = Bool::ite(&is_true, &one, &zero);
                 ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
             } else if let (Some(z3_dest), Some(l), Some(r)) = (
-                ctx.z3_ints.get(dest),
+                ctx.z3_bvs.get(dest),
                 ctx.z3_reals.get(lhs),
                 ctx.z3_reals.get(rhs),
             ) {
@@ -202,11 +207,10 @@ pub fn translate<'ctx>(
                     InstructionKind::SGe(_, _, _) | InstructionKind::FGe(_, _, _) => l.ge(r),
                     _ => unreachable!(),
                 };
-                let val = Bool::ite(
-                    &is_true,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
+                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let one = BV::from_i64(ctx.ctx, 1, bit_width);
+                let zero = BV::from_i64(ctx.ctx, 0, bit_width);
+                let val = Bool::ite(&is_true, &one, &zero);
                 ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
             }
         }
@@ -215,7 +219,7 @@ pub fn translate<'ctx>(
         | InstructionKind::FGt(dest, lhs, rhs)
         | InstructionKind::FGe(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(l), Some(r)) = (
-                ctx.z3_ints.get(dest),
+                ctx.z3_bvs.get(dest),
                 ctx.z3_reals.get(lhs),
                 ctx.z3_reals.get(rhs),
             ) {
@@ -226,58 +230,101 @@ pub fn translate<'ctx>(
                     InstructionKind::FGe(_, _, _) => l.ge(r),
                     _ => unreachable!(),
                 };
-                let val = Bool::ite(
-                    &is_true,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
+                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let one = BV::from_i64(ctx.ctx, 1, bit_width);
+                let zero = BV::from_i64(ctx.ctx, 0, bit_width);
+                let val = Bool::ite(&is_true, &one, &zero);
                 ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
             }
         }
         InstructionKind::And(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
-                let zero = Int::from_i64(ctx.ctx, 0);
-                let both_nonzero =
-                    Bool::and(ctx.ctx, &[&z3_l._eq(&zero).not(), &z3_r._eq(&zero).not()]);
-                let val = Bool::ite(
-                    &both_nonzero,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+                let ty = ctx.func.get_type(*dest);
+                if matches!(ty, Type::Bool) {
+                    let one = BV::from_i64(ctx.ctx, 1, 1);
+                    let both_true = Bool::and(ctx.ctx, &[&z3_l._eq(&one), &z3_r._eq(&one)]);
+                    let val = Bool::ite(&both_true, &one, &BV::from_i64(ctx.ctx, 0, 1));
+                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+                } else {
+                    ctx.solver
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvand(z3_r))));
+                }
             }
         }
         InstructionKind::Or(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
-                ctx.z3_ints.get(dest),
-                ctx.z3_ints.get(lhs),
-                ctx.z3_ints.get(rhs),
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
             ) {
-                let zero = Int::from_i64(ctx.ctx, 0);
-                let either_nonzero =
-                    Bool::or(ctx.ctx, &[&z3_l._eq(&zero).not(), &z3_r._eq(&zero).not()]);
-                let val = Bool::ite(
-                    &either_nonzero,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+                let ty = ctx.func.get_type(*dest);
+                if matches!(ty, Type::Bool) {
+                    let one = BV::from_i64(ctx.ctx, 1, 1);
+                    let either_true = Bool::or(ctx.ctx, &[&z3_l._eq(&one), &z3_r._eq(&one)]);
+                    let val = Bool::ite(&either_true, &one, &BV::from_i64(ctx.ctx, 0, 1));
+                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+                } else {
+                    ctx.solver
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvor(z3_r))));
+                }
+            }
+        }
+        InstructionKind::Xor(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
+                ctx.solver
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvxor(z3_r))));
             }
         }
         InstructionKind::Not(dest, src) => {
-            if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_ints.get(dest), ctx.z3_ints.get(src)) {
-                let zero = Int::from_i64(ctx.ctx, 0);
-                let is_zero = z3_src._eq(&zero);
-                let val = Bool::ite(
-                    &is_zero,
-                    &Int::from_i64(ctx.ctx, 1),
-                    &Int::from_i64(ctx.ctx, 0),
-                );
-                ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+            if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
+                let ty = ctx.func.get_type(*dest);
+                if matches!(ty, Type::Bool) {
+                    let one = BV::from_i64(ctx.ctx, 1, 1);
+                    let is_false = z3_src._eq(&BV::from_i64(ctx.ctx, 0, 1));
+                    let val = Bool::ite(&is_false, &one, &BV::from_i64(ctx.ctx, 0, 1));
+                    ctx.solver.assert(&path_cond.implies(&z3_dest._eq(&val)));
+                } else {
+                    ctx.solver
+                        .assert(&path_cond.implies(&z3_dest._eq(&z3_src.bvnot())));
+                }
+            }
+        }
+        InstructionKind::Shl(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
+                ctx.solver
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvshl(z3_r))));
+            }
+        }
+        InstructionKind::LShr(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
+                ctx.solver
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvlshr(z3_r))));
+            }
+        }
+        InstructionKind::AShr(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
+                ctx.solver
+                    .assert(&path_cond.implies(&z3_dest._eq(&z3_l.bvashr(z3_r))));
             }
         }
         InstructionKind::FSqrt(dest, _src)
@@ -298,7 +345,7 @@ pub fn translate<'ctx>(
                             ctx.solver.push();
                             ctx.solver.assert(path_cond);
                             ctx.solver.assert(&z3_src.lt(&zero));
-                            if ctx.solver.check() == SatResult::Sat {
+                            if ctx.solver.check() != SatResult::Unsat {
                                 return Err(format!(
                                     "Potential sqrt of negative number at v{}",
                                     dest.0
@@ -335,7 +382,7 @@ pub fn translate<'ctx>(
                 );
 
                 ctx.solver.assert(&domain_err);
-                if ctx.solver.check() == SatResult::Sat {
+                if ctx.solver.check() != SatResult::Unsat {
                     return Err(format!("Potential domain error in fpow at v{}", dest.0));
                 }
                 ctx.solver.pop(1);
@@ -343,21 +390,20 @@ pub fn translate<'ctx>(
         }
 
         InstructionKind::IToF(dest, src, _) => {
-            if let (Some(d), Some(s)) = (ctx.z3_reals.get(dest), ctx.z3_ints.get(src)) {
-                ctx.solver.assert(&path_cond.implies(&d._eq(&s.to_real())));
+            if let (Some(d), Some(s)) = (ctx.z3_reals.get(dest), ctx.z3_bvs.get(src)) {
+                let is_signed = !matches!(
+                    ctx.func.get_type(*src),
+                    Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
+                );
+                ctx.solver
+                    .assert(&path_cond.implies(&d._eq(&s.to_int(is_signed).to_real())));
             }
         }
         InstructionKind::FToI(dest, src, _) => {
-            if let (Some(d), Some(s)) = (ctx.z3_ints.get(dest), ctx.z3_reals.get(src)) {
-                ctx.solver.assert(&path_cond.implies(&d._eq(&s.to_int())));
+            if let (Some(d), Some(s)) = (ctx.z3_bvs.get(dest), ctx.z3_reals.get(src)) {
+                ctx.solver
+                    .assert(&path_cond.implies(&d.to_int(false)._eq(&s.to_int())));
             }
-        }
-
-        InstructionKind::Shl(dest, _, _)
-        | InstructionKind::LShr(dest, _, _)
-        | InstructionKind::AShr(dest, _, _)
-        | InstructionKind::Xor(dest, _, _) => {
-            let _z3_dest = ctx.z3_ints.get(dest);
         }
 
         _ => {}

@@ -598,9 +598,8 @@ impl CFGBuilder {
                     elt_types.push(self.func.get_type(val));
                 }
                 let dest = self.func.next_value();
-                // We'll reuse the Call instruction with a special internal name "make_tuple"
-                // which the backend will recognize to handle tuple construction.
-                self.add_instruction(InstructionKind::Call(dest, "make_tuple".to_string(), elts));
+                // We'll use the TupleCreate instruction which the backend will handle.
+                self.add_instruction(InstructionKind::TupleCreate(dest, elts));
                 self.func.set_type(dest, Type::Tuple(elt_types));
                 Ok(dest)
             }
@@ -763,7 +762,16 @@ impl CFGBuilder {
                 }
 
                 let dest = self.func.next_value();
-                self.add_instruction(InstructionKind::Call(dest, func_name, args));
+                self.add_instruction(InstructionKind::Call(dest, func_name.clone(), args));
+
+                // Look up return type in registry
+                let mut ret_ty = Type::Unknown;
+                if let Ok(registry) = crate::bridge::registry::GLOBAL_REGISTRY.lock() {
+                    if let Some(sig) = registry.get(&func_name) {
+                        ret_ty = sig.return_type.clone();
+                    }
+                }
+                self.func.set_type(dest, ret_ty);
                 Ok(dest)
             }
             _ => Err(format!("Expression type {:?} not yet supported", expr)),
@@ -894,7 +902,27 @@ impl CFGBuilder {
 
                 self.write_variable(root_name, self.current_block, dest_obj);
             }
-            _ => return Err("Unsupported assignment target".to_string()),
+            ast::Expr::Tuple(t) => {
+                let tuple_ty = self.func.get_type(value);
+                if let Type::Tuple(elt_types) = tuple_ty {
+                    if t.elts.len() != elt_types.len() {
+                        return Err(format!(
+                            "Cannot unpack tuple of size {} into {} targets",
+                            elt_types.len(),
+                            t.elts.len()
+                        ));
+                    }
+                    for (i, target_elt) in t.elts.iter().enumerate() {
+                        let elt_val = self.func.next_value();
+                        self.add_instruction(InstructionKind::TupleExtract(elt_val, value, i));
+                        self.func.set_type(elt_val, elt_types[i].clone());
+                        self.handle_assignment_target(target_elt, elt_val)?;
+                    }
+                } else {
+                    return Err("Cannot unpack non-tuple type".to_string());
+                }
+            }
+            _ => return Err(format!("Unsupported assignment target: {:?}", target)),
         }
         Ok(())
     }

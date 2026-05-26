@@ -1,27 +1,32 @@
-use crate::ssa::ir::{BlockId, Function, Value};
+use crate::ssa::analysis::interval::{Bound, IntervalAnalysisResults};
+use crate::ssa::ir::{BlockId, Function, InstructionKind, Value};
 use std::collections::HashMap;
-use z3::ast::{Array, Int, Real};
+use z3::ast::{Array, Ast, Bool, Int, Real, BV};
 use z3::{Context, Solver};
 
 pub mod arithmetic;
 pub mod control_flow;
 pub mod memory;
+pub mod tuples;
 
 pub struct TranslationContext<'ctx> {
     pub ctx: &'ctx Context,
     pub solver: &'ctx Solver<'ctx>,
     pub func: &'ctx Function,
-    pub z3_ints: HashMap<Value, Int<'ctx>>,
+    pub z3_ints: HashMap<Value, Int<'ctx>>, // Kept for refinement parsing if needed, but we will minimize its use
     pub z3_reals: HashMap<Value, Real<'ctx>>,
+    pub z3_bvs: HashMap<Value, BV<'ctx>>,
     pub z3_arrays: HashMap<Value, Array<'ctx>>,
-    pub block_conditions: HashMap<BlockId, z3::ast::Bool<'ctx>>,
-    pub edge_conditions: HashMap<(BlockId, BlockId), z3::ast::Bool<'ctx>>,
+    pub tuple_mappings: HashMap<Value, Vec<Value>>,
+    pub block_conditions: HashMap<BlockId, Bool<'ctx>>,
+    pub edge_conditions: HashMap<(BlockId, BlockId), Bool<'ctx>>,
 }
 
 pub fn verify_with_context<'ctx>(
     ctx: &'ctx Context,
     solver: &Solver<'ctx>,
     func: &Function,
+    analysis: IntervalAnalysisResults,
 ) -> Result<(), String> {
     let mut t_ctx = TranslationContext {
         ctx,
@@ -29,7 +34,9 @@ pub fn verify_with_context<'ctx>(
         func,
         z3_ints: HashMap::new(),
         z3_reals: HashMap::new(),
+        z3_bvs: HashMap::new(),
         z3_arrays: HashMap::new(),
+        tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
     };
@@ -37,16 +44,104 @@ pub fn verify_with_context<'ctx>(
     // Initialize Z3 values for all SSA values
     memory::init_values(&mut t_ctx)?;
 
-    t_ctx
-        .block_conditions
-        .insert(func.entry_block, z3::ast::Bool::from_bool(ctx, true));
+    // Assert derived intervals
+    for (val, interval) in analysis.intervals {
+        if let (Some(z3_bv), Some(ty)) = (t_ctx.z3_bvs.get(&val), t_ctx.func.value_types.get(&val))
+        {
+            if let Some(bit_width) = ty.int_bit_width() {
+                if let Bound::Finite(low) = interval.low {
+                    solver.assert(&z3_bv.bvsge(&BV::from_i64(ctx, low as i64, bit_width)));
+                }
+                if let Bound::Finite(high) = interval.high {
+                    solver.assert(&z3_bv.bvsle(&BV::from_i64(ctx, high as i64, bit_width)));
+                }
+            }
+        }
+    }
+
+    // Declare Booleans for all blocks and known edges
+    for block in &func.blocks {
+        let b_cond = Bool::new_const(ctx, format!("block_{}", block.id.0));
+        t_ctx.block_conditions.insert(block.id, b_cond);
+
+        // Find outgoing edges
+        if let Some(last_inst) = block.instructions.last() {
+            match &last_inst.kind {
+                InstructionKind::Jump(target) => {
+                    let e_cond = Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, target.0));
+                    t_ctx.edge_conditions.insert((block.id, *target), e_cond);
+                }
+                InstructionKind::Branch(_, t_block, f_block) => {
+                    let et_cond =
+                        Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, t_block.0));
+                    t_ctx.edge_conditions.insert((block.id, *t_block), et_cond);
+                    let ef_cond =
+                        Bool::new_const(ctx, format!("edge_{}_{}", block.id.0, f_block.0));
+                    t_ctx.edge_conditions.insert((block.id, *f_block), ef_cond);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Assert Structural CFG Constraints
+    let true_cond = Bool::from_bool(ctx, true);
+    let false_cond = Bool::from_bool(ctx, false);
+
+    // Entry block is always true
+    if let Some(entry_cond) = t_ctx.block_conditions.get(&func.entry_block) {
+        solver.assert(&entry_cond._eq(&true_cond));
+    }
 
     for block in &func.blocks {
-        let path_cond = t_ctx
-            .block_conditions
-            .get(&block.id)
-            .cloned()
-            .unwrap_or_else(|| z3::ast::Bool::from_bool(ctx, false));
+        let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
+
+        // Block condition == OR of incoming edges (except entry block)
+        if block.id != func.entry_block {
+            let mut incoming_edges = Vec::new();
+            for (edge_src, edge_dst) in t_ctx.edge_conditions.keys() {
+                if *edge_dst == block.id {
+                    incoming_edges
+                        .push(t_ctx.edge_conditions.get(&(*edge_src, *edge_dst)).unwrap());
+                }
+            }
+            if incoming_edges.is_empty() {
+                solver.assert(&path_cond._eq(&false_cond));
+            } else {
+                let or_expr = Bool::or(ctx, &incoming_edges.iter().map(|&e| e).collect::<Vec<_>>());
+                solver.assert(&path_cond._eq(&or_expr));
+            }
+        }
+    }
+
+    // Assert block-specific narrowing
+    for ((val, b_id), interval) in &analysis.block_narrowing {
+        if let Some(path_cond) = t_ctx.block_conditions.get(b_id) {
+            if let (Some(z3_bv), Some(ty)) =
+                (t_ctx.z3_bvs.get(val), t_ctx.func.value_types.get(val))
+            {
+                if let Some(bit_width) = ty.int_bit_width() {
+                    if let Bound::Finite(low) = interval.low {
+                        solver.assert(
+                            &path_cond
+                                .implies(&z3_bv.bvsge(&BV::from_i64(ctx, low as i64, bit_width))),
+                        );
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        solver.assert(&path_cond.implies(&z3_bv.bvsle(&BV::from_i64(
+                            ctx,
+                            high as i64,
+                            bit_width,
+                        ))));
+                    }
+                }
+            }
+        }
+    }
+
+    // Translate Instructions
+    for block in &func.blocks {
+        let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
 
         for inst in &block.instructions {
             match &inst.kind {
@@ -83,6 +178,10 @@ pub fn verify_with_context<'ctx>(
                 | crate::ssa::ir::InstructionKind::FGe(_, _, _)
                 | crate::ssa::ir::InstructionKind::And(_, _, _)
                 | crate::ssa::ir::InstructionKind::Or(_, _, _)
+                | crate::ssa::ir::InstructionKind::Xor(_, _, _)
+                | crate::ssa::ir::InstructionKind::Shl(_, _, _)
+                | crate::ssa::ir::InstructionKind::LShr(_, _, _)
+                | crate::ssa::ir::InstructionKind::AShr(_, _, _)
                 | crate::ssa::ir::InstructionKind::IToF(_, _, _)
                 | crate::ssa::ir::InstructionKind::FToI(_, _, _)
                 | crate::ssa::ir::InstructionKind::Not(_, _) => {
@@ -107,6 +206,10 @@ pub fn verify_with_context<'ctx>(
                 | crate::ssa::ir::InstructionKind::MutBorrow(_, _) => {
                     memory::translate(&mut t_ctx, inst, &path_cond)?;
                 }
+                crate::ssa::ir::InstructionKind::TupleCreate(_, _)
+                | crate::ssa::ir::InstructionKind::TupleExtract(_, _, _) => {
+                    tuples::translate(&mut t_ctx, inst, &path_cond)?;
+                }
                 _ => {}
             }
         }
@@ -114,16 +217,4 @@ pub fn verify_with_context<'ctx>(
 
     tracing::info!(target: "lila::verify::z3", "Proof successful for '{}'", func.name);
     Ok(())
-}
-
-pub fn update_block_condition<'ctx>(
-    ctx: &'ctx Context,
-    conditions: &mut HashMap<BlockId, z3::ast::Bool<'ctx>>,
-    block: BlockId,
-    cond: z3::ast::Bool<'ctx>,
-) {
-    let entry = conditions
-        .entry(block)
-        .or_insert_with(|| z3::ast::Bool::from_bool(ctx, false));
-    *entry = z3::ast::Bool::or(ctx, &[entry, &cond]);
 }

@@ -61,6 +61,17 @@ impl Type {
         matches!(self, Type::F32 | Type::F64)
     }
 
+    pub fn int_bit_width(&self) -> Option<u32> {
+        match self {
+            Type::I8 | Type::U8 => Some(8),
+            Type::I16 | Type::U16 => Some(16),
+            Type::I32 | Type::U32 => Some(32),
+            Type::I64 | Type::U64 => Some(64),
+            Type::Bool => Some(1),
+            _ => None,
+        }
+    }
+
     pub fn size(&self, struct_layouts: &HashMap<String, Vec<(String, Type)>>) -> usize {
         match self {
             Type::I8 | Type::U8 | Type::Bool => 1,
@@ -239,6 +250,12 @@ pub enum InstructionKind {
     StructLoad(Value, Value, usize),
     StructOffset(Value, Value, usize),
     StructSet(Value, Value, usize, Value, Type),
+
+    // Tuples
+    TupleCreate(Value, Vec<Value>),
+    TupleExtract(Value, Value, usize), // dest, tuple_val, index
+
+    Nop,
 }
 
 impl fmt::Display for Instruction {
@@ -355,6 +372,14 @@ impl fmt::Display for Instruction {
                     d, obj, offset, val, ty, loc_str
                 )
             }
+            InstructionKind::TupleCreate(d, elts) => {
+                let args_str: Vec<String> = elts.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = tuple({}){}", d, args_str.join(", "), loc_str)
+            }
+            InstructionKind::TupleExtract(d, t, idx) => {
+                write!(f, "  {} = extract {}[{}] (tuple){}", d, t, idx, loc_str)
+            }
+            InstructionKind::Nop => write!(f, "  nop{}", loc_str),
         }
     }
 }

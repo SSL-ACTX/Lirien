@@ -1,7 +1,6 @@
 # L.I.L.A. (Liquid Logic and Affine Ownership)
 
 > [!WARNING]
-> **RESEARCH EXPERIMENT ONLY.** 
 > L.I.L.A. is a proof-of-concept exploration into formal verification and affine types for Python. It is **not** a production-ready tool, is highly unstable, and should not be used in critical systems.
 
 **A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift**

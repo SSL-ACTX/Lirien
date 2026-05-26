@@ -202,8 +202,13 @@ fn parse_int_expr<'ctx>(
             };
             let idx = parse_int_expr(ctx, parts[2], v_int, v_arr)?;
             let res = arr.select(&idx);
-            res.as_int()
-                .ok_or_else(|| "select did not return an int".to_string())
+            if let Some(i) = res.as_int() {
+                Ok(i)
+            } else if let Some(bv) = res.as_bv() {
+                Ok(bv.to_int(true))
+            } else {
+                Err("select did not return an int or bitvector".to_string())
+            }
         }
         _ => Err(format!("Unknown arithmetic operator: {}", parts[0])),
     }

@@ -1,7 +1,7 @@
 import unittest
 from typing import Tuple
 import math
-from lila import verify, i64, f64
+from lila import verify, i64, f64, Refined
 
 
 @verify
@@ -14,14 +14,20 @@ def swap(x: i64, y: i64) -> Tuple[i64, i64]:
     return y, x
 
 
-@verify
-def compute_math(x: f64) -> f64:
-    return math.sqrt(x) + math.sin(x) + math.cos(x)
+NonNegative = Refined[f64, lambda x: x >= 0.0]
 
 
 @verify
-def compute_pow(b: f64, e: f64) -> f64:
-    return math.pow(b, e)
+def compute_math(x: NonNegative) -> f64:
+    return math.sqrt(x.val) + math.sin(x.val) + math.cos(x.val)
+
+
+Positive = Refined[f64, lambda x: x > 0.0]
+
+
+@verify
+def compute_pow(b: Positive, e: f64) -> f64:
+    return math.pow(b.val, e)
 
 
 class TestNewIntrinsics(unittest.TestCase):

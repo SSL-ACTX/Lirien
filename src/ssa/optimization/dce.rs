@@ -103,7 +103,9 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::BufferLen(d, _)
         | InstructionKind::StructLoad(d, _, _)
         | InstructionKind::StructOffset(d, _, _)
-        | InstructionKind::StructSet(d, _, _, _, _) => Some(*d),
+        | InstructionKind::StructSet(d, _, _, _, _)
+        | InstructionKind::TupleCreate(d, _)
+        | InstructionKind::TupleExtract(d, _, _) => Some(*d),
         _ => None,
     }
 }
@@ -141,11 +143,17 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         | InstructionKind::FLt(_, l, r)
         | InstructionKind::FLe(_, l, r)
         | InstructionKind::FGt(_, l, r)
-        | InstructionKind::FGe(_, l, r) => {
+        | InstructionKind::FGe(_, l, r)
+        | InstructionKind::FPow(_, l, r) => {
             operands.push(*l);
             operands.push(*r);
         }
-        InstructionKind::Not(_, s) => {
+        InstructionKind::Not(_, s)
+        | InstructionKind::FSqrt(_, s)
+        | InstructionKind::FSin(_, s)
+        | InstructionKind::FCos(_, s)
+        | InstructionKind::IToF(_, s, _)
+        | InstructionKind::FToI(_, s, _) => {
             operands.push(*s);
         }
         InstructionKind::Branch(c, _, _) => {
@@ -190,6 +198,14 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
             operands.push(*obj);
             operands.push(*val);
         }
+        InstructionKind::TupleCreate(_, elts) => {
+            for v in elts {
+                operands.push(*v);
+            }
+        }
+        InstructionKind::TupleExtract(_, tuple, _) => {
+            operands.push(*tuple);
+        }
         _ => {}
     }
     operands
@@ -207,5 +223,6 @@ fn has_side_effects(inst: &Instruction) -> bool {
             | InstructionKind::ArrayStore(_, _, _, _, _)
             | InstructionKind::BufferStore(_, _, _, _, _)
             | InstructionKind::StructSet(_, _, _, _, _)
+            | InstructionKind::TupleCreate(_, _)
     )
 }

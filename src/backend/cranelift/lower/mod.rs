@@ -7,6 +7,7 @@ pub mod arithmetic;
 pub mod control_flow;
 pub mod intrinsics;
 pub mod memory;
+pub mod tuples;
 
 pub fn lower_instruction<M: Module>(
     ctx: &mut CodegenContext<M>,
@@ -84,7 +85,12 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::Borrow(_, _)
         | InstructionKind::MutBorrow(_, _) => memory::lower(ctx, &inst.kind),
 
+        InstructionKind::TupleCreate(_, _) | InstructionKind::TupleExtract(_, _, _) => {
+            tuples::lower(ctx, &inst.kind)
+        }
+
         InstructionKind::Call(dest, func, args) => intrinsics::lower(ctx, *dest, func, args),
+        InstructionKind::Nop => Ok(()),
     }
 }
 

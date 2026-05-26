@@ -81,17 +81,32 @@ pub fn lower<M: Module>(
     let mut cl_sig = ctx.module.make_signature();
     let registry = crate::bridge::registry::GLOBAL_REGISTRY.lock().unwrap();
 
+    let mut is_sret = false;
+    let mut ret_ty = SsaType::Unknown;
+
     if let Some(sig) = registry.get(func) {
+        ret_ty = sig.return_type.clone();
+        if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
+            cl_sig.params.push(AbiParam::new(types::I64)); // sret pointer
+            is_sret = true;
+        }
+
         for arg_ty in &sig.arg_types {
             cl_sig.params.push(AbiParam::new(translate_type(arg_ty)));
             if let SsaType::Buffer(_) = arg_ty {
                 cl_sig.params.push(AbiParam::new(types::I64));
             }
         }
-        cl_sig
-            .returns
-            .push(AbiParam::new(translate_type(&sig.return_type)));
+        if !is_sret {
+            cl_sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
+        }
     } else {
+        ret_ty = ctx.ssa_func.get_type(dest);
+        if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
+            cl_sig.params.push(AbiParam::new(types::I64)); // sret pointer
+            is_sret = true;
+        }
+
         for arg in args {
             let ty = ctx.ssa_func.get_type(*arg);
             cl_sig.params.push(AbiParam::new(translate_type(&ty)));
@@ -99,8 +114,9 @@ pub fn lower<M: Module>(
                 cl_sig.params.push(AbiParam::new(types::I64));
             }
         }
-        let ret_ty = ctx.ssa_func.get_type(dest);
-        cl_sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
+        if !is_sret {
+            cl_sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
+        }
     }
 
     let callee = ctx
@@ -110,6 +126,19 @@ pub fn lower<M: Module>(
     let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
 
     let mut arg_vals = Vec::new();
+    let mut sret_slot = None;
+
+    if is_sret {
+        let size = ret_ty.size(&ctx.ssa_func.struct_layouts);
+        let align = ret_ty.align(&ctx.ssa_func.struct_layouts) as u32;
+        let slot = ctx
+            .builder
+            .create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, size as u32));
+        let addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
+        arg_vals.push(addr);
+        sret_slot = Some(addr);
+    }
+
     for arg in args {
         let arg_val = get_val(&ctx.values, arg);
         arg_vals.push(arg_val);
@@ -119,7 +148,11 @@ pub fn lower<M: Module>(
     }
 
     let call = ctx.builder.ins().call(local_callee, &arg_vals);
-    let res = ctx.builder.inst_results(call)[0];
-    ctx.values.insert(dest, res);
+    if is_sret {
+        ctx.values.insert(dest, sret_slot.unwrap());
+    } else {
+        let res = ctx.builder.inst_results(call)[0];
+        ctx.values.insert(dest, res);
+    }
     Ok(())
 }
