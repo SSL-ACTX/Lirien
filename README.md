@@ -20,7 +20,7 @@ Lila exists to break this dichotomy. It takes Python's "hints" and turns them in
 
 ## Research Focus
 - **Formal Verification:** Using the **Z3 SMT Solver** to prove logical invariants and memory safety at compile-time.
-- **Affine Analysis:** CFG-aware tracking of ownership and borrowing to prevent data races and use-after-moves.
+- **Fractional Permissions:** A flow-sensitive, symbolic weight partitioning system that proves memory safety and data-race freedom using SMT arithmetic.
 - **JIT Lowering:** Mapping verified SSA directly to **Cranelift IR** for bare-metal performance.
 
 ---
@@ -32,7 +32,7 @@ The transformation from dynamic Python to verified machine code follows a strict
 2.  **Optimization:** The Rust middle-end applies multiple passes, including **Constant Folding**, **Dead Code Elimination (DCE)**, and **Type Propagation** to refine the SSA graph.
 3.  **Formal Verification:** 
     *   **Logic Engine:** Every path condition and operation is mapped to SMT-LIB logic and verified by Z3.
-    *   **Borrow Checker:** A custom pass validates affine constraints (ownership/aliasing) across basic blocks.
+    *   **Permission Verifier:** A flow-sensitive system using **Fractional Permissions** ($Exclusive=1.0, Shared \in (0, 1)$) to prove absence of aliasing violations and use-after-moves.
 4.  **Backend Lowering:** The verified SSA is lowered into **Cranelift IR**, which handles target-specific register allocation and machine code generation.
 5.  **Hot-Swapping:** Using PyO3, the original Python function object is intercepted and redirected to a native C-ABI trampoline pointing to the JIT-compiled memory.
 
@@ -54,8 +54,8 @@ def divide_verified(n: i64, d: Positive) -> i64:
     return n // d
 ```
 
-### 2. Affine Types: Compile-Time Memory Safety
-Inspired by Rust, Lila's borrow checker prevents data races and use-after-move errors at the compiler level.
+### 2. Fractional Permissions: Compile-Time Memory Safety
+Lila uses a symbolic weight partitioning system (inspired by Separation Logic) to prevent data races and use-after-move errors.
 ```python
 from lila import verify, i64, Owned, Mut, Ref, struct
 
@@ -65,16 +65,16 @@ def consume(x: Owned[i64]) -> i64:
 
 @verify
 def illegal_use(x: Owned[i64]) -> i64:
-    val = consume(x)  # x is moved here
-    return x + 1      # COMPILE ERROR: Use-after-move of value x
+    val = consume(x)  # x is moved here (1.0 permission consumed)
+    return x + 1      # COMPILE ERROR: Use-after-move (0.0 permission remaining)
 
 @struct
 class Data: val: i64
 
 @verify
 def illegal_alias(d: Mut[Data]) -> i64:
-    r1 = Ref(d)       # Immutable borrow created
-    # d.val = 10      # ERROR: Cannot mutate 'd' while an immutable borrow 'r1' is active
+    r1 = Ref(d)       # Shared permission created
+    # d.val = 10      # ERROR: Cannot mutate 'd' while shared permissions (Ref) are active
     return r1.val
 ```
 

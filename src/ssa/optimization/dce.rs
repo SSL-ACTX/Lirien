@@ -94,8 +94,8 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ConstFloat(d, _)
         | InstructionKind::Phi(d, _)
         | InstructionKind::Call(d, _, _)
-        | InstructionKind::Borrow(d, _)
-        | InstructionKind::MutBorrow(d, _)
+        | InstructionKind::Reference(d, _)
+        | InstructionKind::MutReference(d, _)
         | InstructionKind::ArrayLoad(d, _, _)
         | InstructionKind::ArrayStore(d, _, _, _, _)
         | InstructionKind::BufferLoad(d, _, _)
@@ -176,9 +176,10 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
                 operands.push(*v);
             }
         }
-        InstructionKind::Borrow(_, s) | InstructionKind::MutBorrow(_, s) => {
+        InstructionKind::Reference(_, s) | InstructionKind::MutReference(_, s) => {
             operands.push(*s);
         }
+
         InstructionKind::ArrayLoad(_, arr, idx) | InstructionKind::BufferLoad(_, arr, idx) => {
             operands.push(*arr);
             operands.push(*idx);
@@ -237,8 +238,8 @@ fn has_side_effects(inst: &Instruction) -> bool {
             | InstructionKind::Branch(_, _, _)
             | InstructionKind::Jump(_)
             | InstructionKind::Call(_, _, _)
-            | InstructionKind::Borrow(_, _)
-            | InstructionKind::MutBorrow(_, _)
+            | InstructionKind::Reference(_, _)
+            | InstructionKind::MutReference(_, _)
             | InstructionKind::ArrayStore(_, _, _, _, _)
             | InstructionKind::BufferStore(_, _, _, _, _)
             | InstructionKind::StructSet(_, _, _, _, _)

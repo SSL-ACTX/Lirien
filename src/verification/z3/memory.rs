@@ -44,7 +44,11 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 BV::from_i64(0, bit_width).get_sort()
             };
             let int_sort = z3::ast::Int::from_i64(0).get_sort();
-            let z3_val = Array::new_const(format!("v{}", i), &int_sort, &value_sort);
+            let z3_val = Array::new_const(
+                format!("{}_v{}_{}", ctx.func.name, i, ctx.uid),
+                &int_sort,
+                &value_sort,
+            );
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let ref_expr = parse_array_refinement(refinement, &z3_val, inner_ty.is_float())?;
                 ctx.solver.assert(ref_expr);
@@ -53,15 +57,19 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
             ctx.z3_arrays.insert(val, z3_val);
         } else if let Type::Enum(_) = ty {
             // Model Enums as a tag (BV) and a payload (Array)
-            let tag_val = BV::new_const(format!("v{}_tag", i), 8);
+            let tag_val = BV::new_const(format!("{}_v{}_tag_{}", ctx.func.name, i, ctx.uid), 8);
             ctx.z3_bvs.insert(val, tag_val);
 
             let int_sort = z3::ast::Int::from_i64(0).get_sort();
             let val_sort = BV::from_i64(0, 64).get_sort();
-            let payload_val = Array::new_const(format!("v{}_payload", i), &int_sort, &val_sort);
+            let payload_val = Array::new_const(
+                format!("{}_v{}_payload_{}", ctx.func.name, i, ctx.uid),
+                &int_sort,
+                &val_sort,
+            );
             ctx.z3_arrays.insert(val, payload_val);
         } else if let Type::Buffer(_) = ty {
-            let z3_len = BV::new_const(format!("v{}_len", i), 64);
+            let z3_len = BV::new_const(format!("{}_v{}_len_{}", ctx.func.name, i, ctx.uid), 64);
             let zero = BV::from_i64(0, 64);
             ctx.solver.assert(z3_len.bvsge(&zero));
             if let Some(refinement) = ctx.func.refinements.get(&val) {
@@ -73,9 +81,9 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
             ctx.z3_bvs.insert(val, z3_len);
         } else if ty.is_float() {
             let z3_val = if matches!(ty, Type::F32) {
-                Float::new_const_float32(format!("v{}", i))
+                Float::new_const_float32(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid))
             } else {
-                Float::new_const_double(format!("v{}", i))
+                Float::new_const_double(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid))
             };
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let ref_expr = crate::verification::refinement_parser::parse_float_refinement(
@@ -86,7 +94,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
             ctx.z3_floats.insert(val, z3_val);
         } else {
             let bit_width = ty.int_bit_width().unwrap_or(64);
-            let z3_val = BV::new_const(format!("v{}", i), bit_width);
+            let z3_val = BV::new_const(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid), bit_width);
 
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let is_signed = !matches!(
@@ -183,8 +191,11 @@ pub fn translate(
             if let Some(z3_dest) = ctx.z3_arrays.get(dest) {
                 let int_sort = z3::ast::Int::from_i64(0).get_sort();
                 let val_sort = BV::from_i64(0, 64).get_sort();
-                let z3_zero_arr =
-                    Array::new_const(format!("v{}_zero", dest.0), &int_sort, &val_sort);
+                let z3_zero_arr = Array::new_const(
+                    format!("{}_v{}_zero_{}", ctx.func.name, dest.0, ctx.uid),
+                    &int_sort,
+                    &val_sort,
+                );
                 let mut current_state = z3_zero_arr;
 
                 let fields = ctx.func.struct_layouts.get(struct_name).unwrap();
@@ -246,8 +257,11 @@ pub fn translate(
             if let Some(z3_dest_payload) = ctx.z3_arrays.get(dest) {
                 let int_sort = z3::ast::Int::from_i64(0).get_sort();
                 let val_sort = BV::from_i64(0, 64).get_sort();
-                let z3_zero_arr =
-                    Array::new_const(format!("v{}_zero", dest.0), &int_sort, &val_sort);
+                let z3_zero_arr = Array::new_const(
+                    format!("{}_v{}_zero_{}", ctx.func.name, dest.0, ctx.uid),
+                    &int_sort,
+                    &val_sort,
+                );
                 let mut current_state = z3_zero_arr.clone();
 
                 if let Some(payload_val) = payload {
@@ -281,7 +295,7 @@ pub fn translate(
                     .assert(path_cond.implies(z3_dest.eq(z3_obj_payload)));
             }
         }
-        InstructionKind::Borrow(dest, src) | InstructionKind::MutBorrow(dest, src) => {
+        InstructionKind::Reference(dest, src) | InstructionKind::MutReference(dest, src) => {
             if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
                 ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
             }

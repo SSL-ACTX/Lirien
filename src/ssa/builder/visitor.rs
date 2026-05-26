@@ -795,7 +795,7 @@ impl CFGBuilder {
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
                     let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::Borrow(dest, arg));
+                    self.add_instruction(InstructionKind::Reference(dest, arg));
                     let ty = self.func.get_type(arg);
                     self.func.set_type(dest, Type::Ref(Box::new(ty)));
                     return Ok(dest);
@@ -805,7 +805,7 @@ impl CFGBuilder {
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
                     let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::MutBorrow(dest, arg));
+                    self.add_instruction(InstructionKind::MutReference(dest, arg));
                     let ty = self.func.get_type(arg);
                     self.func.set_type(dest, Type::Mut(Box::new(ty)));
                     return Ok(dest);

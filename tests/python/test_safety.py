@@ -26,7 +26,7 @@ class TestSafety(unittest.TestCase):
                 a = consume_val(x)
                 return a + x
 
-        self.assertIn("Use-after-move", str(cm.exception))
+        self.assertIn("Memory safety violation", str(cm.exception))
 
     def test_aliasing_violation(self):
         # Lila should block Mut and Ref aliasing same root
@@ -35,11 +35,11 @@ class TestSafety(unittest.TestCase):
 
             @verify
             def illegal_alias_struct(d: Mut[Dummy]) -> i64:
-                r1 = Ref(d)  # Immut borrow
-                d.val = 10  # Mut borrow - violation!
+                r1 = Ref(d)  # Shared permission
+                d.val = 10  # Exclusive permission - violation!
                 return r1.val
 
-        self.assertIn("already borrowed", str(cm.exception))
+        self.assertIn("Memory safety violation", str(cm.exception))
 
 
 if __name__ == "__main__":

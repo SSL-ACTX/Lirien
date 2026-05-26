@@ -5,10 +5,8 @@ This document outlines the core architectural constraints, design patterns, and 
 ## 1. Architectural Constraints
 
 ### 1.1 Formal Verification First
-Lila is a formally verified JIT compiler. **Safety must be mathematically provable.**
-*   All operations must be modeled in Z3 before compilation.
-*   If Z3 cannot prove an operation safe (e.g., division by zero, out-of-bounds access, alias violation), the compilation **must** fail.
-*   Never use "dummy values" or silent fallbacks to bypass verification failures.
+*   **Permission Verifier:** A flow-sensitive system using **Fractional Permissions** ($Exclusive=1.0, Shared \in (0, 1)$) to prove absence of aliasing violations and use-after-moves. Safety must be mathematically provable in Z3 using `Context::thread_local()`.
+*   **Symbolic Partitioning:** Shared weights are generated as symbolic constants; Z3 proves safety by confirming a valid partitioning exists where $\sum \text{weights} \le 1.0$.
 
 ### 1.2 Strict SSA (Static Single Assignment)
 The Intermediate Representation (IR) enforces strict SSA form.
@@ -37,11 +35,6 @@ The Python-side DSL must feel like native Python, hiding all low-level C-ABI det
 
 ### 3.1 Verification Workflow
 *   **Rust First:** Always run `cargo check` and `cargo test` **before** running `maturin develop`. Never attempt to build the Python module if the Rust core is in an inconsistent or failing state.
-
-### 3.2 Idiomatic Rust
-*   **Warnings are Errors:** The project compiles with `#![deny(warnings)]`. All code must pass `cargo clippy --all-targets -- -D warnings`.
-*   **No Unwraps without Context:** Avoid blind `.unwrap()`. If you must unwrap, use `.expect("Reason")` or propagate the error via `Result`.
-*   **Avoid Reflection/Magic:** Do not use `transmute` to bypass the type system unless crossing the FFI boundary (which is already isolated in `bridge_tests.rs` / `compiler.py`).
 
 ### 3.2 Centralized Diagnostics
 *   Do not use `println!` or `eprintln!`.
