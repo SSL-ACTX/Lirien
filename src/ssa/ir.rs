@@ -74,6 +74,17 @@ impl Type {
         }
     }
 
+    pub fn is_signed(&self) -> bool {
+        matches!(self, Type::I8 | Type::I16 | Type::I32 | Type::I64)
+    }
+
+    pub fn is_pointer_like(&self) -> bool {
+        matches!(
+            self,
+            Type::Ref(_) | Type::Mut(_) | Type::Owned(_) | Type::Buffer(_) | Type::Array(_, _)
+        )
+    }
+
     pub fn is_composite(&self) -> bool {
         match self {
             Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
@@ -592,10 +603,9 @@ impl Instruction {
             InstructionKind::Return(Some(v)) => {
                 operands.push(*v);
             }
-            InstructionKind::Phi(_, mappings) => {
-                for v in mappings.values() {
-                    operands.push(*v);
-                }
+            InstructionKind::Phi(_, _) => {
+                // Phi uses are handled specially by liveness analysis
+                // as they depend on the predecessor block.
             }
             InstructionKind::Call(_, _, args) => {
                 for v in args {
@@ -677,6 +687,7 @@ pub struct Function {
     pub block_count: usize,
     pub arg_count: usize,
     pub return_type: Type,
+    pub ret_refinement: Option<String>,
     pub value_types: HashMap<Value, Type>,
     pub refinements: HashMap<Value, String>,
     pub struct_layouts: HashMap<String, Vec<(String, Type)>>,
@@ -693,6 +704,7 @@ impl Function {
             block_count: 0,
             arg_count: 0,
             return_type: Type::Unknown,
+            ret_refinement: None,
             value_types: HashMap::new(),
             refinements: HashMap::new(),
             struct_layouts: HashMap::new(),

@@ -11,6 +11,8 @@ impl CFGBuilder {
 
         if let Some(returns) = &s.returns {
             self.func.return_type = parse_type(returns, &self.type_aliases)?;
+            self.func.ret_refinement =
+                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts);
         }
 
         for arg in s.args.args {
@@ -553,8 +555,13 @@ impl CFGBuilder {
                 let obj = self.visit_expr(*s.value.clone())?;
                 let mut curr_ty = self.func.get_type(obj);
 
+                // Handle .val unwrap for Refined types (no-op in IR)
                 if s.attr.as_str() == "val" {
-                    if let Type::Mut(_inner) | Type::Ref(_inner) | Type::Owned(_inner) = curr_ty {
+                    let mut temp_ty = curr_ty.clone();
+                    while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) = temp_ty {
+                        temp_ty = *inner;
+                    }
+                    if !matches!(temp_ty, Type::Struct(_)) {
                         return Ok(obj);
                     }
                 }

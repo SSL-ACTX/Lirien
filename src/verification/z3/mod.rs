@@ -111,10 +111,7 @@ pub fn verify_with_context(
     for i in 0..func.value_count {
         let v = Value(i);
         let ty = func.get_type(v);
-        if matches!(
-            ty,
-            Type::Ref(_) | Type::Mut(_) | Type::Owned(_) | Type::Buffer(_) | Type::Array(_, None)
-        ) {
+        if ty.is_pointer_like() {
             let p_var = z3::ast::Real::new_const(format!("{}_perm_v{}_{}", func.name, i, uid));
             t_ctx.z3_perms.insert(v, p_var);
         }
@@ -170,7 +167,7 @@ pub fn verify_with_context(
             if incoming_edges.is_empty() {
                 solver.assert(path_cond.eq(&false_cond));
             } else {
-                let or_expr = Bool::or(&incoming_edges.to_vec());
+                let or_expr = Bool::or(&incoming_edges.iter().map(|&e| e).collect::<Vec<_>>());
                 solver.assert(path_cond.eq(&or_expr));
             }
         }
@@ -257,11 +254,22 @@ pub fn verify_with_context(
         if let (Some(z3_bv), Some(ty)) = (t_ctx.z3_bvs.get(&val), t_ctx.func.value_types.get(&val))
         {
             if let Some(bit_width) = ty.int_bit_width() {
+                let is_signed = ty.is_signed();
                 if let Bound::Finite(low) = interval.low {
-                    solver.assert(z3_bv.bvsge(BV::from_i64(low as i64, bit_width)));
+                    let low_bv = BV::from_i64(low as i64, bit_width);
+                    if is_signed {
+                        solver.assert(z3_bv.bvsge(&low_bv));
+                    } else {
+                        solver.assert(z3_bv.bvuge(&low_bv));
+                    }
                 }
                 if let Bound::Finite(high) = interval.high {
-                    solver.assert(z3_bv.bvsle(BV::from_i64(high as i64, bit_width)));
+                    let high_bv = BV::from_i64(high as i64, bit_width);
+                    if is_signed {
+                        solver.assert(z3_bv.bvsle(&high_bv));
+                    } else {
+                        solver.assert(z3_bv.bvule(&high_bv));
+                    }
                 }
             }
         }
@@ -272,15 +280,22 @@ pub fn verify_with_context(
                 (t_ctx.z3_bvs.get(val), t_ctx.func.value_types.get(val))
             {
                 if let Some(bit_width) = ty.int_bit_width() {
+                    let is_signed = ty.is_signed();
                     if let Bound::Finite(low) = interval.low {
-                        solver.assert(
-                            path_cond.implies(z3_bv.bvsge(BV::from_i64(low as i64, bit_width))),
-                        );
+                        let low_bv = BV::from_i64(low as i64, bit_width);
+                        if is_signed {
+                            solver.assert(path_cond.implies(&z3_bv.bvsge(&low_bv)));
+                        } else {
+                            solver.assert(path_cond.implies(&z3_bv.bvuge(&low_bv)));
+                        }
                     }
                     if let Bound::Finite(high) = interval.high {
-                        solver.assert(
-                            path_cond.implies(z3_bv.bvsle(BV::from_i64(high as i64, bit_width))),
-                        );
+                        let high_bv = BV::from_i64(high as i64, bit_width);
+                        if is_signed {
+                            solver.assert(path_cond.implies(&z3_bv.bvsle(&high_bv)));
+                        } else {
+                            solver.assert(path_cond.implies(&z3_bv.bvule(&high_bv)));
+                        }
                     }
                 }
             }
@@ -295,7 +310,46 @@ pub fn verify_with_context(
         &t_ctx.block_conditions,
     )?;
 
-    // 8. Final Consistency Check
+    // 8. Verify Return Refinements
+    if let Some(ret_ref) = &func.ret_refinement {
+        for block in &func.blocks {
+            let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
+            for inst in &block.instructions {
+                if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
+                    let ty = func.get_type(*ret_val);
+                    let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
+                        crate::verification::refinement_parser::parse_refinement(
+                            ret_ref,
+                            &z3_bv.to_int(ty.is_signed()),
+                        )
+                    } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
+                        crate::verification::refinement_parser::parse_refinement(ret_ref, z3_int)
+                    } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
+                        crate::verification::refinement_parser::parse_float_refinement(
+                            ret_ref, z3_float,
+                        )
+                    } else {
+                        continue;
+                    };
+
+                    if let Ok(expr) = res {
+                        solver.push();
+                        solver.assert(path_cond);
+                        solver.assert(&expr.not());
+                        if solver.check() != z3::SatResult::Unsat {
+                            return Err(format!(
+                                "Return refinement violation: value of {:?} does not satisfy '{}' and may be violated on some reachable path.",
+                                ret_val, ret_ref
+                            ));
+                        }
+                        solver.pop(1);
+                    }
+                }
+            }
+        }
+    }
+
+    // 9. Final Consistency Check
     if solver.check() == z3::SatResult::Unsat {
         return Err(
             "Formal verification failed: Logical contradiction or permission conflict detected."

@@ -1,4 +1,4 @@
-use crate::ssa::ir::{BlockId, Function, Value};
+use crate::ssa::ir::{BlockId, Function, InstructionKind, Value};
 use std::collections::{HashMap, HashSet};
 
 pub struct LivenessAnalysisResults {
@@ -20,23 +20,50 @@ pub fn analyze_liveness(func: &Function) -> LivenessAnalysisResults {
     while changed {
         changed = false;
         for block in func.blocks.iter().rev() {
+            // 1. Compute live_out: union of live_in of successors,
+            // but handling Phi nodes specially (only operands from THIS block are live)
             let mut out = HashSet::new();
-            for succ in &block.successors {
-                if let Some(in_set) = live_in.get(succ) {
-                    for v in in_set {
-                        out.insert(*v);
+            for succ_id in &block.successors {
+                if let Some(succ_block) = func.blocks.iter().find(|b| b.id == *succ_id) {
+                    // Non-Phi live-ins from successor
+                    if let Some(in_set) = live_in.get(succ_id) {
+                        for &v in in_set {
+                            // Only include if NOT defined by a Phi in successor
+                            let is_phi_def = succ_block.instructions.iter().any(|inst| {
+                                if let InstructionKind::Phi(d, _) = &inst.kind {
+                                    *d == v
+                                } else {
+                                    false
+                                }
+                            });
+                            if !is_phi_def {
+                                out.insert(v);
+                            }
+                        }
+                    }
+                    // Phi operands for THIS block edge
+                    for inst in &succ_block.instructions {
+                        if let InstructionKind::Phi(_, mappings) = &inst.kind {
+                            if let Some(&v) = mappings.get(&block.id) {
+                                out.insert(v);
+                            }
+                        }
                     }
                 }
             }
             live_out.insert(block.id, out.clone());
 
+            // 2. Compute live_in: (live_out - defs) + uses
             let mut current_live = out;
             for inst in block.instructions.iter().rev() {
                 if let Some(def) = inst.get_def() {
                     current_live.remove(&def);
                 }
-                for u in inst.get_uses() {
-                    current_live.insert(u);
+                // Only non-phi uses here
+                if !matches!(inst.kind, InstructionKind::Phi(..)) {
+                    for u in inst.get_uses() {
+                        current_live.insert(u);
+                    }
                 }
             }
 
@@ -54,16 +81,14 @@ pub fn analyze_liveness(func: &Function) -> LivenessAnalysisResults {
         let mut current_live = live_out.get(&block.id).unwrap().clone();
         for (idx, inst) in block.instructions.iter().enumerate().rev() {
             inst_live_out.insert((block.id.0, idx), current_live.clone());
-            tracing::trace!(
-                target: "lila::liveness",
-                "Block {:?}, inst {}: live_out = {:?}",
-                block.id, idx, current_live
-            );
+
             if let Some(def) = inst.get_def() {
                 current_live.remove(&def);
             }
-            for u in inst.get_uses() {
-                current_live.insert(u);
+            if !matches!(inst.kind, InstructionKind::Phi(..)) {
+                for u in inst.get_uses() {
+                    current_live.insert(u);
+                }
             }
         }
     }
