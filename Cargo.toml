@@ -10,7 +10,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module", "auto-initialize"] }
 rustpython-parser = "0.4"
-rustpython-ast = "0.4"
+rustpython-ast = { version = "0.4", features = ["visitor"] }
 cranelift = "0.100"
 cranelift-jit = "0.100"
 cranelift-module = "0.100"

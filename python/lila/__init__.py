@@ -17,6 +17,9 @@ from .types import (
     Refined,
     SizedArray,
     Buffer,
+    FnPointer,
+    Callable,
+    Closure,
 )
 from .compiler import verify
 

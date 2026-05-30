@@ -869,15 +869,23 @@ impl CFGBuilder {
                 Ok(dest)
             }
             ast::Expr::Call(s) => {
-                let (func_name, method_obj) = match &*s.func {
-                    ast::Expr::Name(n) => (n.id.to_string(), None),
+                let expr_offset = s.range.start().to_usize();
+                let (func_name, method_obj, is_indirect) = match &*s.func {
+                    ast::Expr::Name(n) => {
+                        let name = n.id.to_string();
+                        if self.variable_defs.contains_key(&name) {
+                            (name, None, true)
+                        } else {
+                            (name, None, false)
+                        }
+                    }
                     ast::Expr::Attribute(attr) => {
                         if let ast::Expr::Name(n) = &*attr.value {
                             if n.id.as_str() == "math" {
-                                (format!("math.{}", attr.attr), None)
+                                (format!("math.{}", attr.attr), None, false)
                             } else if self.func.enum_layouts.contains_key(n.id.as_str()) {
                                 // Static enum variant constructor: EnumName.Variant(...)
-                                (format!("{}_{}", n.id.as_str(), attr.attr), None)
+                                (format!("{}_{}", n.id.as_str(), attr.attr), None, false)
                             } else {
                                 let obj = self.visit_expr((*attr.value).clone())?;
                                 let mut curr_ty = self.func.get_type(obj);
@@ -891,9 +899,9 @@ impl CFGBuilder {
                                 }
 
                                 if let Type::Struct(struct_name) = curr_ty {
-                                    (format!("{}_{}", struct_name, attr.attr), Some(obj))
+                                    (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                                 } else if let Type::Enum(enum_name) = curr_ty {
-                                    (format!("{}_{}", enum_name, attr.attr), Some(obj))
+                                    (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
                                 } else {
                                     return Err(format!(
                                         "Cannot call method '{}' on non-struct/enum type {:?}",
@@ -914,9 +922,9 @@ impl CFGBuilder {
                             }
 
                             if let Type::Struct(struct_name) = curr_ty {
-                                (format!("{}_{}", struct_name, attr.attr), Some(obj))
+                                (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                             } else if let Type::Enum(enum_name) = curr_ty {
-                                (format!("{}_{}", enum_name, attr.attr), Some(obj))
+                                (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
                             } else {
                                 return Err(format!(
                                     "Cannot call method '{}' on non-struct/enum type {:?}",
@@ -926,8 +934,34 @@ impl CFGBuilder {
                             }
                         }
                     }
-                    _ => return Err("Complex calls not supported yet".to_string()),
+                    _ => ("".to_string(), None, true),
                 };
+
+                if is_indirect {
+                    let fn_val = if func_name.is_empty() {
+                        self.visit_expr(*s.func.clone())?
+                    } else {
+                        self.read_variable(func_name, self.current_block)?
+                    };
+                    let fn_ty = self.func.get_type(fn_val);
+
+                    let mut args = Vec::new();
+                    for arg in s.args {
+                        args.push(self.visit_expr(arg)?);
+                    }
+
+                    let dest = self.func.next_value();
+                    self.update_location(expr_offset);
+                    self.add_instruction(InstructionKind::IndirectCall(dest, fn_val, args));
+
+                    let ret_ty = if let Type::Closure(_, _, ret) | Type::FnPointer(_, ret) = fn_ty {
+                        *ret
+                    } else {
+                        Type::Unknown
+                    };
+                    self.func.set_type(dest, ret_ty);
+                    return Ok(dest);
+                }
 
                 // Check for Enum Creation
                 if let Some(enum_name) = func_name.split('_').next() {
@@ -1144,6 +1178,116 @@ impl CFGBuilder {
                     }
                 }
                 self.func.set_type(dest, ret_ty);
+                Ok(dest)
+            }
+            ast::Expr::Lambda(s) => {
+                use super::capture_analysis::CaptureVisitor;
+                use rustpython_ast::Visitor;
+
+                let next_val = self.func.next_value().0;
+                let lambda_name = format!("{}_lambda_{}", self.func.name, next_val);
+
+                // 1. Capture Analysis
+                let mut params = Vec::new();
+                for arg in &s.args.args {
+                    params.push(arg.def.arg.to_string());
+                }
+                let mut capture_visitor = CaptureVisitor::new(params);
+                capture_visitor.visit_expr(*s.body.clone());
+
+                let mut captures = Vec::new();
+                let mut capture_types = Vec::new();
+                for var_name in capture_visitor.captures {
+                    if self.variable_defs.contains_key(&var_name) {
+                        let val = self.read_variable(var_name.clone(), self.current_block)?;
+                        let ty = self.func.get_type(val);
+                        captures.push((var_name, val));
+                        capture_types.push(ty);
+                    }
+                }
+
+                // 2. Build Lambda Function
+                // The lambda will take (ctx_ptr, ...args)
+                let mut lambda_builder = self.new_sub_builder(lambda_name.clone());
+
+                // Define arguments in lambda
+                // arg0 is always ctx_ptr
+                lambda_builder.func.arg_count = 1 + s.args.args.len();
+                lambda_builder.func.value_count = lambda_builder.func.arg_count;
+                lambda_builder
+                    .func
+                    .value_types
+                    .insert(Value(0), Type::Ref(Box::new(Type::Unknown))); // ctx_ptr
+
+                for (i, arg) in s.args.args.iter().enumerate() {
+                    let arg_ty = if let Some(ann) = &arg.def.annotation {
+                        super::metadata::parse_type(ann, &self.type_aliases)?
+                    } else {
+                        Type::Unknown
+                    };
+                    lambda_builder.func.value_types.insert(Value(i + 1), arg_ty);
+                    lambda_builder.write_variable(
+                        arg.def.arg.to_string(),
+                        lambda_builder.current_block,
+                        Value(i + 1),
+                    );
+                }
+
+                // If there are captures, load them from ctx_ptr
+                if !captures.is_empty() {
+                    let mut offset = 8; // Offset 0 is fn_ptr
+                    for (name, ty) in captures.iter().zip(capture_types.iter()) {
+                        let align = ty.align(&self.func.struct_layouts);
+                        offset = (offset + align - 1) & !(align - 1);
+
+                        let dest = lambda_builder.func.next_value();
+                        lambda_builder.add_instruction(InstructionKind::StructLoad(
+                            dest,
+                            Value(0),
+                            offset,
+                        ));
+                        lambda_builder.func.set_type(dest, ty.clone());
+                        lambda_builder.write_variable(
+                            name.0.clone(),
+                            lambda_builder.current_block,
+                            dest,
+                        );
+
+                        offset += ty.size(&self.func.struct_layouts);
+                    }
+                }
+
+                // Visit body
+                let ret_val = lambda_builder.visit_expr(*s.body)?;
+                lambda_builder.add_instruction(InstructionKind::Return(Some(ret_val)));
+                lambda_builder.func.return_type = lambda_builder.func.get_type(ret_val);
+
+                // Optimization for lambda
+                crate::ssa::optimization::optimize(&mut lambda_builder.func);
+
+                // Store lambda for later compilation
+                let lambda_func = lambda_builder.func;
+                self.lambdas.push(lambda_func.clone());
+                // Collect nested lambdas from the sub-builder
+                self.lambdas.extend(lambda_builder.lambdas);
+
+                // 3. Create Closure Instruction
+                let dest = self.func.next_value();
+                let capture_vals: Vec<Value> = captures.iter().map(|(_, v)| *v).collect();
+                self.add_instruction(InstructionKind::Lambda(
+                    dest,
+                    lambda_name.clone(),
+                    capture_vals,
+                ));
+
+                let arg_types: Vec<Type> = (1..1 + s.args.args.len())
+                    .map(|i| lambda_func.get_type(Value(i)))
+                    .collect();
+                self.func.set_type(
+                    dest,
+                    Type::Closure(lambda_name, arg_types, Box::new(lambda_func.return_type)),
+                );
+
                 Ok(dest)
             }
             _ => Err(format!("Expression type {:?} not yet supported", expr)),

@@ -1,3 +1,4 @@
+pub mod capture_analysis;
 pub mod metadata;
 pub mod ssa_manager;
 pub mod visitor;
@@ -23,6 +24,7 @@ pub struct CFGBuilder {
     pub sealed_blocks: HashSet<BlockId>,
     // Stack of (header_block, exit_block) for loops
     pub loop_stack: Vec<(BlockId, BlockId)>,
+    pub lambdas: Vec<Function>,
 }
 impl CFGBuilder {
     pub fn get_type_size(&self, ty: &Type) -> usize {
@@ -132,6 +134,7 @@ impl CFGBuilder {
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),
             loop_stack: Vec::new(),
+            lambdas: Vec::new(),
         };
 
         let entry = builder.create_block();
@@ -321,5 +324,28 @@ impl CFGBuilder {
             }
         }
         false
+    }
+
+    pub fn new_sub_builder(&self, name: String) -> Self {
+        let mut builder = Self {
+            func: Function {
+                struct_layouts: self.func.struct_layouts.clone(),
+                enum_layouts: self.func.enum_layouts.clone(),
+                ..Function::new(name)
+            },
+            current_block: BlockId(0),
+            current_location: self.current_location,
+            type_aliases: self.type_aliases.clone(),
+            variable_defs: HashMap::new(),
+            incomplete_phis: HashMap::new(),
+            sealed_blocks: HashSet::new(),
+            loop_stack: Vec::new(),
+            lambdas: Vec::new(),
+        };
+
+        let entry = builder.create_block();
+        builder.current_block = entry;
+        builder.sealed_blocks.insert(entry);
+        builder
     }
 }

@@ -249,7 +249,11 @@ pub fn verify_with_context(
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
                     tuples::translate(&mut t_ctx, inst, &path_cond)?;
                 }
-                _ => {}
+                InstructionKind::IndirectCall(..)
+                | InstructionKind::Lambda(..)
+                | InstructionKind::Call(..)
+                | InstructionKind::Return(..)
+                | InstructionKind::Nop => {}
             }
         }
     }

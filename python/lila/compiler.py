@@ -229,9 +229,11 @@ def verify(
                             break
                     arg_map.append(("buffer", len(c_args) - 2, item_size))
                 elif (
-                    any(x in ann_str for x in ["mut", "ref", "sizedarray"])
+                    any(x in ann_str for x in ["mut", "ref", "sizedarray", "closure"])
                     or getattr(actual_ann, "__lila_struct__", False)
                     or getattr(actual_ann, "__lila_enum__", False)
+                    or "fnpointer" in ann_str
+                    or "callable" in ann_str
                 ):
                     c_args.append(ctypes.c_void_p)
                     arg_map.append(("pointer", len(c_args) - 1))
@@ -295,6 +297,126 @@ def verify(
                             c_ret = cty
                             break
 
+            def get_ctypes_type(ann_str):
+                c_ty = ctypes.c_int64
+                for name, cty in TYPE_MAP.items():
+                    if name in ann_str:
+                        return cty
+                return c_ty
+
+            def create_jit_wrapper(code_ptr, arg_types, ret_type, is_closure=False):
+                c_args = []
+                if is_closure:
+                    c_args.append(ctypes.c_void_p)  # ctx_ptr
+
+                for arg_ty in arg_types:
+                    arg_ty_str = str(arg_ty).lower()
+                    if "buffer" in arg_ty_str:
+                        c_args.append(ctypes.c_void_p)
+                        c_args.append(ctypes.c_int64)
+                    elif any(
+                        x in arg_ty_str
+                        for x in [
+                            "mut",
+                            "ref",
+                            "sizedarray",
+                            "fnpointer",
+                            "callable",
+                            "closure",
+                        ]
+                    ):
+                        c_args.append(ctypes.c_void_p)
+                    else:
+                        c_args.append(get_ctypes_type(arg_ty_str))
+
+                ret_ty_str = str(ret_type).lower()
+                if "none" in ret_ty_str or ret_type is None:
+                    c_ret = None
+                elif "tuple" in ret_ty_str:
+                    # TODO: Handle tuple return in nested wrappers
+                    c_ret = ctypes.c_void_p
+                else:
+                    c_ret = get_ctypes_type(ret_ty_str)
+
+                # If it's a closure, the code_ptr passed here is the closure_ptr.
+                # We need to load the actual function address from closure_ptr[0].
+                actual_fn_ptr = code_ptr
+                if is_closure:
+                    actual_fn_ptr = ctypes.cast(
+                        code_ptr, ctypes.POINTER(ctypes.c_void_p)
+                    )[0]
+
+                c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(actual_fn_ptr)
+
+                def jit_call(*args):
+                    processed_args = []
+                    if is_closure:
+                        processed_args.append(code_ptr)
+
+                    arg_idx = 0
+                    for arg_ty in arg_types:
+                        arg = args[arg_idx]
+                        arg_ty_str = str(arg_ty).lower()
+                        if "buffer" in arg_ty_str:
+                            if hasattr(arg, "ctypes"):
+                                processed_args.append(ctypes.c_void_p(arg.ctypes.data))
+                                processed_args.append(ctypes.c_int64(arg.size))
+                            else:
+                                mv = memoryview(arg)
+                                item_size = ctypes.sizeof(get_ctypes_type(arg_ty_str))
+                                processed_args.append(
+                                    ctypes.addressof(
+                                        (ctypes.c_char * mv.nbytes).from_buffer(arg)
+                                    )
+                                )
+                                processed_args.append(
+                                    ctypes.c_int64(mv.nbytes // item_size)
+                                )
+                        elif any(
+                            x in arg_ty_str
+                            for x in [
+                                "mut",
+                                "ref",
+                                "sizedarray",
+                                "fnpointer",
+                                "callable",
+                                "closure",
+                            ]
+                        ):
+                            if hasattr(arg, "__lila_ptr__"):
+                                processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
+                            else:
+                                processed_args.append(arg)
+                        else:
+                            processed_args.append(get_ctypes_type(arg_ty_str)(arg))
+                        arg_idx += 1
+
+                    res = c_func(*processed_args)
+
+                    # Recursively wrap if the return type is another function
+                    from .types import FnPointer, Closure
+
+                    if (
+                        "fnpointer" in ret_ty_str
+                        or "callable" in ret_ty_str
+                        or "closure" in ret_ty_str
+                        or isinstance(ret_type, FnPointer)
+                    ):
+                        is_cls = "closure" in ret_ty_str or isinstance(
+                            ret_type, Closure
+                        )
+                        return create_jit_wrapper(
+                            res,
+                            ret_type.arg_types,
+                            ret_type.ret_type,
+                            is_closure=is_cls,
+                        )
+
+                    return res
+
+                jit_call.__lila_ptr__ = code_ptr
+                return jit_call
+
             c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
             def wrapper(*args):
@@ -345,6 +467,8 @@ def verify(
                             processed_args.append(ctypes.addressof(arg._ctypes_obj))
                         elif isinstance(arg, ctypes.Structure):
                             processed_args.append(ctypes.addressof(arg))
+                        elif hasattr(arg, "__lila_ptr__"):
+                            processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
                         else:
                             processed_args.append(arg)
                     else:
@@ -358,10 +482,26 @@ def verify(
                     return tuple(
                         getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
                     )
+
+                # Wrap returned function pointer/closure
+                from .types import FnPointer, Closure
+
+                if (
+                    "fnpointer" in ret_ann_str
+                    or "callable" in ret_ann_str
+                    or "closure" in ret_ann_str
+                    or isinstance(ret_ann, FnPointer)
+                ):
+                    is_cls = "closure" in ret_ann_str or isinstance(ret_ann, Closure)
+                    return create_jit_wrapper(
+                        res, ret_ann.arg_types, ret_ann.ret_type, is_closure=is_cls
+                    )
+
                 return res
 
             print(f"[Lila] JIT compiled '{func.__name__}' successfully.")
             wrapper.__lila_jit__ = True
+            wrapper.__lila_ptr__ = code_ptr
             return wrapper
         except Exception as e:
             error_msg = format_verification_error(func.__name__, source, str(e))

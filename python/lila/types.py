@@ -467,6 +467,38 @@ def enum(cls):
     return cls
 
 
+class FnPointer:
+    """
+    Represents a raw function pointer.
+    Usage: f: FnPointer[[i64, i64], i64]
+    """
+
+    def __init__(self, arg_types, ret_type):
+        self.arg_types = arg_types
+        self.ret_type = ret_type
+
+    def __class_getitem__(cls, params):
+        if not isinstance(params, tuple) or len(params) != 2:
+            return cls(params, None)
+        return cls(params[0], params[1])
+
+
+class Callable:
+    """Alias for FnPointer for better Python compatibility."""
+
+    def __class_getitem__(cls, params):
+        return FnPointer.__class_getitem__(params)
+
+
+class Closure(FnPointer):
+    """
+    Represents a closure (function pointer + environment).
+    Usage: f: Closure[[i64], i64]
+    """
+
+    pass
+
+
 __all__ = [
     "Mut",
     "Ref",
@@ -486,5 +518,8 @@ __all__ = [
     "Refined",
     "SizedArray",
     "Buffer",
+    "FnPointer",
+    "Callable",
+    "Closure",
     "TYPE_MAP",
 ]

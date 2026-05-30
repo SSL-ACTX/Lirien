@@ -26,9 +26,13 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I8 | SsaType::U8 | SsaType::Bool => types::I8,
         SsaType::I16 | SsaType::U16 => types::I16,
         SsaType::I32 | SsaType::U32 => types::I32,
-        SsaType::I64 | SsaType::U64 | SsaType::Owned(_) | SsaType::Ref(_) | SsaType::Mut(_) => {
-            types::I64
-        }
+        SsaType::I64
+        | SsaType::U64
+        | SsaType::Owned(_)
+        | SsaType::Ref(_)
+        | SsaType::Mut(_)
+        | SsaType::FnPointer(_, _)
+        | SsaType::Closure(_, _, _) => types::I64,
         SsaType::F32 => types::F32,
         SsaType::F64 => types::F64,
         SsaType::Array(_, _)
@@ -71,10 +75,12 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
     // Link math intrinsics
     extern "C" {
+        fn malloc(size: usize) -> *mut u8;
         fn sin(x: f64) -> f64;
         fn cos(x: f64) -> f64;
         fn pow(x: f64, y: f64) -> f64;
     }
+    jit_builder.symbol("malloc", malloc as *const u8);
     jit_builder.symbol("sin", sin as *const u8);
     jit_builder.symbol("cos", cos as *const u8);
     jit_builder.symbol("pow", pow as *const u8);

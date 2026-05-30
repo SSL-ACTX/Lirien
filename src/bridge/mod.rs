@@ -26,7 +26,7 @@ pub fn verify_and_compile(
 
     debug!(target: "lila::bridge", "AST parsed successfully. Starting SSA transformation...");
 
-    let ssa = crate::ssa::transform(
+    let ssa_list = crate::ssa::transform(
         func_name.clone(),
         ast,
         struct_layouts,
@@ -41,36 +41,45 @@ pub fn verify_and_compile(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
     })?;
 
-    info!(target: "lila::bridge", "SSA Transformation complete for '{}'", func_name);
+    let mut main_code_ptr = 0;
 
-    crate::verification::verify(&ssa).map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
+    for ssa in ssa_list {
+        info!(target: "lila::bridge", "Processing SSA for '{}'...", ssa.name);
 
-    info!(target: "lila::bridge", "Verification complete for '{}'", func_name);
+        crate::verification::verify(&ssa)
+            .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
 
-    let mut arg_types = Vec::new();
-    for i in 0..ssa.arg_count {
-        arg_types.push(ssa.get_type(crate::ssa::ir::Value(i)));
+        info!(target: "lila::bridge", "Verification complete for '{}'", ssa.name);
+
+        let mut arg_types = Vec::new();
+        for i in 0..ssa.arg_count {
+            arg_types.push(ssa.get_type(crate::ssa::ir::Value(i)));
+        }
+        let return_type = ssa.return_type.clone();
+
+        let code_ptr = crate::backend::compile(&ssa)
+            .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
+
+        {
+            let mut registry = GLOBAL_REGISTRY.lock().unwrap();
+            registry.register(FunctionSignature {
+                name: ssa.name.clone(),
+                arg_types,
+                return_type,
+                pointer: code_ptr,
+            });
+        }
+
+        if ssa.name == func_name {
+            main_code_ptr = code_ptr;
+        }
+
+        info!(
+            target: "lila::bridge",
+            "Backend compilation complete for '{}', ptr: {:x}",
+            ssa.name, code_ptr
+        );
     }
-    let return_type = ssa.return_type.clone();
 
-    let code_ptr =
-        crate::backend::compile(&ssa).map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
-
-    {
-        let mut registry = GLOBAL_REGISTRY.lock().unwrap();
-        registry.register(FunctionSignature {
-            name: func_name.clone(),
-            arg_types,
-            return_type,
-            pointer: code_ptr,
-        });
-    }
-
-    info!(
-        target: "lila::bridge",
-        "Backend compilation complete for '{}', ptr: {:x}",
-        func_name, code_ptr
-    );
-
-    Ok(code_ptr)
+    Ok(main_code_ptr)
 }

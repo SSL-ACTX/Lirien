@@ -10,7 +10,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
         let ty = ctx.func.get_type(val);
 
         let mut is_mem_obj = false;
-        let mut curr_ty = ty.clone();
+        let curr_ty = ty.clone();
         let mut inner_ty = ty.clone();
         loop {
             match curr_ty {
@@ -19,14 +19,11 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     inner_ty = *inner;
                     break;
                 }
-                Type::Struct(_) | Type::Tuple(_) => {
+                Type::Struct(_) | Type::Tuple(_) | Type::Mut(_) | Type::Ref(_) | Type::Owned(_) => {
                     is_mem_obj = true;
-                    // Composite types are modeled as Int -> BV for now (field addressed via byte offsets)
+                    // Composite types and pointers are modeled as Int -> BV for now
                     inner_ty = Type::I64;
                     break;
-                }
-                Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) => {
-                    curr_ty = *inner;
                 }
                 _ => break,
             }

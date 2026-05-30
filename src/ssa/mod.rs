@@ -14,19 +14,30 @@ pub fn transform(
     struct_layouts: HashMap<String, Vec<(String, String)>>,
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
-) -> Result<Function, String> {
+) -> Result<Vec<Function>, String> {
     info!(target: "lila::ssa", "Transforming AST to IR for '{}'...", name);
 
     let mut builder = CFGBuilder::new(name, struct_layouts, enum_layouts, type_aliases);
     builder.build(suite)?;
 
-    let mut func = builder.func;
+    let mut main_func = builder.func;
+    let mut lambdas = builder.lambdas;
 
     // Optimization
-    optimization::optimize(&mut func);
+    optimization::optimize(&mut main_func);
+    for lambda in &mut lambdas {
+        optimization::optimize(lambda);
+    }
 
-    func.dump();
+    let mut result = Vec::new();
+    lambdas.reverse();
+    result.extend(lambdas);
+    result.push(main_func);
 
-    Ok(func)
+    for func in &result {
+        func.dump();
+    }
+
+    Ok(result)
 }
 pub mod analysis;

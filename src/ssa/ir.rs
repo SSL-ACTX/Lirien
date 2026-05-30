@@ -22,6 +22,8 @@ pub enum Type {
     Struct(String),
     Enum(String),
     Tuple(Vec<Type>),
+    FnPointer(Vec<Type>, Box<Type>),
+    Closure(String, Vec<Type>, Box<Type>),
     Unknown,
 }
 
@@ -53,6 +55,14 @@ impl fmt::Display for Type {
                 let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
                 write!(f, "Tuple<{}>", inner.join(", "))
             }
+            Type::FnPointer(args, ret) => {
+                let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
+                write!(f, "Fn({}) -> {}", inner.join(", "), ret)
+            }
+            Type::Closure(name, args, ret) => {
+                let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
+                write!(f, "Closure {}({}) -> {}", name, inner.join(", "), ret)
+            }
             Type::Unknown => write!(f, "unknown"),
         }
     }
@@ -81,7 +91,13 @@ impl Type {
     pub fn is_pointer_like(&self) -> bool {
         matches!(
             self,
-            Type::Ref(_) | Type::Mut(_) | Type::Owned(_) | Type::Buffer(_) | Type::Array(_, _)
+            Type::Ref(_)
+                | Type::Mut(_)
+                | Type::Owned(_)
+                | Type::Buffer(_)
+                | Type::Array(_, _)
+                | Type::FnPointer(_, _)
+                | Type::Closure(_, _, _)
         )
     }
 
@@ -99,7 +115,11 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Ref(_) | Type::Mut(_) | Type::Owned(_) => 8,
+            Type::Ref(_)
+            | Type::Mut(_)
+            | Type::Owned(_)
+            | Type::FnPointer(_, _)
+            | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
             Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
@@ -169,7 +189,11 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Ref(_) | Type::Mut(_) | Type::Owned(_) => 8,
+            Type::Ref(_)
+            | Type::Mut(_)
+            | Type::Owned(_)
+            | Type::FnPointer(_, _)
+            | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
             Type::Struct(name) => {
@@ -327,6 +351,9 @@ pub enum InstructionKind {
     TupleCreate(Value, Vec<Value>),
     TupleExtract(Value, Value, usize), // dest, tuple_val, index
 
+    Lambda(Value, String, Vec<Value>), // dest, func_name, captured_vals
+    IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
+
     Nop,
 }
 
@@ -479,6 +506,28 @@ impl fmt::Display for Instruction {
             InstructionKind::TupleExtract(d, t, idx) => {
                 write!(f, "  {} = extract {}[{}] (tuple){}", d, t, idx, loc_str)
             }
+            InstructionKind::Lambda(d, name, captures) => {
+                let caps: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  {} = lambda {}({}){}",
+                    d,
+                    name,
+                    caps.join(", "),
+                    loc_str
+                )
+            }
+            InstructionKind::IndirectCall(d, ptr, args) => {
+                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  {} = icall {}({}){}",
+                    d,
+                    ptr,
+                    args_str.join(", "),
+                    loc_str
+                )
+            }
             InstructionKind::Nop => write!(f, "  nop{}", loc_str),
         }
     }
@@ -540,6 +589,8 @@ impl Instruction {
             | InstructionKind::EnumExtract(d, _, _)
             | InstructionKind::TupleCreate(d, _)
             | InstructionKind::TupleExtract(d, _, _)
+            | InstructionKind::Lambda(d, _, _)
+            | InstructionKind::IndirectCall(d, _, _)
             | InstructionKind::BufferLoad(d, _, _)
             | InstructionKind::BufferStore(d, _, _, _, _)
             | InstructionKind::BufferLen(d, _) => Some(*d),
@@ -662,6 +713,17 @@ impl Instruction {
             }
             InstructionKind::TupleExtract(_, t, _) => {
                 operands.push(*t);
+            }
+            InstructionKind::Lambda(_, _, captures) => {
+                for v in captures {
+                    operands.push(*v);
+                }
+            }
+            InstructionKind::IndirectCall(_, ptr, args) => {
+                operands.push(*ptr);
+                for v in args {
+                    operands.push(*v);
+                }
             }
             _ => {}
         }

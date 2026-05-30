@@ -45,30 +45,36 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
             _ => Ok(Type::Struct(a.attr.to_string())),
         },
         ast::Expr::Subscript(s) => {
-            let base = match &*s.value {
+            let base_str = match &*s.value {
                 ast::Expr::Name(n) => n.id.as_str(),
                 ast::Expr::Attribute(a) => a.attr.as_str(),
                 _ => return Err(format!("Invalid type annotation base: {:?}", s.value)),
             };
 
-            match base {
-                "Owned" => {
+            let base = if let Some(alias) = aliases.get(base_str) {
+                alias.as_str()
+            } else {
+                base_str
+            };
+
+            match base.to_lowercase().as_str() {
+                "owned" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Owned(Box::new(inner)))
                 }
-                "Ref" => {
+                "ref" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Ref(Box::new(inner)))
                 }
-                "Mut" | "mut" => {
+                "mut" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Mut(Box::new(inner)))
                 }
-                "Array" | "array" => {
+                "array" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
-                "SizedArray" | "sizedarray" => {
+                "sizedarray" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.len() == 2 {
                             let inner = parse_type(&t.elts[0], aliases)?;
@@ -86,11 +92,49 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
-                "Buffer" | "buffer" => {
+                "buffer" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
-                "Tuple" | "tuple" => {
+                "fnpointer" | "callable" => {
+                    if let ast::Expr::Tuple(t) = &*s.slice {
+                        if t.elts.len() == 2 {
+                            let mut arg_types = Vec::new();
+                            if let ast::Expr::List(args) = &t.elts[0] {
+                                for arg in &args.elts {
+                                    arg_types.push(parse_type(arg, aliases)?);
+                                }
+                            } else {
+                                arg_types.push(parse_type(&t.elts[0], aliases)?);
+                            }
+                            let ret_type = parse_type(&t.elts[1], aliases)?;
+                            return Ok(Type::FnPointer(arg_types, Box::new(ret_type)));
+                        }
+                    }
+                    Err("FnPointer expects [[arg_types], ret_type]".to_string())
+                }
+                "closure" => {
+                    if let ast::Expr::Tuple(t) = &*s.slice {
+                        if t.elts.len() == 2 {
+                            let mut arg_types = Vec::new();
+                            if let ast::Expr::List(args) = &t.elts[0] {
+                                for arg in &args.elts {
+                                    arg_types.push(parse_type(arg, aliases)?);
+                                }
+                            } else {
+                                arg_types.push(parse_type(&t.elts[0], aliases)?);
+                            }
+                            let ret_type = parse_type(&t.elts[1], aliases)?;
+                            return Ok(Type::Closure(
+                                "".to_string(),
+                                arg_types,
+                                Box::new(ret_type),
+                            ));
+                        }
+                    }
+                    Err("Closure expects [[arg_types], ret_type]".to_string())
+                }
+                "tuple" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         let mut types = Vec::new();
                         for elt in &t.elts {
@@ -103,7 +147,7 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                         Ok(Type::Tuple(vec![inner]))
                     }
                 }
-                "Refined" | "refined" => {
+                "refined" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
                             return parse_type(&t.elts[0], aliases);
@@ -112,7 +156,7 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(inner)
                 }
-                "Annotated" | "annotated" => {
+                "annotated" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
                             return parse_type(&t.elts[0], aliases);
@@ -120,7 +164,11 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     }
                     parse_type(&s.slice, aliases)
                 }
-                _ => Err(format!("Unsupported generic type: {}", base)),
+                _ => Err(format!(
+                    "Unsupported generic type: '{}' (lowered: '{}')",
+                    base,
+                    base.to_lowercase()
+                )),
             }
         }
         ast::Expr::Constant(c) => match &c.value {

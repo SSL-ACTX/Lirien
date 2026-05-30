@@ -6,6 +6,7 @@ use cranelift_module::Module;
 
 pub mod arithmetic;
 pub mod control_flow;
+pub mod higher_order;
 pub mod intrinsics;
 pub mod memory;
 pub mod tuples;
@@ -149,6 +150,12 @@ pub fn lower_instruction<M: Module>(
         }
 
         InstructionKind::Call(dest, func, args) => intrinsics::lower(ctx, *dest, func, args),
+        InstructionKind::IndirectCall(dest, fn_ptr, args) => {
+            higher_order::lower(ctx, *dest, *fn_ptr, args)
+        }
+        InstructionKind::Lambda(dest, name, captures) => {
+            higher_order::lower_lambda(ctx, *dest, name, captures)
+        }
         InstructionKind::Nop => Ok(()),
     }
 }

@@ -118,7 +118,21 @@ def create_some(x: i64) -> i64:
     return -1
 ```
 
-### 5. Verified Buffer and NumPy Interop
+### 5. Higher-Order Functions: First-Class Verified Logic
+Lila supports closures and lambdas with full formal verification of their capture environments. Captured variables are automatically detected, bundled into heap-allocated environments, and verified for safe access.
+```python
+from lila import verify, i64, Closure
+
+@verify
+def make_adder(x: i64) -> Closure[[i64], i64]:
+    # Lila performs capture analysis and heap-allocates the environment
+    return lambda y: x + y
+
+add5 = make_adder(5)
+result = add5(10) # result = 15
+```
+
+### 6. Verified Buffer and NumPy Interop
 Seamlessly operate on high-performance memory buffers (like NumPy arrays) with Z3-proven bounds checking.
 ```python
 from lila import verify, Buffer, f64
@@ -131,7 +145,17 @@ def scale_vector(vec: Buffer[f64], factor: f64) -> None:
         vec[i] *= factor
 ```
 
-### 6. GIL-less Parallelism
+### 7. Source-Level Diagnostics
+Lila provides visual highlights for verification failures, mapping IR-level logic errors back to your original Python source code for immediate debugging.
+```text
+[Lila Warning] Lila Verification Failed for 'divide_unsafe': Potential division by zero at v2
+  --> source.py:3:12
+   |
+ 3 |    return n // d
+   |                ^--- Logic error detected here
+```
+
+### 8. GIL-less Parallelism
 Since Lila code operates on raw memory and avoids `PyObject` manipulation, it can execute across multiple threads without ever acquiring the Global Interpreter Lock.
 
 ---
@@ -141,11 +165,13 @@ Since Lila code operates on raw memory and avoids `PyObject` manipulation, it ca
 | Feature | Support |
 | :--- | :--- |
 | **Numeric Types** | `i8` through `u64`, `f32`, `f64` |
+| **Functional Types**| `FnPointer`, `Closure`, `Callable` |
 | **Complex Types** | Structs, Tagged Unions (Enums), Tuples |
 | **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |
-| **Optimization Passes** | SSA-DCE, Constant Folding, Type Propagation |
+| **Diagnostics** | Source-level visual highlights |
+| **Optimization Passes**| SSA-DCE (Self-Protecting), Constant Folding, Type Propagation |
 
 ---
 
