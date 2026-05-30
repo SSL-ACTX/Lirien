@@ -249,7 +249,7 @@ fn expr_to_string_internal(
                                 let align = f_ty.align(struct_layouts);
                                 offset = (offset + align - 1) & !(align - 1);
                                 if f_name == s.attr.as_str() {
-                                    return Ok(format!("(select VALUE_PLACEHOLDER {})", offset));
+                                    return Ok(format!("(select {{v}} {})", offset));
                                 }
                                 offset += f_ty.size(struct_layouts);
                             }
@@ -266,7 +266,7 @@ fn expr_to_string_internal(
         ast::Expr::Name(n) => {
             if let Some(name) = arg_name {
                 if n.id.as_str() == name {
-                    return Ok("VALUE_PLACEHOLDER".to_string());
+                    return Ok("{v}".to_string());
                 }
             }
             Ok(n.id.to_string())

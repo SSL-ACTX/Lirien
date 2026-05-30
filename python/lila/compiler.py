@@ -15,6 +15,48 @@ class VerificationError(Exception):
     pass
 
 
+def format_verification_error(func_name: str, source: str, error: str) -> str:
+    import re
+
+    # Try to find offset in the error message
+    match = re.search(r"at offset (\d+)", error)
+    if match:
+        offset = int(match.group(1))
+        # Remove the offset info from the error message for cleaner display
+        clean_error = error.replace(match.group(0), "").strip()
+
+        # Find line and column from offset
+        lines = source.splitlines()
+        curr_offset = 0
+        target_line_idx = 0
+        target_col = 0
+        for i, line in enumerate(lines):
+            line_len = len(line) + 1  # +1 for newline
+            if curr_offset <= offset < curr_offset + line_len:
+                target_line_idx = i
+                target_col = offset - curr_offset
+                break
+            curr_offset += line_len
+
+        # Format pretty error
+        res = [f"Lila Verification Failed for '{func_name}': {clean_error}"]
+        res.append(f"  at line {target_line_idx + 1}, col {target_col + 1}:")
+        res.append("")
+
+        # Context lines
+        start_idx = max(0, target_line_idx - 1)
+        end_idx = min(len(lines), target_line_idx + 2)
+        for i in range(start_idx, end_idx):
+            prefix = "> " if i == target_line_idx else "  "
+            res.append(f"{prefix}{i + 1:4} | {lines[i]}")
+            if i == target_line_idx:
+                res.append("       | " + " " * target_col + "^")
+
+        return "\n".join(res)
+
+    return f"Lila Verification Failed for '{func_name}': {error}"
+
+
 def verify(
     strict: bool = True,
     log_level: str = None,
@@ -322,7 +364,7 @@ def verify(
             wrapper.__lila_jit__ = True
             return wrapper
         except Exception as e:
-            error_msg = f"Lila Verification Failed for '{func.__name__}': {e}"
+            error_msg = format_verification_error(func.__name__, source, str(e))
             if strict:
                 raise VerificationError(error_msg) from e
             else:

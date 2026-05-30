@@ -21,7 +21,7 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 
 ### 2. Usability Improvements (In Progress)
 - [x] **Structural Pattern Matching**: Support Python `match` statements for Enums.
-- [ ] **Type Inference**: Reduce the need for explicit type annotations on local variables.
+- [x] **Type Inference**: Reduce the need for explicit type annotations on local variables.
 - [ ] **Improved Diagnostics**: Better error messages for verification failures with source-level highlights.
 
 ### 3. Advanced Features

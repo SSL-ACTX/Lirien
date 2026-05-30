@@ -6,7 +6,7 @@ class TestLoopVerification(unittest.TestCase):
     def test_loop_safety(self):
         @verify
         def access_all(buf: Buffer[i64]) -> i64:
-            total: i64 = 0
+            total = 0
             # Lila should prove i is always in bounds
             for i in range(len(buf)):
                 total = total + buf[i]

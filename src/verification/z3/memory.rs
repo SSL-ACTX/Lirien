@@ -133,7 +133,7 @@ pub fn translate(
                 .ok_or_else(|| format!("Index {} not modeled", idx))?;
 
             if let Type::Array(_, Some(size)) = ctx.func.get_type(*arr) {
-                check_bounds(ctx, path_cond, z3_idx, size as i64, dest.0)?;
+                check_bounds(ctx, path_cond, z3_idx, size as i64, dest.0, inst.location)?;
             }
 
             // z3_arr is indexed by Int internally in our modeling (see Sort::int)
@@ -155,7 +155,7 @@ pub fn translate(
             let z3_idx = ctx.z3_bvs.get(idx).unwrap();
 
             if let Type::Array(_, Some(size)) = ctx.func.get_type(*arr) {
-                check_bounds(ctx, path_cond, z3_idx, size as i64, dest.0)?;
+                check_bounds(ctx, path_cond, z3_idx, size as i64, dest.0, inst.location)?;
             }
 
             let z3_idx_int = z3_idx.to_int(true);
@@ -173,12 +173,12 @@ pub fn translate(
         InstructionKind::BufferLoad(dest, buf, idx) => {
             let z3_idx = ctx.z3_bvs.get(idx).unwrap();
             let z3_len = ctx.z3_bvs.get(buf).unwrap();
-            check_buffer_bounds(ctx, path_cond, z3_idx, z3_len, dest.0)?;
+            check_buffer_bounds(ctx, path_cond, z3_idx, z3_len, dest.0, inst.location)?;
         }
         InstructionKind::BufferStore(dest, buf, idx, _val, _ty) => {
             let z3_idx = ctx.z3_bvs.get(idx).unwrap();
             let z3_len = ctx.z3_bvs.get(buf).unwrap();
-            check_buffer_bounds(ctx, path_cond, z3_idx, z3_len, dest.0)?;
+            check_buffer_bounds(ctx, path_cond, z3_idx, z3_len, dest.0, inst.location)?;
             if let (Some(z3_dest_len), Some(z3_buf_len)) =
                 (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(buf))
             {
@@ -343,6 +343,7 @@ fn check_bounds(
     idx: &BV,
     size: i64,
     dest_id: usize,
+    location: Option<crate::ssa::ir::SourceLocation>,
 ) -> Result<(), String> {
     let bit_width = idx.get_size();
     let zero = BV::from_i64(0, bit_width);
@@ -352,9 +353,10 @@ fn check_bounds(
     ctx.solver.assert(path_cond);
     ctx.solver.assert(idx.bvslt(&zero));
     if ctx.solver.check() != SatResult::Unsat {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
-            "Potential out-of-bounds access (index < 0) at v{}",
-            dest_id
+            "Potential out-of-bounds access (index < 0) at v{}{}",
+            dest_id, loc_info
         ));
     }
     ctx.solver.pop(1);
@@ -363,9 +365,10 @@ fn check_bounds(
     ctx.solver.assert(path_cond);
     ctx.solver.assert(idx.bvsge(&sz));
     if ctx.solver.check() != SatResult::Unsat {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
-            "Potential out-of-bounds access (index >= {}) at v{}",
-            size, dest_id
+            "Potential out-of-bounds access (index >= {}) at v{}{}",
+            size, dest_id, loc_info
         ));
     }
     ctx.solver.pop(1);
@@ -378,6 +381,7 @@ fn check_buffer_bounds(
     idx: &BV,
     len: &BV,
     dest_id: usize,
+    location: Option<crate::ssa::ir::SourceLocation>,
 ) -> Result<(), String> {
     let bit_width = idx.get_size();
     let zero = BV::from_i64(0, bit_width);
@@ -386,9 +390,10 @@ fn check_buffer_bounds(
     ctx.solver.assert(path_cond);
     ctx.solver.assert(idx.bvslt(&zero));
     if ctx.solver.check() != SatResult::Unsat {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
-            "Potential out-of-bounds buffer access (index < 0) at v{}",
-            dest_id
+            "Potential out-of-bounds buffer access (index < 0) at v{}{}",
+            dest_id, loc_info
         ));
     }
     ctx.solver.pop(1);
@@ -407,9 +412,10 @@ fn check_buffer_bounds(
 
     ctx.solver.assert(idx.bvsge(&check_len));
     if ctx.solver.check() != SatResult::Unsat {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
-            "Potential out-of-bounds buffer access (index >= len) at v{}",
-            dest_id
+            "Potential out-of-bounds buffer access (index >= len) at v{}{}",
+            dest_id, loc_info
         ));
     }
     ctx.solver.pop(1);

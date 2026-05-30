@@ -6,8 +6,8 @@ class TestWhileLoops(unittest.TestCase):
     def test_while_basic(self):
         @verify
         def sum_to_n(n: i64) -> i64:
-            s: i64 = 0
-            i: i64 = 0
+            s = 0
+            i = 0
             while i < n:
                 s += i
                 i += 1
@@ -19,7 +19,7 @@ class TestWhileLoops(unittest.TestCase):
     def test_while_break(self):
         @verify
         def find_first_gt(n: i64, limit: i64) -> i64:
-            i: i64 = 0
+            i = 0
             while i < n:
                 if i > limit:
                     break
@@ -32,8 +32,8 @@ class TestWhileLoops(unittest.TestCase):
     def test_while_continue(self):
         @verify
         def sum_evens_while(n: i64) -> i64:
-            s: i64 = 0
-            i: i64 = 0
+            s = 0
+            i = 0
             while i < n:
                 i += 1
                 if i % 2 != 0:

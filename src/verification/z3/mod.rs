@@ -377,9 +377,13 @@ pub fn verify_with_context(
                         solver.assert(path_cond);
                         solver.assert(&expr.not());
                         if solver.check() != z3::SatResult::Unsat {
+                            let loc_info = inst
+                                .location
+                                .map(|l| format!(" at {}", l))
+                                .unwrap_or_default();
                             return Err(format!(
-                                "Return refinement violation: value of {:?} does not satisfy '{}' and may be violated on some reachable path.",
-                                ret_val, ret_ref
+                                "Return refinement violation: value of {:?} does not satisfy '{}' and may be violated on some reachable path{}.",
+                                ret_val, ret_ref, loc_info
                             ));
                         }
                         solver.pop(1);

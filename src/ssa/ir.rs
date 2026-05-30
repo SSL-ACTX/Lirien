@@ -235,13 +235,12 @@ impl fmt::Display for BlockId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceLocation {
-    pub line: usize,
-    pub column: usize,
+    pub offset: usize,
 }
 
 impl fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.column)
+        write!(f, "offset {}", self.offset)
     }
 }
 

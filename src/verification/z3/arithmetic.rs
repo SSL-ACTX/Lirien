@@ -375,9 +375,13 @@ pub fn translate(
                                 ctx.solver.assert(path_cond);
                                 ctx.solver.assert(z3_src.lt(&zero));
                                 if ctx.solver.check() != SatResult::Unsat {
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
                                     return Err(format!(
-                                        "Potential sqrt of negative number at v{}",
-                                        dest.0
+                                        "Potential sqrt of negative number at v{}{}",
+                                        dest.0, loc_info
                                     ));
                                 }
                                 ctx.solver.pop(1);
@@ -423,7 +427,14 @@ pub fn translate(
 
                     ctx.solver.assert(&domain_err);
                     if ctx.solver.check() != SatResult::Unsat {
-                        return Err(format!("Potential domain error in fpow at v{}", dest.0));
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Potential domain error in fpow at v{}{}",
+                            dest.0, loc_info
+                        ));
                     }
                     ctx.solver.pop(1);
                 }

@@ -56,3 +56,10 @@ The project uses `z3-rs` v0.20.0, which has been configured/modified for ergonom
 *   **No Explicit Context:** Most AST constructor methods (e.g., `BV::from_i64`, `Int::from_i64`, `Bool::from_bool`, `BV::new_const`) do **not** take a `&Context` argument. They use `Context::thread_local()` internally.
 *   **Comparison Methods:** Use standard `eq`, `lt`, `gt`, etc.
 *   **Verification Entry:** The Z3 context is initialized in `src/verification/mod.rs` via `Context::thread_local()`.
+
+## 4. Testing Standards
+
+### 4.1 Python Tests (unittest)
+*   **Framework:** Use the standard Python `unittest` library. Do not use `pytest`.
+*   **Execution:** Run tests using `PYTHONPATH=./python python -m unittest discover tests/python`.
+*   **Structure:** Each test file must be runnable directly (e.g., `if __name__ == "__main__": unittest.main()`).

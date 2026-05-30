@@ -7,7 +7,7 @@ class TestForLoops(unittest.TestCase):
     def test_range_basic(self):
         @verify
         def sum_range(n: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(n):
                 total = total + i
             return total
@@ -18,7 +18,7 @@ class TestForLoops(unittest.TestCase):
     def test_range_start_stop(self):
         @verify
         def sum_range_start_stop(start: i64, stop: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(start, stop):
                 total = total + i
             return total
@@ -28,7 +28,7 @@ class TestForLoops(unittest.TestCase):
     def test_range_step(self):
         @verify
         def sum_odds(n: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(1, n, 2):
                 total = total + i
             return total
@@ -39,7 +39,7 @@ class TestForLoops(unittest.TestCase):
     def test_range_negative_step(self):
         @verify
         def sum_backwards(start: i64, stop: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(start, stop, -1):
                 total = total + i
             return total
@@ -60,7 +60,7 @@ class TestForLoops(unittest.TestCase):
     def test_enumerate_buffer(self):
         @verify
         def sum_enumerate(buf: Buffer[i64]) -> i64:
-            total: i64 = 0
+            total = 0
             for i, x in enumerate(buf):
                 total = total + x + i
             return total
@@ -72,7 +72,7 @@ class TestForLoops(unittest.TestCase):
     def test_direct_iter_buffer(self):
         @verify
         def sum_direct(buf: Buffer[i64]) -> i64:
-            total: i64 = 0
+            total = 0
             for x in buf:
                 total = total + x
             return total
@@ -83,7 +83,7 @@ class TestForLoops(unittest.TestCase):
     def test_break(self):
         @verify
         def sum_until_limit(n: i64, limit: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(n):
                 if i >= limit:
                     break
@@ -96,7 +96,7 @@ class TestForLoops(unittest.TestCase):
     def test_continue(self):
         @verify
         def sum_evens(n: i64) -> i64:
-            total: i64 = 0
+            total = 0
             for i in range(n):
                 if i % 2 != 0:
                     continue

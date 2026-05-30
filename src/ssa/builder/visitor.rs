@@ -78,8 +78,8 @@ impl CFGBuilder {
         Ok(())
     }
 
-    pub fn update_location(&mut self, line: usize) {
-        self.current_location = Some(SourceLocation { line, column: 0 });
+    pub fn update_location(&mut self, offset: usize) {
+        self.current_location = Some(SourceLocation { offset });
     }
 
     pub fn visit_stmt(&mut self, stmt: ast::Stmt) -> Result<(), String> {
@@ -594,10 +594,14 @@ impl CFGBuilder {
     }
 
     pub fn visit_expr(&mut self, expr: ast::Expr) -> Result<Value, String> {
+        let expr_offset = expr.range().start().to_usize();
+        self.update_location(expr_offset);
+
         match expr {
             ast::Expr::BinOp(s) => {
                 let lhs = self.visit_expr(*s.left)?;
                 let rhs = self.visit_expr(*s.right)?;
+                self.update_location(expr_offset);
                 let dest = self.func.next_value();
                 let kind = self.build_binop(s.op, lhs, rhs, dest)?;
                 self.add_instruction(kind);
@@ -672,6 +676,7 @@ impl CFGBuilder {
                 }
                 let lhs = self.visit_expr(*s.left)?;
                 let rhs = self.visit_expr(s.comparators[0].clone())?;
+                self.update_location(expr_offset);
                 let dest = self.func.next_value();
 
                 let l_ty = self.func.get_type(lhs);
@@ -785,6 +790,7 @@ impl CFGBuilder {
                     }
 
                     let dest = self.func.next_value();
+                    self.update_location(expr_offset);
                     if field_ty.is_composite() {
                         self.add_instruction(InstructionKind::StructOffset(
                             dest,
@@ -1127,6 +1133,7 @@ impl CFGBuilder {
                 }
 
                 let dest = self.func.next_value();
+                self.update_location(expr_offset);
                 self.add_instruction(InstructionKind::Call(dest, func_name.clone(), args));
 
                 // Look up return type in registry
