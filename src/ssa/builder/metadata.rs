@@ -58,17 +58,17 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
             };
 
             match base.to_lowercase().as_str() {
-                "owned" => {
+                "held" => {
                     let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Owned(Box::new(inner)))
+                    Ok(Type::Held(Box::new(inner)))
                 }
-                "ref" => {
+                "peek" => {
                     let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Ref(Box::new(inner)))
+                    Ok(Type::Peek(Box::new(inner)))
                 }
-                "mut" => {
+                "hand" => {
                     let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Mut(Box::new(inner)))
+                    Ok(Type::Hand(Box::new(inner)))
                 }
                 "array" => {
                     let inner = parse_type(&s.slice, aliases)?;

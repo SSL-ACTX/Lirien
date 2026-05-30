@@ -1,7 +1,7 @@
 from .types import (
-    Mut,
-    Ref,
-    Owned,
+    Hand,
+    Peek,
+    Held,
     struct,
     enum,
     i8,
@@ -24,9 +24,9 @@ from .types import (
 from .compiler import verify, VerificationError
 
 __all__ = [
-    "Mut",
-    "Ref",
-    "Owned",
+    "Hand",
+    "Peek",
+    "Held",
     "struct",
     "enum",
     "verify",

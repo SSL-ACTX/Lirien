@@ -19,7 +19,11 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     inner_ty = *inner;
                     break;
                 }
-                Type::Struct(_) | Type::Tuple(_) | Type::Mut(_) | Type::Ref(_) | Type::Owned(_) => {
+                Type::Struct(_)
+                | Type::Tuple(_)
+                | Type::Hand(_)
+                | Type::Peek(_)
+                | Type::Held(_) => {
                     is_mem_obj = true;
                     // Composite types and pointers are modeled as Int -> BV.
                     inner_ty = Type::I64;
@@ -316,7 +320,7 @@ pub fn translate(
                     .assert(path_cond.implies(z3_dest.eq(z3_obj_payload)));
             }
         }
-        InstructionKind::Reference(dest, src) | InstructionKind::MutReference(dest, src) => {
+        InstructionKind::Peek(dest, src) | InstructionKind::Hand(dest, src) => {
             if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
                 ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
             }

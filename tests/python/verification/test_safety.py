@@ -1,10 +1,10 @@
 import unittest
-from lila import verify, i64, Owned, Mut, Ref
+from lila import verify, i64, Held, Hand, Peek
 from lila.compiler import VerificationError
 
 
 @verify
-def consume_val(x: Owned[i64]) -> i64:
+def consume_val(x: Held[i64]) -> i64:
     return x
 
 
@@ -22,20 +22,20 @@ class TestSafety(unittest.TestCase):
         with self.assertRaises(VerificationError) as cm:
 
             @verify
-            def illegal_use(x: Owned[i64]) -> i64:
+            def illegal_use(x: Held[i64]) -> i64:
                 a = consume_val(x)
                 return a + x
 
         self.assertIn("Memory safety violation", str(cm.exception))
 
     def test_aliasing_violation(self):
-        # Lila should block Mut and Ref aliasing same root
+        # Lila should block Hand and Peek aliasing same root
 
         with self.assertRaises(VerificationError) as cm:
 
             @verify
-            def illegal_alias_struct(d: Mut[Dummy]) -> i64:
-                r1 = Ref(d)  # Shared permission
+            def illegal_alias_struct(d: Hand[Dummy]) -> i64:
+                r1 = Peek(d)  # Shared permission
                 d.val = 10  # Exclusive permission - violation!
                 return r1.val
 

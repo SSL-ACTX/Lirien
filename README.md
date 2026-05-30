@@ -57,14 +57,14 @@ def divide_verified(n: i64, d: Positive) -> i64:
 ### 2. Fractional Permissions: Compile-Time Memory Safety
 Lila uses a symbolic weight partitioning system (inspired by Separation Logic) to prevent data races and use-after-move errors.
 ```python
-from lila import verify, i64, Owned, Mut, Ref, struct
+from lila import verify, i64, Held, Hand, Peek, struct
 
 @verify
-def consume(x: Owned[i64]) -> i64:
+def consume(x: Held[i64]) -> i64:
     return x
 
 @verify
-def illegal_use(x: Owned[i64]) -> i64:
+def illegal_use(x: Held[i64]) -> i64:
     val = consume(x)  # x is moved here (1.0 permission consumed)
     return x + 1      # COMPILE ERROR: Use-after-move (0.0 permission remaining)
 
@@ -72,9 +72,9 @@ def illegal_use(x: Owned[i64]) -> i64:
 class Data: val: i64
 
 @verify
-def illegal_alias(d: Mut[Data]) -> i64:
-    r1 = Ref(d)       # Shared permission created
-    # d.val = 10      # ERROR: Cannot mutate 'd' while shared permissions (Ref) are active
+def illegal_alias(d: Hand[Data]) -> i64:
+    r1 = Peek(d)       # Shared permission created
+    # d.val = 10      # ERROR: Cannot mutate 'd' while shared permissions (Peek) are active
     return r1.val
 ```
 

@@ -27,14 +27,14 @@ impl<'a> PermissionVerifier<'a> {
     }
 
     fn analyze_roots(&mut self) {
-        // 1. Initial roots: all Owned values and arguments
+        // 1. Initial roots: all Held values and arguments
         for i in 0..self.func.arg_count {
             let v = Value(i);
             self.value_roots.insert(v, v);
         }
         for i in 0..self.func.value_count {
             let v = Value(i);
-            if let Type::Owned(_) = self.func.get_type(v) {
+            if let Type::Held(_) = self.func.get_type(v) {
                 self.value_roots.insert(v, v);
             }
         }
@@ -48,8 +48,8 @@ impl<'a> PermissionVerifier<'a> {
                     if let Some(def) = inst.get_def() {
                         let mut root = None;
                         match &inst.kind {
-                            InstructionKind::Reference(_, src)
-                            | InstructionKind::MutReference(_, src)
+                            InstructionKind::Peek(_, src)
+                            | InstructionKind::Hand(_, src)
                             | InstructionKind::StructOffset(_, src, _)
                             | InstructionKind::StructLoad(_, src, _)
                             | InstructionKind::ArrayLoad(_, src, _)
@@ -92,7 +92,7 @@ impl<'a> PermissionVerifier<'a> {
 
     fn is_consuming(&self, inst: &InstructionKind, val: Value) -> bool {
         let ty = self.func.get_type(val);
-        if !matches!(ty, Type::Owned(_)) {
+        if !matches!(ty, Type::Held(_)) {
             return false;
         }
 
@@ -113,7 +113,7 @@ impl<'a> PermissionVerifier<'a> {
             InstructionKind::StructSet(_, obj, _, _, _) => *obj == val,
             InstructionKind::ArrayStore(_, arr, _, _, _) => *arr == val,
             InstructionKind::BufferStore(_, buf, _, _, _) => *buf == val,
-            InstructionKind::MutReference(_, src) => *src == val,
+            InstructionKind::Hand(_, src) => *src == val,
             _ => false,
         }
     }
@@ -132,7 +132,7 @@ impl<'a> PermissionVerifier<'a> {
         for (&v, p_var) in value_perms {
             let ty = self.func.get_type(v);
             match ty {
-                Type::Owned(_) | Type::Mut(_) => {
+                Type::Held(_) | Type::Hand(_) => {
                     solver.assert(&p_var.eq(&one));
                 }
                 _ if ty.is_pointer_like() => {

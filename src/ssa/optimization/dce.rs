@@ -106,8 +106,8 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ConstFloat(d, _)
         | InstructionKind::Phi(d, _)
         | InstructionKind::Call(d, _, _)
-        | InstructionKind::Reference(d, _)
-        | InstructionKind::MutReference(d, _)
+        | InstructionKind::Peek(d, _)
+        | InstructionKind::Hand(d, _)
         | InstructionKind::ArrayLoad(d, _, _)
         | InstructionKind::BufferLoad(d, _, _)
         | InstructionKind::BufferLen(d, _)
@@ -179,8 +179,8 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         | InstructionKind::FCos(_, s)
         | InstructionKind::IToF(_, s, _)
         | InstructionKind::FToI(_, s, _)
-        | InstructionKind::Reference(_, s)
-        | InstructionKind::MutReference(_, s)
+        | InstructionKind::Peek(_, s)
+        | InstructionKind::Hand(_, s)
         | InstructionKind::BufferLen(_, s)
         | InstructionKind::StructLoad(_, s, _)
         | InstructionKind::StructOffset(_, s, _)
@@ -263,7 +263,7 @@ fn has_side_effects(inst: &Instruction) -> bool {
         | InstructionKind::StructSet(_, _, _, _, _) => true,
 
         // Reference creation (prevents optimization of the referent)
-        InstructionKind::Reference(_, _) | InstructionKind::MutReference(_, _) => true,
+        InstructionKind::Peek(_, _) | InstructionKind::Hand(_, _) => true,
 
         // Lambda creation has the side effect of capturing and heap-allocating
         InstructionKind::Lambda(_, _, _) => true,

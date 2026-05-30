@@ -265,7 +265,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().iadd_imm(obj_ptr, offset as i64);
             ctx.values.insert(*dest, res);
         }
-        InstructionKind::Reference(dest, src) | InstructionKind::MutReference(dest, src) => {
+        InstructionKind::Peek(dest, src) | InstructionKind::Hand(dest, src) => {
             let s = get_val(&ctx.values, src);
             ctx.values.insert(*dest, s);
         }

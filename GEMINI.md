@@ -24,7 +24,7 @@ Lila structs are compiled to flat, C-compatible memory layouts.
 ### 2.1 Zero-Boilerplate Experience
 The Python-side DSL must feel like native Python, hiding all low-level C-ABI details.
 *   **No explicit `ctypes` in user code:** Users should never have to manually call `ctypes.pointer` or `ctypes.addressof`.
-*   **Native Types:** Always use Lila-native types (`i64`, `u8`, `f32`, `Mut`, `Ref`) in annotations. Do not expose `ctypes.c_int64` to the user.
+*   **Native Types:** Always use Lila-native types (`i64`, `u8`, `f32`, `Hand`, `Peek`, `Held`) in annotations. Do not expose `ctypes.c_int64` to the user.
 *   **Automatic Unwrapping:** The `@verify` decorator must automatically resolve Lila objects to their underlying memory buffers before calling the JIT function.
 
 ### 2.2 Struct Generation

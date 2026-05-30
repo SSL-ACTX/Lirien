@@ -146,7 +146,7 @@ class Buffer(metaclass=BufferMeta):
     pass
 
 
-class MutMeta(type):
+class HandMeta(type):
     def __getitem__(cls, base_type):
         base_ty_str = str(base_type).lower()
         cty = ctypes.c_int64
@@ -155,7 +155,7 @@ class MutMeta(type):
                 cty = ct
                 break
 
-        class MutInstance:
+        class HandInstance:
             _ctypes_type = cty
 
             def __init__(self, val=0):
@@ -170,26 +170,26 @@ class MutMeta(type):
                 self._ctypes_obj.value = new_val
 
             def __repr__(self):
-                return f"Mut[{base_ty_str}]({self.val})"
+                return f"Hand[{base_ty_str}]({self.val})"
 
-        MutInstance.__name__ = f"Mut_{base_ty_str}"
-        return MutInstance
+        HandInstance.__name__ = f"Hand_{base_ty_str}"
+        return HandInstance
 
     def __call__(cls, val):
-        # Handle Mut(10) -> defaults to i64
+        # Handle Hand(10) -> defaults to i64
         return cls[i64](val)
 
 
-class Mut(metaclass=MutMeta):
+class Hand(metaclass=HandMeta):
     """
     Seamless mutable reference to a single value.
-    Usage: m = Mut(10) or m = Mut[i64](10)
+    Usage: m = Hand(10) or m = Hand[i64](10)
     """
 
     pass
 
 
-class RefMeta(type):
+class PeekMeta(type):
     def __getitem__(cls, base_type):
         base_ty_str = str(base_type).lower()
         cty = ctypes.c_int64
@@ -198,7 +198,7 @@ class RefMeta(type):
                 cty = ct
                 break
 
-        class RefInstance:
+        class PeekInstance:
             _ctypes_type = cty
 
             def __init__(self, val=0):
@@ -209,30 +209,30 @@ class RefMeta(type):
                 return self._ctypes_obj.value
 
             def __repr__(self):
-                return f"Ref[{base_ty_str}]({self.val})"
+                return f"Peek[{base_ty_str}]({self.val})"
 
-        RefInstance.__name__ = f"Ref_{base_ty_str}"
-        return RefInstance
+        PeekInstance.__name__ = f"Peek_{base_ty_str}"
+        return PeekInstance
 
     def __call__(cls, val):
         return cls[i64](val)
 
 
-class Ref(metaclass=RefMeta):
+class Peek(metaclass=PeekMeta):
     """
     Seamless immutable reference to a single value.
-    Usage: r = Ref(10)
+    Usage: r = Peek(10)
     """
 
     pass
 
 
-class OwnedMeta(type):
+class HeldMeta(type):
     def __getitem__(cls, base_type):
         return cls
 
 
-class Owned(metaclass=OwnedMeta):
+class Held(metaclass=HeldMeta):
     pass
 
 
@@ -500,9 +500,9 @@ class Closure(FnPointer):
 
 
 __all__ = [
-    "Mut",
-    "Ref",
-    "Owned",
+    "Hand",
+    "Peek",
+    "Held",
     "struct",
     "enum",
     "i8",

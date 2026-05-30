@@ -14,9 +14,9 @@ pub enum Type {
     F32,
     F64,
     Bool,
-    Owned(Box<Type>),
-    Ref(Box<Type>),
-    Mut(Box<Type>),
+    Held(Box<Type>),
+    Peek(Box<Type>),
+    Hand(Box<Type>),
     Array(Box<Type>, Option<usize>),
     Buffer(Box<Type>),
     Struct(String),
@@ -41,9 +41,9 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),
-            Type::Owned(t) => write!(f, "Owned<{}>", t),
-            Type::Ref(t) => write!(f, "Ref<{}>", t),
-            Type::Mut(t) => write!(f, "Mut<{}>", t),
+            Type::Held(t) => write!(f, "Held<{}>", t),
+            Type::Peek(t) => write!(f, "Peek<{}>", t),
+            Type::Hand(t) => write!(f, "Hand<{}>", t),
             Type::Array(t, s) => match s {
                 Some(size) => write!(f, "Array<{}, {}>", t, size),
                 None => write!(f, "Array<{}>", t),
@@ -91,9 +91,9 @@ impl Type {
     pub fn is_pointer_like(&self) -> bool {
         matches!(
             self,
-            Type::Ref(_)
-                | Type::Mut(_)
-                | Type::Owned(_)
+            Type::Peek(_)
+                | Type::Hand(_)
+                | Type::Held(_)
                 | Type::Buffer(_)
                 | Type::Array(_, _)
                 | Type::FnPointer(_, _)
@@ -115,9 +115,9 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Ref(_)
-            | Type::Mut(_)
-            | Type::Owned(_)
+            Type::Peek(_)
+            | Type::Hand(_)
+            | Type::Held(_)
             | Type::FnPointer(_, _)
             | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
@@ -189,9 +189,9 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Ref(_)
-            | Type::Mut(_)
-            | Type::Owned(_)
+            Type::Peek(_)
+            | Type::Hand(_)
+            | Type::Held(_)
             | Type::FnPointer(_, _)
             | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
@@ -330,8 +330,8 @@ pub enum InstructionKind {
     Return(Option<Value>),
     Phi(Value, HashMap<BlockId, Value>),
     Call(Value, String, Vec<Value>),
-    Reference(Value, Value),
-    MutReference(Value, Value),
+    Peek(Value, Value),
+    Hand(Value, Value),
     ArrayLoad(Value, Value, Value),
     ArrayStore(Value, Value, Value, Value, Type),
     BufferLoad(Value, Value, Value),
@@ -433,8 +433,8 @@ impl fmt::Display for Instruction {
                     loc_str
                 )
             }
-            InstructionKind::Reference(d, s) => write!(f, "  {} = ref {}{}", d, s, loc_str),
-            InstructionKind::MutReference(d, s) => write!(f, "  {} = mut {}{}", d, s, loc_str),
+            InstructionKind::Peek(d, s) => write!(f, "  {} = peek {}{}", d, s, loc_str),
+            InstructionKind::Hand(d, s) => write!(f, "  {} = hand {}{}", d, s, loc_str),
             InstructionKind::ArrayLoad(d, arr, idx) => {
                 write!(f, "  {} = load {}[{}]{}", d, arr, idx, loc_str)
             }
@@ -576,8 +576,8 @@ impl Instruction {
             | InstructionKind::ConstFloat(d, _)
             | InstructionKind::Phi(d, _)
             | InstructionKind::Call(d, _, _)
-            | InstructionKind::Reference(d, _)
-            | InstructionKind::MutReference(d, _)
+            | InstructionKind::Peek(d, _)
+            | InstructionKind::Hand(d, _)
             | InstructionKind::ArrayLoad(d, _, _)
             | InstructionKind::ArrayStore(d, _, _, _, _)
             | InstructionKind::StructLoad(d, _, _)
@@ -662,7 +662,7 @@ impl Instruction {
                     operands.push(*v);
                 }
             }
-            InstructionKind::Reference(_, s) | InstructionKind::MutReference(_, s) => {
+            InstructionKind::Peek(_, s) | InstructionKind::Hand(_, s) => {
                 operands.push(*s);
             }
             InstructionKind::ArrayLoad(_, arr, idx) => {

@@ -1,20 +1,20 @@
 import unittest
-from lila import i64, Owned, Ref, Mut, verify
+from lila import i64, Held, Peek, Hand, verify
 from lila.compiler import VerificationError
 
 
 @verify
-def consume_owned(x: Owned[i64]) -> i64:
+def consume_held(x: Held[i64]) -> i64:
     return 1
 
 
 @verify
-def consume_mut(x: Mut[i64]) -> i64:
+def consume_hand(x: Hand[i64]) -> i64:
     return 1
 
 
 @verify
-def consume_ref(x: Ref[i64]) -> i64:
+def consume_peek(x: Peek[i64]) -> i64:
     return 1
 
 
@@ -24,25 +24,25 @@ class TestPermissions(unittest.TestCase):
 
             @verify
             def conflict(x: i64) -> i64:
-                m = Mut(x)
-                r = Ref(x)
-                return consume_mut(m) + consume_ref(r)
+                m = Hand(x)
+                r = Peek(x)
+                return consume_hand(m) + consume_peek(r)
 
     def test_permission_double_move(self):
         with self.assertRaisesRegex(VerificationError, "Memory safety violation"):
 
             @verify
-            def double_move(x: Owned[i64]) -> i64:
-                y = consume_owned(x)
-                z = consume_owned(x)
+            def double_move(x: Held[i64]) -> i64:
+                y = consume_held(x)
+                z = consume_held(x)
                 return y + z
 
     def test_permission_multiple_refs_ok(self):
         @verify
         def multiple_refs(x: i64) -> i64:
-            r1 = Ref(x)
-            r2 = Ref(x)
-            r3 = Ref(x)
+            r1 = Peek(x)
+            r2 = Peek(x)
+            r3 = Peek(x)
             return 1
 
         self.assertEqual(multiple_refs(10), 1)
@@ -51,10 +51,10 @@ class TestPermissions(unittest.TestCase):
         with self.assertRaisesRegex(VerificationError, "Memory safety violation"):
 
             @verify
-            def loop_move(n: i64, x: Owned[i64]) -> i64:
+            def loop_move(n: i64, x: Held[i64]) -> i64:
                 i = 0
                 while i < n:
-                    y = consume_owned(x)
+                    y = consume_held(x)
                     i = i + 1
                 return 1
 

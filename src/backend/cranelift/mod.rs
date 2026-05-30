@@ -28,9 +28,9 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I32 | SsaType::U32 => types::I32,
         SsaType::I64
         | SsaType::U64
-        | SsaType::Owned(_)
-        | SsaType::Ref(_)
-        | SsaType::Mut(_)
+        | SsaType::Held(_)
+        | SsaType::Peek(_)
+        | SsaType::Hand(_)
         | SsaType::FnPointer(_, _)
         | SsaType::Closure(_, _, _) => types::I64,
         SsaType::F32 => types::F32,

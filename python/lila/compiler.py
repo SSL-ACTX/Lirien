@@ -101,7 +101,7 @@ def verify(
                 if func_def.args.args and func_def.args.args[0].arg == "self":
                     if not func_def.args.args[0].annotation:
                         func_def.args.args[0].annotation = ast.Subscript(
-                            value=ast.Name(id="Mut", ctx=ast.Load()),
+                            value=ast.Name(id="Hand", ctx=ast.Load()),
                             slice=ast.Name(id=_class_name, ctx=ast.Load()),
                             ctx=ast.Load(),
                         )
@@ -229,7 +229,7 @@ def verify(
                             break
                     arg_map.append(("buffer", len(c_args) - 2, item_size))
                 elif (
-                    any(x in ann_str for x in ["mut", "ref", "sizedarray", "closure"])
+                    any(x in ann_str for x in ["hand", "peek", "sizedarray", "closure"])
                     or getattr(actual_ann, "__lila_struct__", False)
                     or getattr(actual_ann, "__lila_enum__", False)
                     or "fnpointer" in ann_str
@@ -317,8 +317,8 @@ def verify(
                     elif any(
                         x in arg_ty_str
                         for x in [
-                            "mut",
-                            "ref",
+                            "hand",
+                            "peek",
                             "sizedarray",
                             "fnpointer",
                             "callable",
@@ -375,8 +375,8 @@ def verify(
                         elif any(
                             x in arg_ty_str
                             for x in [
-                                "mut",
-                                "ref",
+                                "hand",
+                                "peek",
                                 "sizedarray",
                                 "fnpointer",
                                 "callable",

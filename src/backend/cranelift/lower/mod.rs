@@ -141,8 +141,8 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::StructLoad(_, _, _)
         | InstructionKind::StructOffset(_, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
-        | InstructionKind::Reference(_, _)
-        | InstructionKind::MutReference(_, _)
+        | InstructionKind::Peek(_, _)
+        | InstructionKind::Hand(_, _)
         | InstructionKind::EnumCreate(_, _, _, _)
         | InstructionKind::EnumIsVariant(_, _, _)
         | InstructionKind::EnumExtract(_, _, _) => memory::lower(ctx, &inst.kind),

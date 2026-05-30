@@ -755,7 +755,7 @@ impl CFGBuilder {
                 // Handle .val unwrap for Refined types (no-op in IR)
                 if s.attr.as_str() == "val" {
                     let mut temp_ty = curr_ty.clone();
-                    while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) = temp_ty {
+                    while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = temp_ty {
                         temp_ty = *inner;
                     }
                     if !matches!(temp_ty, Type::Struct(_)) {
@@ -763,7 +763,7 @@ impl CFGBuilder {
                     }
                 }
 
-                while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) = curr_ty {
+                while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
                     curr_ty = *inner;
                 }
 
@@ -890,10 +890,10 @@ impl CFGBuilder {
                                 let obj = self.visit_expr((*attr.value).clone())?;
                                 let mut curr_ty = self.func.get_type(obj);
 
-                                // Unwrap Mut/Ref/Owned to get the base struct type
-                                while let Type::Mut(_inner)
-                                | Type::Ref(_inner)
-                                | Type::Owned(_inner) = curr_ty
+                                // Unwrap Hand/Peek/Held to get the base struct type
+                                while let Type::Hand(_inner)
+                                | Type::Peek(_inner)
+                                | Type::Held(_inner) = curr_ty
                                 {
                                     curr_ty = (*_inner).clone();
                                 }
@@ -914,8 +914,8 @@ impl CFGBuilder {
                             let obj = self.visit_expr((*attr.value).clone())?;
                             let mut curr_ty = self.func.get_type(obj);
 
-                            // Unwrap Mut/Ref/Owned to get the base struct type
-                            while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) =
+                            // Unwrap Hand/Peek/Held to get the base struct type
+                            while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) =
                                 curr_ty
                             {
                                 curr_ty = *inner;
@@ -1061,25 +1061,25 @@ impl CFGBuilder {
                     return Ok(dest);
                 }
 
-                if func_name == "Ref" {
+                if func_name == "Peek" {
                     if s.args.len() != 1 {
-                        return Err("Ref expects 1 argument".to_string());
+                        return Err("Peek expects 1 argument".to_string());
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
                     let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::Reference(dest, arg));
+                    self.add_instruction(InstructionKind::Peek(dest, arg));
                     let ty = self.func.get_type(arg);
-                    self.func.set_type(dest, Type::Ref(Box::new(ty)));
+                    self.func.set_type(dest, Type::Peek(Box::new(ty)));
                     return Ok(dest);
-                } else if func_name == "Mut" {
+                } else if func_name == "Hand" {
                     if s.args.len() != 1 {
-                        return Err("Mut expects 1 argument".to_string());
+                        return Err("Hand expects 1 argument".to_string());
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
                     let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::MutReference(dest, arg));
+                    self.add_instruction(InstructionKind::Hand(dest, arg));
                     let ty = self.func.get_type(arg);
-                    self.func.set_type(dest, Type::Mut(Box::new(ty)));
+                    self.func.set_type(dest, Type::Hand(Box::new(ty)));
                     return Ok(dest);
                 } else if func_name == "f64" || func_name == "float" {
                     if s.args.len() != 1 {
@@ -1217,7 +1217,7 @@ impl CFGBuilder {
                 lambda_builder
                     .func
                     .value_types
-                    .insert(Value(0), Type::Ref(Box::new(Type::Unknown))); // ctx_ptr
+                    .insert(Value(0), Type::Peek(Box::new(Type::Unknown))); // ctx_ptr
 
                 for (i, arg) in s.args.args.iter().enumerate() {
                     let arg_ty = if let Some(ann) = &arg.def.annotation {
@@ -1465,7 +1465,7 @@ impl CFGBuilder {
                     self.resolve_attribute_path(*attr.value)?;
 
                 let mut curr_ty = &parent_ty;
-                while let Type::Mut(inner) | Type::Ref(inner) | Type::Owned(inner) = curr_ty {
+                while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
                     curr_ty = inner;
                 }
 

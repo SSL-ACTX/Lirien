@@ -52,10 +52,11 @@ class TestBitwiseRefinement(unittest.TestCase):
             return x
 
         with self.assertRaises(VerificationError) as cm:
+
             @verify
             def call_masked_bad() -> i64:
-                return pass_masked(0xBB) # 0xBB & 0xFF != 0xAA
-        
+                return pass_masked(0xBB)  # 0xBB & 0xFF != 0xAA
+
         self.assertIn("Argument refinement violation", str(cm.exception))
 
 

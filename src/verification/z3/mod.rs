@@ -242,8 +242,8 @@ pub fn verify_with_context(
                 | InstructionKind::EnumCreate(..)
                 | InstructionKind::EnumIsVariant(..)
                 | InstructionKind::EnumExtract(..)
-                | InstructionKind::Reference(..)
-                | InstructionKind::MutReference(..) => {
+                | InstructionKind::Peek(..)
+                | InstructionKind::Hand(..) => {
                     memory::translate(&mut t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
