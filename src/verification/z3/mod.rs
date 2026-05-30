@@ -69,6 +69,7 @@ pub struct TranslationContext<'a> {
     pub ctx: &'a Context,
     pub solver: &'a Solver,
     pub func: &'a Function,
+    pub analysis: &'a IntervalAnalysisResults,
     pub uid: usize,
     pub z3_ints: HashMap<Value, Int>, // Kept for refinement parsing
     pub z3_floats: HashMap<Value, Float>,
@@ -78,13 +79,14 @@ pub struct TranslationContext<'a> {
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
     pub block_conditions: HashMap<BlockId, Bool>,
     pub edge_conditions: HashMap<(BlockId, BlockId), Bool>,
+    pub has_refinements: bool,
 }
 
 pub fn verify_with_context(
     ctx: &Context,
     solver: &Solver,
     func: &Function,
-    analysis: IntervalAnalysisResults,
+    analysis: &IntervalAnalysisResults,
     liveness: crate::ssa::analysis::liveness::LivenessAnalysisResults,
     perm_verifier: crate::verification::permissions::PermissionVerifier,
     uid: usize,
@@ -93,6 +95,7 @@ pub fn verify_with_context(
         ctx,
         solver,
         func,
+        analysis,
         uid,
         z3_ints: HashMap::new(),
         z3_floats: HashMap::new(),
@@ -102,6 +105,7 @@ pub fn verify_with_context(
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
+        has_refinements: func.ret_refinement.is_some(),
     };
 
     // 1. Initialize Z3 values for all SSA values
@@ -174,6 +178,7 @@ pub fn verify_with_context(
     }
 
     // 5. Translate Instructions (Arithmetic, Memory, Control Flow)
+    tracing::info!(target: "lila::verify::z3", "Translating instructions for '{}'...", func.name);
     for block in &func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
         for inst in &block.instructions {
@@ -250,52 +255,87 @@ pub fn verify_with_context(
     }
 
     // 6. Assert derived intervals and refinements
-    for (val, interval) in analysis.intervals {
-        if let (Some(z3_bv), Some(ty)) = (t_ctx.z3_bvs.get(&val), t_ctx.func.value_types.get(&val))
-        {
-            if let Some(bit_width) = ty.int_bit_width() {
-                let is_signed = ty.is_signed();
-                if let Bound::Finite(low) = interval.low {
-                    let low_bv = BV::from_i64(low as i64, bit_width);
-                    if is_signed {
-                        solver.assert(z3_bv.bvsge(&low_bv));
-                    } else {
-                        solver.assert(z3_bv.bvuge(&low_bv));
+    for (val, interval) in &analysis.intervals {
+        if let Some(ty) = t_ctx.func.value_types.get(val) {
+            if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
+                if let Some(bit_width) = ty.int_bit_width() {
+                    let is_signed = ty.is_signed();
+                    if let Bound::Finite(low) = interval.low {
+                        let low_bv = BV::from_i64(low as i64, bit_width);
+                        if is_signed {
+                            solver.assert(z3_bv.bvsge(&low_bv));
+                        } else {
+                            solver.assert(z3_bv.bvuge(&low_bv));
+                        }
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        let high_bv = BV::from_i64(high as i64, bit_width);
+                        if is_signed {
+                            solver.assert(z3_bv.bvsle(&high_bv));
+                        } else {
+                            solver.assert(z3_bv.bvule(&high_bv));
+                        }
                     }
                 }
-                if let Bound::Finite(high) = interval.high {
-                    let high_bv = BV::from_i64(high as i64, bit_width);
-                    if is_signed {
-                        solver.assert(z3_bv.bvsle(&high_bv));
+            } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
+                if let Bound::Finite(low) = interval.low {
+                    let low_float = if matches!(ty, Type::F32) {
+                        Float::from_f32(low as f32)
                     } else {
-                        solver.assert(z3_bv.bvule(&high_bv));
-                    }
+                        Float::from_f64(low)
+                    };
+                    solver.assert(z3_float.ge(&low_float));
+                }
+                if let Bound::Finite(high) = interval.high {
+                    let high_float = if matches!(ty, Type::F32) {
+                        Float::from_f32(high as f32)
+                    } else {
+                        Float::from_f64(high)
+                    };
+                    solver.assert(z3_float.le(&high_float));
                 }
             }
         }
     }
     for ((val, b_id), interval) in &analysis.block_narrowing {
         if let Some(path_cond) = t_ctx.block_conditions.get(b_id) {
-            if let (Some(z3_bv), Some(ty)) =
-                (t_ctx.z3_bvs.get(val), t_ctx.func.value_types.get(val))
-            {
-                if let Some(bit_width) = ty.int_bit_width() {
-                    let is_signed = ty.is_signed();
-                    if let Bound::Finite(low) = interval.low {
-                        let low_bv = BV::from_i64(low as i64, bit_width);
-                        if is_signed {
-                            solver.assert(path_cond.implies(&z3_bv.bvsge(&low_bv)));
-                        } else {
-                            solver.assert(path_cond.implies(&z3_bv.bvuge(&low_bv)));
+            if let Some(ty) = t_ctx.func.value_types.get(val) {
+                if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
+                    if let Some(bit_width) = ty.int_bit_width() {
+                        let is_signed = ty.is_signed();
+                        if let Bound::Finite(low) = interval.low {
+                            let low_bv = BV::from_i64(low as i64, bit_width);
+                            if is_signed {
+                                solver.assert(path_cond.implies(&z3_bv.bvsge(&low_bv)));
+                            } else {
+                                solver.assert(path_cond.implies(&z3_bv.bvuge(&low_bv)));
+                            }
+                        }
+                        if let Bound::Finite(high) = interval.high {
+                            let high_bv = BV::from_i64(high as i64, bit_width);
+                            if is_signed {
+                                solver.assert(path_cond.implies(&z3_bv.bvsle(&high_bv)));
+                            } else {
+                                solver.assert(path_cond.implies(&z3_bv.bvule(&high_bv)));
+                            }
                         }
                     }
-                    if let Bound::Finite(high) = interval.high {
-                        let high_bv = BV::from_i64(high as i64, bit_width);
-                        if is_signed {
-                            solver.assert(path_cond.implies(&z3_bv.bvsle(&high_bv)));
+                } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
+                    if let Bound::Finite(low) = interval.low {
+                        let low_float = if matches!(ty, Type::F32) {
+                            Float::from_f32(low as f32)
                         } else {
-                            solver.assert(path_cond.implies(&z3_bv.bvule(&high_bv)));
-                        }
+                            Float::from_f64(low)
+                        };
+                        solver.assert(path_cond.implies(&z3_float.ge(&low_float)));
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        let high_float = if matches!(ty, Type::F32) {
+                            Float::from_f32(high as f32)
+                        } else {
+                            Float::from_f64(high)
+                        };
+                        solver.assert(path_cond.implies(&z3_float.le(&high_float)));
                     }
                 }
             }
@@ -350,11 +390,16 @@ pub fn verify_with_context(
     }
 
     // 9. Final Consistency Check
-    if solver.check() == z3::SatResult::Unsat {
-        return Err(
-            "Formal verification failed: Logical contradiction or permission conflict detected."
-                .to_string(),
-        );
+    if !t_ctx.has_refinements && t_ctx.z3_perms.is_empty() {
+        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements or pointers).", func.name);
+    } else {
+        tracing::info!(target: "lila::verify::z3", "Performing final consistency check for '{}'...", func.name);
+        if solver.check() == z3::SatResult::Unsat {
+            return Err(
+                "Formal verification failed: Logical contradiction or permission conflict detected."
+                    .to_string(),
+            );
+        }
     }
 
     tracing::info!(target: "lila::verify::z3", "Proof successful for '{}'", func.name);

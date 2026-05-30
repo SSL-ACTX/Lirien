@@ -7,23 +7,23 @@ NonNegative = Refined[f64, lambda x: x >= 0.0]
 Positive = Refined[f64, lambda x: x > 0.0]
 
 
-@verify
+@verify(log_level="info")
 def safe_sqrt(x: NonNegative) -> f64:
     return math.sqrt(x.val)
 
 
-@verify
+@verify(log_level="info")
 def safe_div(x: f64, y: Positive) -> f64:
     return x / y.val
 
 
-@verify
+@verify(log_level="info")
 def float_to_int_clip(x: f64) -> i64:
     # Test conversion verification
     return i64(x)
 
 
-@verify
+@verify(log_level="info")
 def check_precision() -> i64:
     # In IEEE 754, 0.1 + 0.2 is slightly greater than 0.3
     # Real theory would say they are equal.
@@ -35,7 +35,7 @@ def check_precision() -> i64:
     return 0
 
 
-@verify
+@verify(log_level="info")
 def stability_check(x: f64) -> f64:
     # A simple example where we might want to prove we don't get NaN
     # by ensuring the denominator is not zero.

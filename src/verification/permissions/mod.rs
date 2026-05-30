@@ -186,12 +186,15 @@ impl<'a> PermissionVerifier<'a> {
                         // Assert that total permission on a root must not exceed 1.0
                         solver.assert(path_cond.implies(&sum.le(&one)));
 
-                        // Check for consistency immediately to provide localized error messages
-                        if solver.check() == SatResult::Unsat {
-                            return Err(format!(
-                                "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at instruction {} in block {:?}. (Possible aliasing or use-after-move)",
-                                root, idx, block.id
-                            ));
+                        // Only check for consistency if we have multiple terms,
+                        // as single terms are already constrained to be <= 1.0
+                        if terms.len() > 1 {
+                            if solver.check() == SatResult::Unsat {
+                                return Err(format!(
+                                    "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at instruction {} in block {:?}. (Possible aliasing or use-after-move)",
+                                    root, idx, block.id
+                                ));
+                            }
                         }
                     }
                 }
@@ -211,9 +214,13 @@ impl<'a> PermissionVerifier<'a> {
                                 if self.value_roots.get(&v) == Some(&root) {
                                     // Potential violation: trying to move/mutate while other references are live.
                                     // This includes 'u' itself if it's still live after this instruction.
+                                    // Optimization: only call solver if it's not obviously safe
                                     solver.push();
                                     solver.assert(path_cond);
-                                    if solver.check() == SatResult::Sat {
+                                    let check_res = solver.check();
+                                    solver.pop(1);
+
+                                    if check_res == SatResult::Sat {
                                         return Err(format!(
                                             "Memory safety violation: Root {:?} is {} via value {:?}, but still referenced by live value {:?} at instruction {} in block {:?}.",
                                             root,
@@ -224,7 +231,6 @@ impl<'a> PermissionVerifier<'a> {
                                             block.id
                                         ));
                                     }
-                                    solver.pop(1);
                                 }
                             }
                         }

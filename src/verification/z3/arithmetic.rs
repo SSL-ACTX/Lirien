@@ -9,7 +9,7 @@ pub fn translate(
     inst: &Instruction,
     path_cond: &Bool,
 ) -> Result<(), String> {
-    let rm = RoundingMode::round_towards_zero();
+    let rm = RoundingMode::round_nearest_ties_to_even();
 
     match &inst.kind {
         InstructionKind::ConstInt(dest, val) => {
@@ -137,20 +137,29 @@ pub fn translate(
                     Float::from_f64(0.0)
                 };
 
-                ctx.solver.push();
-                ctx.solver.assert(path_cond);
-                ctx.solver.assert(z3_r.eq(&zero));
-                if ctx.solver.check() != SatResult::Unsat {
-                    let loc_info = inst
-                        .location
-                        .map(|l| format!(" at {}", l))
-                        .unwrap_or_default();
-                    return Err(format!(
-                        "Potential float division by zero at v{}{}",
-                        dest.0, loc_info
-                    ));
+                // Optimization: Use interval analysis to skip Z3 check if possible
+                let is_safe = if let Some(interval) = ctx.analysis.intervals.get(rhs) {
+                    interval.is_strictly_positive() || interval.is_strictly_negative()
+                } else {
+                    false
+                };
+
+                if !is_safe {
+                    ctx.solver.push();
+                    ctx.solver.assert(path_cond);
+                    ctx.solver.assert(z3_r.eq(&zero));
+                    if ctx.solver.check() != SatResult::Unsat {
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Potential float division by zero at v{}{}",
+                            dest.0, loc_info
+                        ));
+                    }
+                    ctx.solver.pop(1);
                 }
-                ctx.solver.pop(1);
 
                 ctx.solver
                     .assert(path_cond.implies(z3_dest.eq(rm.div(z3_l, z3_r))));
@@ -338,13 +347,13 @@ pub fn translate(
                     .assert(path_cond.implies(z3_dest.eq(z3_l.bvashr(z3_r))));
             }
         }
-        InstructionKind::FSqrt(dest, _src)
-        | InstructionKind::FSin(dest, _src)
-        | InstructionKind::FCos(dest, _src) => {
+        InstructionKind::FSqrt(dest, s_val)
+        | InstructionKind::FSin(dest, s_val)
+        | InstructionKind::FCos(dest, s_val) => {
             if let Some(_z3_dest) = ctx.z3_floats.get(dest) {
                 match &inst.kind {
                     InstructionKind::FSin(_, _) | InstructionKind::FCos(_, _) => {}
-                    InstructionKind::FSqrt(_, s_val) => {
+                    InstructionKind::FSqrt(_, _) => {
                         if let Some(z3_src) = ctx.z3_floats.get(s_val) {
                             let ty = ctx.func.get_type(*s_val);
                             let zero = if matches!(ty, Type::F32) {
@@ -353,16 +362,26 @@ pub fn translate(
                                 Float::from_f64(0.0)
                             };
 
-                            ctx.solver.push();
-                            ctx.solver.assert(path_cond);
-                            ctx.solver.assert(z3_src.lt(&zero));
-                            if ctx.solver.check() != SatResult::Unsat {
-                                return Err(format!(
-                                    "Potential sqrt of negative number at v{}",
-                                    dest.0
-                                ));
+                            // Optimization: Use interval analysis to skip Z3 check if possible
+                            let is_safe = if let Some(interval) = ctx.analysis.intervals.get(s_val)
+                            {
+                                interval.is_strictly_positive()
+                            } else {
+                                false
+                            };
+
+                            if !is_safe {
+                                ctx.solver.push();
+                                ctx.solver.assert(path_cond);
+                                ctx.solver.assert(z3_src.lt(&zero));
+                                if ctx.solver.check() != SatResult::Unsat {
+                                    return Err(format!(
+                                        "Potential sqrt of negative number at v{}",
+                                        dest.0
+                                    ));
+                                }
+                                ctx.solver.pop(1);
                             }
-                            ctx.solver.pop(1);
                         }
                     }
                     _ => unreachable!(),
@@ -382,23 +401,32 @@ pub fn translate(
                     Float::from_f64(0.0)
                 };
 
-                ctx.solver.push();
-                ctx.solver.assert(path_cond);
+                // Optimization: Use interval analysis to skip Z3 check if base is strictly positive
+                let is_safe = if let Some(interval) = ctx.analysis.intervals.get(lhs) {
+                    interval.is_strictly_positive()
+                } else {
+                    false
+                };
 
-                let is_base_zero = z3_l.eq(&zero);
-                let is_exp_nonpositive = z3_r.le(&zero);
-                let is_base_negative = z3_l.lt(&zero);
+                if !is_safe {
+                    ctx.solver.push();
+                    ctx.solver.assert(path_cond);
 
-                let domain_err = Bool::or(&[
-                    &Bool::and(&[&is_base_zero, &is_exp_nonpositive]),
-                    &is_base_negative,
-                ]);
+                    let is_base_zero = z3_l.eq(&zero);
+                    let is_exp_nonpositive = z3_r.le(&zero);
+                    let is_base_negative = z3_l.lt(&zero);
 
-                ctx.solver.assert(&domain_err);
-                if ctx.solver.check() != SatResult::Unsat {
-                    return Err(format!("Potential domain error in fpow at v{}", dest.0));
+                    let domain_err = Bool::or(&[
+                        &Bool::and(&[&is_base_zero, &is_exp_nonpositive]),
+                        &is_base_negative,
+                    ]);
+
+                    ctx.solver.assert(&domain_err);
+                    if ctx.solver.check() != SatResult::Unsat {
+                        return Err(format!("Potential domain error in fpow at v{}", dest.0));
+                    }
+                    ctx.solver.pop(1);
                 }
-                ctx.solver.pop(1);
             }
         }
 

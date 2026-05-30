@@ -52,6 +52,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let ref_expr = parse_array_refinement(refinement, &z3_val, inner_ty.is_float())?;
                 ctx.solver.assert(ref_expr);
+                ctx.has_refinements = true;
             }
 
             ctx.z3_arrays.insert(val, z3_val);
@@ -76,6 +77,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 let z3_int = z3_len.to_int(true);
                 let ref_expr = parse_refinement(refinement, &z3_int)?;
                 ctx.solver.assert(ref_expr);
+                ctx.has_refinements = true;
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_len);
@@ -90,6 +92,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     refinement, &z3_val,
                 )?;
                 ctx.solver.assert(ref_expr);
+                ctx.has_refinements = true;
             }
             ctx.z3_floats.insert(val, z3_val);
         } else {
@@ -104,6 +107,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 let z3_int = z3_val.to_int(is_signed);
                 let ref_expr = parse_refinement(refinement, &z3_int)?;
                 ctx.solver.assert(ref_expr);
+                ctx.has_refinements = true;
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_val);

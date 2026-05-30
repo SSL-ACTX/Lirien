@@ -10,5 +10,13 @@ use pyo3::prelude::*;
 fn lila_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     diagnostics::init_diagnostics();
     m.add_function(wrap_pyfunction!(bridge::verify_and_compile, m)?)?;
+    m.add_function(wrap_pyfunction!(set_log_level, m)?)?;
+    Ok(())
+}
+
+#[pyfunction]
+fn set_log_level(level: String) -> PyResult<()> {
+    diagnostics::set_log_level(&level)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
     Ok(())
 }

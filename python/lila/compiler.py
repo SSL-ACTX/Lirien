@@ -17,17 +17,32 @@ class VerificationError(Exception):
 
 def verify(
     strict: bool = True,
+    log_level: str = None,
     _struct_layouts: dict = None,
     _class_name: str = None,
     _method_name: str = None,
-) -> Callable[[T], T]:
+) -> Callable:
     """
     Decorator to trigger formal verification and JIT compilation.
 
     :param strict: If True, raises VerificationError on failure. If False, falls back to Python.
+    :param log_level: Override LILA_LOG level (e.g., 'info', 'debug', 'warn').
     """
+    import os
+
+    # Handle the case where the decorator is used without parentheses: @verify
+    if callable(strict) and log_level is None and _struct_layouts is None:
+        func = strict
+        # Re-call verify with defaults
+        return verify(strict=True)(func)
 
     def decorator(func: T) -> T:
+        # Phase 0: Setup Logging Override
+        if log_level:
+            old_log = os.environ.get("LILA_LOG", "info")
+            lila_core.set_log_level(log_level)
+            os.environ["LILA_LOG"] = log_level
+
         # Phase 1: AST Extraction
         try:
             source = textwrap.dedent(inspect.getsource(func))
@@ -119,9 +134,14 @@ def verify(
                     except:
                         pass
 
-            code_ptr = lila_core.verify_and_compile(
-                source, target_func_name, struct_layouts, enum_layouts, type_aliases
-            )
+            try:
+                code_ptr = lila_core.verify_and_compile(
+                    source, target_func_name, struct_layouts, enum_layouts, type_aliases
+                )
+            finally:
+                if log_level:
+                    lila_core.set_log_level(old_log)
+                    os.environ["LILA_LOG"] = old_log
 
             # Create a ctypes function pointer
             from .types import TYPE_MAP
