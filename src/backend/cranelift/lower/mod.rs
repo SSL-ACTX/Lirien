@@ -74,7 +74,9 @@ pub fn lower_instruction<M: Module>(
         InstructionKind::Phi(_, _) => Ok(()), // Handled in Pass 1
 
         InstructionKind::ConstInt(dest, val) => {
-            let res = ctx.builder.ins().iconst(types::I64, *val);
+            let ty = ctx.ssa_func.get_type(*dest);
+            let cl_ty = super::translate_type(&ty);
+            let res = ctx.builder.ins().iconst(cl_ty, *val);
             ctx.values.insert(*dest, res);
             Ok(())
         }

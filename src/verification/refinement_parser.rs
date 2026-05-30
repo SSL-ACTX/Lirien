@@ -1,19 +1,19 @@
 use std::ops::Neg;
-use z3::ast::{Array, Bool, Float, Int, Real, RoundingMode};
+use z3::ast::{Array, Ast, Bool, Float, Int, Real, RoundingMode, BV};
 
-pub fn parse_refinement(refinement: &str, v: &Int) -> Result<Bool, String> {
+pub fn parse_refinement(refinement: &str, v: &Int, v_bv: Option<&BV>) -> Result<Bool, String> {
     let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
-    parse_bool_expr(&refinement, Some(v), None, None, None)
+    parse_bool_expr(&refinement, Some(v), None, None, None, v_bv)
 }
 
 pub fn parse_float_refinement(refinement: &str, v: &Float) -> Result<Bool, String> {
     let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
-    parse_bool_expr(&refinement, None, None, Some(v), None)
+    parse_bool_expr(&refinement, None, None, Some(v), None, None)
 }
 
 pub fn parse_real_refinement(refinement: &str, v: &Real) -> Result<Bool, String> {
     let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
-    parse_bool_expr(&refinement, None, Some(v), None, None)
+    parse_bool_expr(&refinement, None, Some(v), None, None, None)
 }
 
 pub fn parse_array_refinement(refinement: &str, v: &Array, is_float: bool) -> Result<Bool, String> {
@@ -25,6 +25,7 @@ pub fn parse_array_refinement(refinement: &str, v: &Array, is_float: bool) -> Re
             None,
             Some(&Float::new_const_double("DUMMY")),
             Some(v),
+            None,
         )
     } else {
         parse_bool_expr(
@@ -33,6 +34,7 @@ pub fn parse_array_refinement(refinement: &str, v: &Array, is_float: bool) -> Re
             None,
             None,
             Some(v),
+            Some(&BV::new_const("DUMMY", 64)),
         )
     }
 }
@@ -43,8 +45,16 @@ fn parse_bool_expr(
     v_real: Option<&Real>,
     v_float: Option<&Float>,
     v_arr: Option<&Array>,
+    v_bv: Option<&BV>,
 ) -> Result<Bool, String> {
     let sexpr = sexpr.trim();
+    if sexpr == "true" {
+        return Ok(Bool::from_bool(true));
+    }
+    if sexpr == "false" {
+        return Ok(Bool::from_bool(false));
+    }
+
     if !sexpr.starts_with('(') {
         return Err(format!("Invalid boolean sexpr: {}", sexpr));
     }
@@ -55,27 +65,44 @@ fn parse_bool_expr(
     }
 
     match parts[0] {
-        "and" => {
+        "and" | "&" => {
             let mut sub_exprs = Vec::new();
             for part in &parts[1..] {
-                sub_exprs.push(parse_bool_expr(part, v_int, v_real, v_float, v_arr)?);
+                sub_exprs.push(parse_bool_expr(part, v_int, v_real, v_float, v_arr, v_bv)?);
             }
             let refs: Vec<&Bool> = sub_exprs.iter().collect();
             Ok(Bool::and(&refs))
         }
-        "or" => {
+        "or" | "|" => {
             let mut sub_exprs = Vec::new();
             for part in &parts[1..] {
-                sub_exprs.push(parse_bool_expr(part, v_int, v_real, v_float, v_arr)?);
+                sub_exprs.push(parse_bool_expr(part, v_int, v_real, v_float, v_arr, v_bv)?);
             }
             let refs: Vec<&Bool> = sub_exprs.iter().collect();
             Ok(Bool::or(&refs))
         }
-        "not" => {
+        "xor" | "^" => {
+            if parts.len() != 3 {
+                return Err("xor expects 2 arguments".to_string());
+            }
+            let lhs = parse_bool_expr(parts[1], v_int, v_real, v_float, v_arr, v_bv)?;
+            let rhs = parse_bool_expr(parts[2], v_int, v_real, v_float, v_arr, v_bv)?;
+            Ok(lhs.xor(&rhs))
+        }
+        "not" | "~" => {
             if parts.len() != 2 {
                 return Err("not expects exactly one argument".to_string());
             }
-            Ok(parse_bool_expr(parts[1], v_int, v_real, v_float, v_arr)?.not())
+            Ok(parse_bool_expr(parts[1], v_int, v_real, v_float, v_arr, v_bv)?.not())
+        }
+        "ite" => {
+            if parts.len() != 4 {
+                return Err("ite (if-then-else) expects 3 arguments".to_string());
+            }
+            let cond = parse_bool_expr(parts[1], v_int, v_real, v_float, v_arr, v_bv)?;
+            let then = parse_bool_expr(parts[2], v_int, v_real, v_float, v_arr, v_bv)?;
+            let orelse = parse_bool_expr(parts[3], v_int, v_real, v_float, v_arr, v_bv)?;
+            Ok(cond.ite(&then, &orelse))
         }
         "=" | "!=" | "<" | "<=" | ">" | ">=" => {
             if parts.len() != 3 {
@@ -106,8 +133,8 @@ fn parse_bool_expr(
                     _ => unreachable!(),
                 }
             } else {
-                let lhs = parse_int_expr(parts[1], v_int, v_arr)?;
-                let rhs = parse_int_expr(parts[2], v_int, v_arr)?;
+                let lhs = parse_int_expr(parts[1], v_int, v_arr, v_bv)?;
+                let rhs = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
                 match parts[0] {
                     "=" => Ok(lhs.eq(&rhs)),
                     "!=" => Ok(lhs.eq(&rhs).not()),
@@ -123,7 +150,12 @@ fn parse_bool_expr(
     }
 }
 
-fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Result<Int, String> {
+fn parse_int_expr(
+    expr: &str,
+    v_int: Option<&Int>,
+    v_arr: Option<&Array>,
+    v_bv: Option<&BV>,
+) -> Result<Int, String> {
     let expr = expr.trim();
     if expr == "VALUE_PLACEHOLDER" {
         return v_int
@@ -148,17 +180,17 @@ fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Res
         "+" => {
             let mut sub_exprs = Vec::new();
             for part in &parts[1..] {
-                sub_exprs.push(parse_int_expr(part, v_int, v_arr)?);
+                sub_exprs.push(parse_int_expr(part, v_int, v_arr, v_bv)?);
             }
             let refs: Vec<&Int> = sub_exprs.iter().collect();
             Ok(Int::add(&refs))
         }
         "-" => {
             if parts.len() == 2 {
-                Ok(parse_int_expr(parts[1], v_int, v_arr)?.unary_minus())
+                Ok(parse_int_expr(parts[1], v_int, v_arr, v_bv)?.unary_minus())
             } else if parts.len() == 3 {
-                let lhs = parse_int_expr(parts[1], v_int, v_arr)?;
-                let rhs = parse_int_expr(parts[2], v_int, v_arr)?;
+                let lhs = parse_int_expr(parts[1], v_int, v_arr, v_bv)?;
+                let rhs = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
                 Ok(Int::sub(&[&lhs, &rhs]))
             } else {
                 Err("- expects 1 or 2 arguments".to_string())
@@ -167,7 +199,7 @@ fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Res
         "*" => {
             let mut sub_exprs = Vec::new();
             for part in &parts[1..] {
-                sub_exprs.push(parse_int_expr(part, v_int, v_arr)?);
+                sub_exprs.push(parse_int_expr(part, v_int, v_arr, v_bv)?);
             }
             let refs: Vec<&Int> = sub_exprs.iter().collect();
             Ok(Int::mul(&refs))
@@ -176,16 +208,16 @@ fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Res
             if parts.len() != 3 {
                 return Err("div expects 2 arguments".to_string());
             }
-            let lhs = parse_int_expr(parts[1], v_int, v_arr)?;
-            let rhs = parse_int_expr(parts[2], v_int, v_arr)?;
+            let lhs = parse_int_expr(parts[1], v_int, v_arr, v_bv)?;
+            let rhs = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
             Ok(lhs.div(&rhs))
         }
         "%" | "mod" => {
             if parts.len() != 3 {
                 return Err("mod expects 2 arguments".to_string());
             }
-            let lhs = parse_int_expr(parts[1], v_int, v_arr)?;
-            let rhs = parse_int_expr(parts[2], v_int, v_arr)?;
+            let lhs = parse_int_expr(parts[1], v_int, v_arr, v_bv)?;
+            let rhs = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
             Ok(lhs.rem(&rhs))
         }
         "select" => {
@@ -197,9 +229,15 @@ fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Res
                     "VALUE_PLACEHOLDER used in select but no Array available".to_string()
                 })?
             } else {
-                return Err("Only select from placeholder supported for now".to_string());
+                // If it's not a placeholder, assume it's a named array constant
+                v_arr.cloned().ok_or_else(|| {
+                    format!(
+                        "Array '{}' used in select but no Array context available",
+                        parts[1]
+                    )
+                })?
             };
-            let idx = parse_int_expr(parts[2], v_int, v_arr)?;
+            let idx = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
             let res = arr.select(&idx);
             if let Some(i) = res.as_int() {
                 Ok(i)
@@ -209,7 +247,97 @@ fn parse_int_expr(expr: &str, v_int: Option<&Int>, v_arr: Option<&Array>) -> Res
                 Err("select did not return an int or bitvector".to_string())
             }
         }
+        "ite" => {
+            if parts.len() != 4 {
+                return Err("ite (if-then-else) expects 3 arguments".to_string());
+            }
+            let cond = parse_bool_expr(parts[1], v_int, None, None, v_arr, v_bv)?;
+            let then = parse_int_expr(parts[2], v_int, v_arr, v_bv)?;
+            let orelse = parse_int_expr(parts[3], v_int, v_arr, v_bv)?;
+            Ok(cond.ite(&then, &orelse))
+        }
+        "&" | "|" | "^" | "<<" | ">>" | "~" => {
+            // Handle bitwise by converting to BV, performing op, and converting back to Int
+            if v_bv.is_none() && v_int.is_none() {
+                return Err("Bitwise op used but no value available".to_string());
+            }
+            let lhs_bv = parse_bv_expr(expr, v_bv, v_int)?;
+            Ok(lhs_bv.to_int(true))
+        }
         _ => Err(format!("Unknown arithmetic operator: {}", parts[0])),
+    }
+}
+
+fn parse_bv_expr(expr: &str, v_bv: Option<&BV>, v_int: Option<&Int>) -> Result<BV, String> {
+    let expr = expr.trim();
+    if expr == "VALUE_PLACEHOLDER" {
+        return v_bv
+            .cloned()
+            .ok_or_else(|| "VALUE_PLACEHOLDER used but no BV available".to_string());
+    }
+    if let Ok(val) = expr.parse::<i64>() {
+        return Ok(BV::from_i64(val, 64));
+    }
+
+    if !expr.starts_with('(') {
+        return Ok(BV::new_const(expr, 64));
+    }
+
+    let inner = &expr[1..expr.len() - 1];
+    let parts = split_sexpr_parts(inner);
+    if parts.is_empty() {
+        return Err("Empty bitwise sexpr".to_string());
+    }
+
+    match parts[0] {
+        "&" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvand(&rhs))
+        }
+        "|" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvor(&rhs))
+        }
+        "^" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvxor(&rhs))
+        }
+        "~" => {
+            let operand = parse_bv_expr(parts[1], v_bv, v_int)?;
+            Ok(operand.bvnot())
+        }
+        "<<" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvshl(&rhs))
+        }
+        ">>" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvashr(&rhs))
+        }
+        // Arithmetic ops in BV context
+        "+" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvadd(&rhs))
+        }
+        "-" => {
+            let lhs = parse_bv_expr(parts[1], v_bv, v_int)?;
+            let rhs = parse_bv_expr(parts[2], v_bv, v_int)?;
+            Ok(lhs.bvsub(&rhs))
+        }
+        "VALUE_PLACEHOLDER" => v_bv
+            .cloned()
+            .ok_or_else(|| "No BV value available".to_string()),
+        _ => {
+            // Fallback: try parsing as Int and convert to BV
+            let int_val = parse_int_expr(expr, v_int, None, v_bv)?;
+            Ok(BV::from_int(&int_val, 64))
+        }
     }
 }
 
@@ -275,6 +403,15 @@ fn parse_real_expr(
             let rhs = parse_real_expr(parts[2], v_real, v_arr)?;
             Ok(lhs.div(&rhs))
         }
+        "ite" => {
+            if parts.len() != 4 {
+                return Err("ite (if-then-else) expects 3 arguments".to_string());
+            }
+            let cond = parse_bool_expr(parts[1], None, v_real, None, v_arr, None)?;
+            let then = parse_real_expr(parts[2], v_real, v_arr)?;
+            let orelse = parse_real_expr(parts[3], v_real, v_arr)?;
+            Ok(cond.ite(&then, &orelse))
+        }
         "select" => {
             if parts.len() != 3 {
                 return Err("select expects 2 arguments".to_string());
@@ -284,9 +421,14 @@ fn parse_real_expr(
                     "VALUE_PLACEHOLDER used in select but no Array available".to_string()
                 })?
             } else {
-                return Err("Only select from placeholder supported for now".to_string());
+                v_arr.cloned().ok_or_else(|| {
+                    format!(
+                        "Array '{}' used in select but no Array context available",
+                        parts[1]
+                    )
+                })?
             };
-            let idx = parse_int_expr(parts[2], None, v_arr)?;
+            let idx = parse_int_expr(parts[2], None, v_arr, None)?;
             let res = arr.select(&idx);
             res.as_real()
                 .ok_or_else(|| "select did not return a real".to_string())
@@ -358,6 +500,15 @@ fn parse_float_expr(
             let rhs = parse_float_expr(parts[2], v_float, v_arr)?;
             Ok(rm.div(&lhs, &rhs))
         }
+        "ite" => {
+            if parts.len() != 4 {
+                return Err("ite (if-then-else) expects 3 arguments".to_string());
+            }
+            let cond = parse_bool_expr(parts[1], None, None, v_float, v_arr, None)?;
+            let then = parse_float_expr(parts[2], v_float, v_arr)?;
+            let orelse = parse_float_expr(parts[3], v_float, v_arr)?;
+            Ok(cond.ite(&then, &orelse))
+        }
         "select" => {
             if parts.len() != 3 {
                 return Err("select expects 2 arguments".to_string());
@@ -367,9 +518,14 @@ fn parse_float_expr(
                     "VALUE_PLACEHOLDER used in select but no Array available".to_string()
                 })?
             } else {
-                return Err("Only select from placeholder supported for now".to_string());
+                v_arr.cloned().ok_or_else(|| {
+                    format!(
+                        "Array '{}' used in select but no Array context available",
+                        parts[1]
+                    )
+                })?
             };
-            let idx = parse_int_expr(parts[2], None, v_arr)?;
+            let idx = parse_int_expr(parts[2], None, v_arr, None)?;
             let res = arr.select(&idx);
             res.as_float()
                 .ok_or_else(|| "select did not return a float".to_string())

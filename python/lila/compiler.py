@@ -420,6 +420,17 @@ def verify(
             c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
             def wrapper(*args):
+                # Runtime Refinement Checks
+                for i, param in enumerate(sig.parameters.values()):
+                    if i < len(args):
+                        ann = param.annotation
+                        if hasattr(ann, "predicate") and ann.predicate:
+                            if not ann.predicate(args[i]):
+                                raise ValueError(
+                                    f"Runtime Refinement Violation for argument '{param.name}': "
+                                    f"Value {args[i]} does not satisfy the predicate."
+                                )
+
                 processed_args = []
                 ret_struct = None
                 if is_tuple_return:

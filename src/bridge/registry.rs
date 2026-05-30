@@ -7,6 +7,7 @@ use std::sync::Mutex;
 pub struct FunctionSignature {
     pub name: String,
     pub arg_types: Vec<Type>,
+    pub arg_refinements: HashMap<usize, String>,
     pub return_type: Type,
     pub pointer: usize,
 }

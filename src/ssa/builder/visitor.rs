@@ -555,9 +555,9 @@ impl CFGBuilder {
 
                 // Default fallthrough for unhandled cases
                 self.start_block(current_case_block);
-                // In Lila, we might want to enforce exhaustiveness, but for now we'll just fall through to Python
+                // Lila falls back to Python for non-exhaustive matches.
                 // OR we can make it a runtime error.
-                // For now, let's just jump to exit_block.
+                // Jump to exit block as default fallthrough.
                 self.add_instruction(InstructionKind::Jump(exit_block));
                 self.link_blocks(current_case_block, exit_block);
 

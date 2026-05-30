@@ -18,7 +18,7 @@ def test_unpack() -> i64:
 def test_nested_unpack() -> i64:
     # Lila should support nested tuple construction
     # and unpacking if the type system allows it.
-    # Note: nested tuples might need explicit annotations for now.
+    # Nested tuples require explicit type annotations.
     p = (1, (2, 3))
     x, inner = p
     y, z = inner

@@ -365,9 +365,12 @@ pub fn verify_with_context(
                         crate::verification::refinement_parser::parse_refinement(
                             ret_ref,
                             &z3_bv.to_int(ty.is_signed()),
+                            Some(z3_bv),
                         )
                     } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
-                        crate::verification::refinement_parser::parse_refinement(ret_ref, z3_int)
+                        crate::verification::refinement_parser::parse_refinement(
+                            ret_ref, z3_int, None,
+                        )
                     } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
                         crate::verification::refinement_parser::parse_float_refinement(
                             ret_ref, z3_float,
@@ -397,7 +400,58 @@ pub fn verify_with_context(
         }
     }
 
-    // 9. Final Consistency Check
+    // 10. Verify Call Arguments
+    for block in &func.blocks {
+        let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
+        for inst in &block.instructions {
+            if let InstructionKind::Call(_, target_name, args) = &inst.kind {
+                let registry = crate::bridge::registry::GLOBAL_REGISTRY.lock().unwrap();
+                if let Some(sig) = registry.get(target_name) {
+                    for (i, arg_val) in args.iter().enumerate() {
+                        if let Some(ref_str) = sig.arg_refinements.get(&i) {
+                            let arg_ty = func.get_type(*arg_val);
+                            let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(arg_val) {
+                                crate::verification::refinement_parser::parse_refinement(
+                                    ref_str,
+                                    &z3_bv.to_int(arg_ty.is_signed()),
+                                    Some(z3_bv),
+                                )
+                            } else if let Some(z3_int) = t_ctx.z3_ints.get(arg_val) {
+                                crate::verification::refinement_parser::parse_refinement(
+                                    ref_str, z3_int, None,
+                                )
+                            } else if let Some(z3_float) = t_ctx.z3_floats.get(arg_val) {
+                                crate::verification::refinement_parser::parse_float_refinement(
+                                    ref_str, z3_float,
+                                )
+                            } else {
+                                continue;
+                            };
+
+                            if let Ok(expr) = res {
+                                solver.push();
+                                solver.assert(path_cond);
+                                solver.assert(&expr.not());
+                                if solver.check() != z3::SatResult::Unsat {
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
+                                    return Err(format!(
+                                        "Argument refinement violation for function '{}' (arg {}): value of {:?} does not satisfy '{}' and may be violated on some reachable path{}.",
+                                        target_name, i, arg_val, ref_str, loc_info
+                                    ));
+                                }
+                                solver.pop(1);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 11. Final Consistency Check
     if !t_ctx.has_refinements && t_ctx.z3_perms.is_empty() {
         tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements or pointers).", func.name);
     } else {

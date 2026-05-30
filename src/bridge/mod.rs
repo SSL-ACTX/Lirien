@@ -52,8 +52,13 @@ pub fn verify_and_compile(
         info!(target: "lila::bridge", "Verification complete for '{}'", ssa.name);
 
         let mut arg_types = Vec::new();
+        let mut arg_refinements = HashMap::new();
         for i in 0..ssa.arg_count {
-            arg_types.push(ssa.get_type(crate::ssa::ir::Value(i)));
+            let v = crate::ssa::ir::Value(i);
+            arg_types.push(ssa.get_type(v));
+            if let Some(ref_str) = ssa.refinements.get(&v) {
+                arg_refinements.insert(i, ref_str.clone());
+            }
         }
         let return_type = ssa.return_type.clone();
 
@@ -65,6 +70,7 @@ pub fn verify_and_compile(
             registry.register(FunctionSignature {
                 name: ssa.name.clone(),
                 arg_types,
+                arg_refinements,
                 return_type,
                 pointer: code_ptr,
             });

@@ -21,7 +21,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 }
                 Type::Struct(_) | Type::Tuple(_) | Type::Mut(_) | Type::Ref(_) | Type::Owned(_) => {
                     is_mem_obj = true;
-                    // Composite types and pointers are modeled as Int -> BV for now
+                    // Composite types and pointers are modeled as Int -> BV.
                     inner_ty = Type::I64;
                     break;
                 }
@@ -72,7 +72,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
             ctx.solver.assert(z3_len.bvsge(&zero));
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let z3_int = z3_len.to_int(true);
-                let ref_expr = parse_refinement(refinement, &z3_int)?;
+                let ref_expr = parse_refinement(refinement, &z3_int, Some(&z3_len))?;
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
                 ctx.z3_ints.insert(val, z3_int);
@@ -102,7 +102,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
                 );
                 let z3_int = z3_val.to_int(is_signed);
-                let ref_expr = parse_refinement(refinement, &z3_int)?;
+                let ref_expr = parse_refinement(refinement, &z3_int, Some(&z3_val))?;
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
                 ctx.z3_ints.insert(val, z3_int);

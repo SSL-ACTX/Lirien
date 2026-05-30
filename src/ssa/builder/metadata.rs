@@ -260,8 +260,11 @@ fn expr_to_string_internal(
                 ast::Operator::Mult => "*",
                 ast::Operator::Div => "/",
                 ast::Operator::Mod => "%",
-                ast::Operator::BitAnd => "and",
-                ast::Operator::BitOr => "or",
+                ast::Operator::BitAnd => "&",
+                ast::Operator::BitOr => "|",
+                ast::Operator::BitXor => "^",
+                ast::Operator::LShift => "<<",
+                ast::Operator::RShift => ">>",
                 _ => return Err(format!("Unsupported binop in refinement: {:?}", b.op)),
             };
             let right = expr_to_string_internal(&b.right, arg_name, base_ty, struct_layouts)?;
@@ -282,6 +285,22 @@ fn expr_to_string_internal(
                 )?);
             }
             Ok(format!("({} {})", op, parts.join(" ")))
+        }
+        ast::Expr::UnaryOp(u) => {
+            let operand = expr_to_string_internal(&u.operand, arg_name, base_ty, struct_layouts)?;
+            let op = match u.op {
+                ast::UnaryOp::Not => "not",
+                ast::UnaryOp::Invert => "~",
+                ast::UnaryOp::USub => "-",
+                _ => return Err(format!("Unsupported unary op in refinement: {:?}", u.op)),
+            };
+            Ok(format!("({} {})", op, operand))
+        }
+        ast::Expr::IfExp(i) => {
+            let test = expr_to_string_internal(&i.test, arg_name, base_ty, struct_layouts)?;
+            let body = expr_to_string_internal(&i.body, arg_name, base_ty, struct_layouts)?;
+            let orelse = expr_to_string_internal(&i.orelse, arg_name, base_ty, struct_layouts)?;
+            Ok(format!("(ite {} {} {})", test, body, orelse))
         }
         ast::Expr::Attribute(s) => {
             if let ast::Expr::Name(n) = &*s.value {

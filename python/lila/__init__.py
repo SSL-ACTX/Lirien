@@ -21,7 +21,7 @@ from .types import (
     Callable,
     Closure,
 )
-from .compiler import verify
+from .compiler import verify, VerificationError
 
 __all__ = [
     "Mut",
@@ -30,6 +30,7 @@ __all__ = [
     "struct",
     "enum",
     "verify",
+    "VerificationError",
     "Refined",
     "SizedArray",
     "Buffer",
