@@ -7,6 +7,7 @@ name = "lila"
 version = "0.1.0"
 description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift"
 requires-python = ">=3.8"
+license = "AGPL-3.0"
 dependencies = [
     "typing_extensions; python_version < '3.9'",
 ]
