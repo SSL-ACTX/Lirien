@@ -5,6 +5,31 @@ use rustpython_ast as ast;
 use rustpython_ast::Ranged;
 
 impl CFGBuilder {
+    fn get_constant_int(&self, val: Value) -> Option<i64> {
+        for block in &self.func.blocks {
+            for inst in &block.instructions {
+                match inst.kind {
+                    InstructionKind::ConstInt(v, val_const) => {
+                        if v == val {
+                            return Some(val_const);
+                        }
+                    }
+                    InstructionKind::Sub(v, lhs, rhs) => {
+                        if v == val {
+                            if let (Some(l), Some(r)) =
+                                (self.get_constant_int(lhs), self.get_constant_int(rhs))
+                            {
+                                return Some(l - r);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> Result<(), String> {
         self.update_location(s.range().start().to_usize());
         self.func.arg_count = s.args.args.len();
@@ -260,6 +285,7 @@ impl CFGBuilder {
 
                 let header_block = self.create_block();
                 let body_block = self.create_block();
+                let increment_block = self.create_block();
                 let exit_block = self.create_block();
 
                 // Iterator variable (index)
@@ -277,7 +303,7 @@ impl CFGBuilder {
                 self.add_instruction(InstructionKind::Jump(header_block));
                 self.link_blocks(prev_block, header_block);
 
-                self.loop_stack.push((header_block, exit_block));
+                self.loop_stack.push((increment_block, exit_block));
 
                 self.start_block(header_block);
                 let curr_idx = self.read_variable(idx_name.clone(), header_block)?;
@@ -285,15 +311,9 @@ impl CFGBuilder {
 
                 // Determine if we should use SLt or SGt based on step if constant
                 let mut use_sgt = false;
-                // Try to find if step_val is a negative constant
-                for block in &self.func.blocks {
-                    for inst in &block.instructions {
-                        if let InstructionKind::ConstInt(v, val) = inst.kind {
-                            if v == step_val && val < 0 {
-                                use_sgt = true;
-                                break;
-                            }
-                        }
+                if let Some(val) = self.get_constant_int(step_val) {
+                    if val < 0 {
+                        use_sgt = true;
                     }
                 }
 
@@ -359,18 +379,190 @@ impl CFGBuilder {
                 }
 
                 if !self.is_terminated(self.current_block) {
-                    let next_idx = self.func.next_value();
-                    let updated_idx = self.read_variable(idx_name.clone(), self.current_block)?;
-                    self.add_instruction(InstructionKind::Add(next_idx, updated_idx, step_val));
-                    self.write_variable(idx_name, self.current_block, next_idx);
-                    self.add_instruction(InstructionKind::Jump(header_block));
-                    self.link_blocks(self.current_block, header_block);
+                    self.add_instruction(InstructionKind::Jump(increment_block));
+                    self.link_blocks(self.current_block, increment_block);
                 }
+
+                self.seal_block(increment_block)?;
+                self.start_block(increment_block);
+                let next_idx = self.func.next_value();
+                let updated_idx = self.read_variable(idx_name.clone(), increment_block)?;
+                self.add_instruction(InstructionKind::Add(next_idx, updated_idx, step_val));
+                self.write_variable(idx_name, increment_block, next_idx);
+                self.add_instruction(InstructionKind::Jump(header_block));
+                self.link_blocks(increment_block, header_block);
 
                 self.loop_stack.pop();
                 self.seal_block(header_block)?;
                 self.start_block(exit_block);
                 self.seal_block(exit_block)?;
+                Ok(())
+            }
+            ast::Stmt::Match(s) => {
+                let subject_val = self.visit_expr(*s.subject)?;
+                let subject_ty = self.func.get_type(subject_val);
+
+                let enum_name = match subject_ty {
+                    Type::Enum(name) => name,
+                    Type::Struct(name) if self.func.enum_layouts.contains_key(&name) => {
+                        // Fix the type misclassification
+                        self.func.set_type(subject_val, Type::Enum(name.clone()));
+                        name
+                    }
+                    _ => {
+                        return Err(format!(
+                            "match statement currently only supported for Enums, found {:?}",
+                            subject_ty
+                        ))
+                    }
+                };
+
+                let exit_block = self.create_block();
+                let mut current_case_block = self.current_block;
+
+                for case in s.cases {
+                    let next_case_block = self.create_block();
+                    let body_block = self.create_block();
+
+                    self.start_block(current_case_block);
+
+                    // 1. Identify the variant from the pattern
+                    let (variant_name, pattern_args) = match case.pattern {
+                        ast::Pattern::MatchClass(p) => {
+                            // Option.Some(val)
+                            let attr = match *p.cls {
+                                ast::Expr::Attribute(a) => a,
+                                _ => return Err("Expected Enum.Variant pattern".to_string()),
+                            };
+                            (attr.attr.to_string(), p.patterns)
+                        }
+                        ast::Pattern::MatchValue(p) => {
+                            // Option.Empty
+                            let attr = match *p.value {
+                                ast::Expr::Attribute(a) => a,
+                                _ => return Err("Expected Enum.Variant pattern".to_string()),
+                            };
+                            (attr.attr.to_string(), Vec::new())
+                        }
+                        ast::Pattern::MatchAs(p) => {
+                            // match-all pattern: case x:
+                            if p.pattern.is_some() {
+                                return Err("Nested patterns not yet supported".to_string());
+                            }
+                            // This is a catch-all
+                            if let Some(name) = p.name {
+                                self.write_variable(
+                                    name.to_string(),
+                                    current_case_block,
+                                    subject_val,
+                                );
+                            }
+                            self.add_instruction(InstructionKind::Jump(body_block));
+                            self.link_blocks(current_case_block, body_block);
+
+                            // Body
+                            self.seal_block(body_block)?;
+                            self.start_block(body_block);
+                            for stmt in case.body {
+                                self.visit_stmt(stmt)?;
+                            }
+                            if !self.is_terminated(self.current_block) {
+                                self.add_instruction(InstructionKind::Jump(exit_block));
+                                self.link_blocks(self.current_block, exit_block);
+                            }
+
+                            current_case_block = next_case_block;
+                            continue;
+                        }
+                        _ => return Err(format!("Unsupported pattern type: {:?}", case.pattern)),
+                    };
+
+                    // 2. Resolve variant tag index
+                    let variants = self
+                        .func
+                        .enum_layouts
+                        .get(&enum_name)
+                        .cloned()
+                        .ok_or_else(|| format!("Unknown enum layout for '{}'", enum_name))?;
+                    let tag_idx = variants
+                        .iter()
+                        .position(|(name, _)| *name == variant_name)
+                        .ok_or_else(|| {
+                            format!(
+                                "Unknown variant '{}' for enum '{}'",
+                                variant_name, enum_name
+                            )
+                        })?;
+
+                    // 3. Emit check: is_variant
+                    let is_var = self.func.next_value();
+                    self.add_instruction(InstructionKind::EnumIsVariant(
+                        is_var,
+                        subject_val,
+                        tag_idx,
+                    ));
+                    self.func.set_type(is_var, Type::Bool);
+
+                    self.add_instruction(InstructionKind::Branch(
+                        is_var,
+                        body_block,
+                        next_case_block,
+                    ));
+                    self.link_blocks(current_case_block, body_block);
+                    self.link_blocks(current_case_block, next_case_block);
+
+                    // 4. Case Body
+                    self.seal_block(body_block)?;
+                    self.start_block(body_block);
+
+                    // Handle pattern arguments (destructuring)
+                    if !pattern_args.is_empty() {
+                        let payload = self.func.next_value();
+                        self.add_instruction(InstructionKind::EnumExtract(
+                            payload,
+                            subject_val,
+                            tag_idx,
+                        ));
+                        let variant_ty = variants[tag_idx].1.clone();
+                        self.func.set_type(payload, variant_ty.clone());
+
+                        if pattern_args.len() == 1 {
+                            if let ast::Pattern::MatchAs(p) = &pattern_args[0] {
+                                if let Some(name) = &p.name {
+                                    self.write_variable(name.to_string(), body_block, payload);
+                                }
+                            } else {
+                                return Err("Only simple name patterns supported for enum payload destructuring".to_string());
+                            }
+                        } else {
+                            return Err(
+                                "Enums with multi-element payloads not yet supported in match"
+                                    .to_string(),
+                            );
+                        }
+                    }
+
+                    for stmt in case.body {
+                        self.visit_stmt(stmt)?;
+                    }
+                    if !self.is_terminated(self.current_block) {
+                        self.add_instruction(InstructionKind::Jump(exit_block));
+                        self.link_blocks(self.current_block, exit_block);
+                    }
+
+                    current_case_block = next_case_block;
+                }
+
+                // Default fallthrough for unhandled cases
+                self.start_block(current_case_block);
+                // In Lila, we might want to enforce exhaustiveness, but for now we'll just fall through to Python
+                // OR we can make it a runtime error.
+                // For now, let's just jump to exit_block.
+                self.add_instruction(InstructionKind::Jump(exit_block));
+                self.link_blocks(current_case_block, exit_block);
+
+                self.seal_block(exit_block)?;
+                self.start_block(exit_block);
                 Ok(())
             }
             ast::Stmt::Break(_) => {

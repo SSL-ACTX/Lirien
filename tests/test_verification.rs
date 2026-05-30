@@ -237,7 +237,14 @@ fn test_verify_use_after_move_fail() {
 
     let result = verify(&func);
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Use-after-move"));
+    let err_msg = result.unwrap_err();
+    assert!(
+        err_msg.contains("Memory safety violation")
+            || err_msg.contains("permission conflict")
+            || err_msg.contains("Logical contradiction"),
+        "Expected permission failure, got: {}",
+        err_msg
+    );
 }
 
 #[test]

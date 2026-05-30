@@ -186,8 +186,10 @@ def verify(
                             item_size = ctypes.sizeof(cty)
                             break
                     arg_map.append(("buffer", len(c_args) - 2, item_size))
-                elif any(x in ann_str for x in ["mut", "ref", "sizedarray"]) or getattr(
-                    actual_ann, "__lila_struct__", False
+                elif (
+                    any(x in ann_str for x in ["mut", "ref", "sizedarray"])
+                    or getattr(actual_ann, "__lila_struct__", False)
+                    or getattr(actual_ann, "__lila_enum__", False)
                 ):
                     c_args.append(ctypes.c_void_p)
                     arg_map.append(("pointer", len(c_args) - 1))

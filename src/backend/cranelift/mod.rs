@@ -5,7 +5,7 @@ use crate::ssa::ir::{
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::info;
 
 pub mod lower;
@@ -129,8 +129,14 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
         let mut values = HashMap::new();
         let mut buffer_lengths = HashMap::new();
-        let mut param_idx = 0;
 
+        // 1. Pre-declare all values to handle forward references within blocks
+        // and cross-block references that aren't Phis (though valid SSA should handle this via dominance).
+        // Since we are lowering to Cranelift which doesn't like forward refs for non-Phis,
+        // we'll rely on RPO to visit definitions before uses.
+        // However, we still need to pre-declare Phis.
+
+        let mut param_idx = 0;
         let sret_ptr = if is_tuple_return {
             let ptr = builder.block_params(entry_block)[param_idx];
             param_idx += 1;
@@ -162,6 +168,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             sret_ptr,
         };
 
+        // 2. Pre-declare all Phis across all blocks
         for ssa_block in &ssa_func.blocks {
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
             cg_ctx.builder.switch_to_block(current_cl_block);
@@ -182,7 +189,36 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             }
         }
 
-        for ssa_block in &ssa_func.blocks {
+        // 3. Compute Reverse Post-Order (RPO) to visit definitions before uses
+        let mut rpo = Vec::new();
+        let mut visited = HashSet::new();
+        fn visit(
+            block_id: SsaBlockId,
+            func: &SsaFunction,
+            visited: &mut HashSet<SsaBlockId>,
+            rpo: &mut Vec<SsaBlockId>,
+        ) {
+            if visited.contains(&block_id) {
+                return;
+            }
+            visited.insert(block_id);
+            if let Some(block) = func.blocks.iter().find(|b| b.id == block_id) {
+                for &succ in &block.successors {
+                    visit(succ, func, visited, rpo);
+                }
+            }
+            rpo.push(block_id);
+        }
+        visit(ssa_func.entry_block, ssa_func, &mut visited, &mut rpo);
+        rpo.reverse();
+
+        // 4. Lower instructions in RPO
+        for block_id in rpo {
+            let ssa_block = ssa_func
+                .blocks
+                .iter()
+                .find(|b| b.id == block_id)
+                .expect("Block not found");
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
             cg_ctx.builder.switch_to_block(current_cl_block);
             for inst in &ssa_block.instructions {

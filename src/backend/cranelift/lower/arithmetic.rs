@@ -35,6 +35,18 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().udiv(l, r);
             ctx.values.insert(*dest, res);
         }
+        InstructionKind::SRem(dest, lhs, rhs) => {
+            let l = get_val(&ctx.values, lhs);
+            let r = get_val(&ctx.values, rhs);
+            let res = ctx.builder.ins().srem(l, r);
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::URem(dest, lhs, rhs) => {
+            let l = get_val(&ctx.values, lhs);
+            let r = get_val(&ctx.values, rhs);
+            let res = ctx.builder.ins().urem(l, r);
+            ctx.values.insert(*dest, res);
+        }
         InstructionKind::FAdd(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);
