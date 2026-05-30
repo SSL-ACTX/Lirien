@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, Closure, f64
+from lila import verify, i64, Closure
 
 
 @verify

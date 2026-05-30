@@ -4,15 +4,15 @@ use lila_core::bridge::verify_and_compile;
 #[ignore = "Z3 fractional permissions currently have a limitation with branching moves"]
 fn test_reference_checker_branches() {
     let source = "
-def branch_move(cond: bool, x: Owned[i64]) -> i64:
+def branch_move(cond: bool, x: Held[i64]) -> i64:
     if cond:
         # Move x here
-        return consume_owned(x)
+        return consume_held(x)
     else:
         # Move x here too - this is fine!
-        return consume_owned(x)
+        return consume_held(x)
 
-def consume_owned(x: Owned[i64]) -> i64:
+def consume_held(x: Held[i64]) -> i64:
     return 1
 "
     .to_string();
@@ -30,14 +30,14 @@ def consume_owned(x: Owned[i64]) -> i64:
 #[test]
 fn test_reference_checker_use_after_branch_move() {
     let source = "
-def use_after_branch(cond: bool, x: Owned[i64]) -> i64:
+def use_after_branch(cond: bool, x: Held[i64]) -> i64:
     if cond:
-        y = consume_owned(x)
+        y = consume_held(x)
     else:
         pass
-    return consume_owned(x) # ERROR: x might have been moved
+    return consume_held(x) # ERROR: x might have been moved
 
-def consume_owned(x: Owned[i64]) -> i64:
+def consume_held(x: Held[i64]) -> i64:
     return 1
 "
     .to_string();
@@ -59,15 +59,15 @@ def consume_owned(x: Owned[i64]) -> i64:
 #[test]
 fn test_reference_checker_loop_move() {
     let source = "
-def loop_move(n: i64, x: Owned[i64]) -> i64:
+def loop_move(n: i64, x: Held[i64]) -> i64:
     i = 0
     while i < n:
         # Move x in the first iteration
-        y = consume_owned(x)
+        y = consume_held(x)
         i = i + 1
     return 1
 
-def consume_owned(x: Owned[i64]) -> i64:
+def consume_held(x: Held[i64]) -> i64:
     return 1
 "
     .to_string();
@@ -87,13 +87,8 @@ def consume_owned(x: Owned[i64]) -> i64:
 fn test_reference_checker_aliasing_multiple_refs_ok() {
     let source = "
 def multiple_refs(x: i64) -> i64:
-    r1 = Ref(x)
-    r2 = Ref(x)
-    consume_owned(r1)
-    consume_owned(r2)
-    return 1
-
-def consume_owned(x: Owned[i64]) -> i64:
+    r1 = Peek(x)
+    r2 = Peek(x)
     return 1
 "
     .to_string();
@@ -115,9 +110,9 @@ def consume_owned(x: Owned[i64]) -> i64:
 fn test_reference_checker_aliasing_mut_and_ref_err() {
     let source = "
 def mut_and_ref(x: i64) -> i64:
-    m = Mut(x)
-    r = Ref(x) # Error: x is already mutably referenceed
-    consume_owned(m)
+    m = Hand(x)
+    r = Peek(x) # Error: x is already mutably referenceed
+    consume_held(m)
     return 1
 "
     .to_string();
@@ -139,9 +134,9 @@ def mut_and_ref(x: i64) -> i64:
 fn test_reference_checker_aliasing_mut_and_mut_err() {
     let source = "
 def mut_and_mut(x: i64) -> i64:
-    m1 = Mut(x)
-    m2 = Mut(x) # Error: x is already mutably referenceed
-    consume_owned(m1)
+    m1 = Hand(x)
+    m2 = Hand(x) # Error: x is already mutably referenceed
+    consume_held(m1)
     return 1
 "
     .to_string();

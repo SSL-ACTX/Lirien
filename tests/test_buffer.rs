@@ -15,7 +15,7 @@ def buffer_test(data: Buffer[f64], factor: f64) -> None:
     .to_string();
 
     let ast = ast::Suite::parse(&source, "<test>").unwrap();
-    let func = lila_core::ssa::transform(
+    let funcs = lila_core::ssa::transform(
         "buffer_test".to_string(),
         ast,
         HashMap::new(),
@@ -23,6 +23,7 @@ def buffer_test(data: Buffer[f64], factor: f64) -> None:
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // Verify IR contains BufferLoad/Store and BufferLen
     let mut found_buflen = false;

@@ -13,7 +13,7 @@ def fold_test():
 "
     .to_string();
     let suite = ast::Suite::parse(&source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "fold_test".to_string(),
         suite,
         HashMap::new(),
@@ -21,6 +21,7 @@ def fold_test():
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // Check if the calculation was folded
     // x = 1 + (2 * 3) => 1 + 6 => 7
@@ -53,7 +54,7 @@ def dce_test():
 "
     .to_string();
     let suite = ast::Suite::parse(&source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "dce_test".to_string(),
         suite,
         HashMap::new(),
@@ -61,6 +62,7 @@ def dce_test():
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // y = 20 should be gone
     // 10 + 5 should be folded to 15 (if CF runs before DCE)
@@ -93,7 +95,7 @@ def loop_type_test(max_iter: i64) -> f64:
 "
     .to_string();
     let suite = ast::Suite::parse(&source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "loop_type_test".to_string(),
         suite,
         HashMap::new(),
@@ -101,6 +103,7 @@ def loop_type_test(max_iter: i64) -> f64:
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // Check if the loop variable 'z' was inferred as F64 and Add was converted to FAdd
     let mut found_fadd = false;

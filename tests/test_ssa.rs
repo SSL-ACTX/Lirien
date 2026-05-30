@@ -11,7 +11,7 @@ def test_arithmetic(a, b):
     return x
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "test_arithmetic".to_string(),
         suite,
         HashMap::new(),
@@ -19,6 +19,7 @@ def test_arithmetic(a, b):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     assert_eq!(func.name, "test_arithmetic");
     assert!(!func.blocks.is_empty());
@@ -34,7 +35,7 @@ def foo(a, b):
     return a + b
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "foo".to_string(),
         suite,
         HashMap::new(),
@@ -42,6 +43,7 @@ def foo(a, b):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     assert_eq!(func.name, "foo");
 }
@@ -56,7 +58,7 @@ def test_if_else(x):
         y = 2
 ";
     let suite = ast::Suite::parse(source_with_arg, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "test_if_else".to_string(),
         suite,
         HashMap::new(),
@@ -64,6 +66,7 @@ def test_if_else(x):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     assert!(func.blocks.len() >= 4);
 }
@@ -78,7 +81,7 @@ def test_for(n):
     return total
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "test_for".to_string(),
         suite,
         HashMap::new(),
@@ -86,6 +89,7 @@ def test_for(n):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     assert_eq!(func.name, "test_for");
     assert!(func.blocks.len() >= 4);
@@ -103,7 +107,7 @@ def test_break(n):
     return i
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "test_break".to_string(),
         suite,
         HashMap::new(),
@@ -111,6 +115,7 @@ def test_break(n):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     assert_eq!(func.name, "test_break");
 }
@@ -124,7 +129,7 @@ def sc_test(a, b):
     return 0
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "sc_test".to_string(),
         suite,
         HashMap::new(),
@@ -132,6 +137,7 @@ def sc_test(a, b):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // Should have multiple blocks due to short-circuiting
     assert!(func.blocks.len() >= 3);
@@ -145,7 +151,7 @@ def test_bitwise(a, b, c):
     return x
 ";
     let suite = ast::Suite::parse(source, "<test>").unwrap();
-    let func = transform(
+    let funcs = transform(
         "test_bitwise".to_string(),
         suite,
         HashMap::new(),
@@ -153,6 +159,7 @@ def test_bitwise(a, b, c):
         HashMap::new(),
     )
     .unwrap();
+    let func = funcs.last().unwrap();
 
     // Check for Shl, AShr, Xor, Or instructions in the entry block
     let block = &func.blocks[0];

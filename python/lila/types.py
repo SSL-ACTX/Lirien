@@ -83,13 +83,18 @@ class Refined:
         return cls(params[0], params[1])
 
 
-class SizedArrayMeta(type):
-    def __getitem__(cls, params):
+class SizedArray:
+    """
+    Seamless memory-backed array.
+    Usage: arr = SizedArray[i64, 5]([1, 2, 3, 4, 5])
+    """
+
+    def __class_getitem__(cls, params):
         if not isinstance(params, tuple) or len(params) != 2:
             raise TypeError("SizedArray requires [type, size]")
 
         base_type, size = params
-        base_ty_str = str(base_type).lower()
+        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
 
         # Default to i64
         cty = ctypes.c_int64
@@ -122,40 +127,32 @@ class SizedArrayMeta(type):
         return SizedArrayInstance
 
 
-class SizedArray(metaclass=SizedArrayMeta):
-    """
-    Seamless memory-backed array.
-    Usage: arr = SizedArray[i64, 5]([1, 2, 3, 4, 5])
-    """
-
-    pass
-
-
-class BufferMeta(type):
-    def __getitem__(cls, base_type):
-        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
-        return Annotated[cls, base_ty_str]
-
-
-class Buffer(metaclass=BufferMeta):
+class Buffer:
     """
     Represents an external memory buffer (e.g. NumPy array).
     Usage: arr: Buffer[i32]
     """
 
-    pass
+    def __class_getitem__(cls, base_type):
+        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
+        return Annotated[cls, base_ty_str]
 
 
-class HandMeta(type):
-    def __getitem__(cls, base_type):
-        base_ty_str = str(base_type).lower()
+class Hand:
+    """
+    Seamless mutable reference to a single value.
+    Usage: m = Hand(10) or m = Hand[i64](10)
+    """
+
+    def __class_getitem__(cls, base_type):
+        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
         cty = ctypes.c_int64
         for name, ct in TYPE_MAP.items():
             if name in base_ty_str:
                 cty = ct
                 break
 
-        class HandInstance:
+        class HandInstance(cls):
             _ctypes_type = cty
 
             def __init__(self, val=0):
@@ -175,30 +172,26 @@ class HandMeta(type):
         HandInstance.__name__ = f"Hand_{base_ty_str}"
         return HandInstance
 
-    def __call__(cls, val):
+    def __new__(cls, val=0):
         # Handle Hand(10) -> defaults to i64
         return cls[i64](val)
 
 
-class Hand(metaclass=HandMeta):
+class Peek:
     """
-    Seamless mutable reference to a single value.
-    Usage: m = Hand(10) or m = Hand[i64](10)
+    Seamless immutable reference to a single value.
+    Usage: r = Peek(10)
     """
 
-    pass
-
-
-class PeekMeta(type):
-    def __getitem__(cls, base_type):
-        base_ty_str = str(base_type).lower()
+    def __class_getitem__(cls, base_type):
+        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
         cty = ctypes.c_int64
         for name, ct in TYPE_MAP.items():
             if name in base_ty_str:
                 cty = ct
                 break
 
-        class PeekInstance:
+        class PeekInstance(cls):
             _ctypes_type = cty
 
             def __init__(self, val=0):
@@ -214,26 +207,14 @@ class PeekMeta(type):
         PeekInstance.__name__ = f"Peek_{base_ty_str}"
         return PeekInstance
 
-    def __call__(cls, val):
+    def __new__(cls, val=0):
+        # Handle Peek(10) -> defaults to i64
         return cls[i64](val)
 
 
-class Peek(metaclass=PeekMeta):
-    """
-    Seamless immutable reference to a single value.
-    Usage: r = Peek(10)
-    """
-
-    pass
-
-
-class HeldMeta(type):
-    def __getitem__(cls, base_type):
+class Held:
+    def __class_getitem__(cls, base_type):
         return cls
-
-
-class Held(metaclass=HeldMeta):
-    pass
 
 
 class Array(Generic[T]):

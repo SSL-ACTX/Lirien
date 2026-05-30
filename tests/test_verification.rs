@@ -210,12 +210,12 @@ fn test_verify_use_after_move_fail() {
     let mut func = Function::new("move_test".to_string());
     func.arg_count = 1;
 
-    // def move_test(x: Owned[i64]):
+    // def move_test(x: Held[i64]):
     //   bar(x)
     //   return x
 
     let v_x = func.next_value();
-    func.set_type(v_x, Type::Owned(Box::new(Type::I64)));
+    func.set_type(v_x, Type::Held(Box::new(Type::I64)));
 
     let v_res = func.next_value();
 

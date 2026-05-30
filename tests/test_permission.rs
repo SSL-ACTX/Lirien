@@ -14,14 +14,14 @@ fn test_perm_basic_ref_and_mut_conflict() {
     init_logs();
     let source = "
 def conflict(x: i64) -> i64:
-    m = Mut(x)
-    r = Ref(x) 
-    return consume_mut(m) + consume_ref(r)
+    m = Hand(x)
+    r = Peek(x) 
+    return consume_hand(m) + consume_peek(r)
 
-def consume_mut(x: Mut[i64]) -> i64:
+def consume_hand(x: Hand[i64]) -> i64:
     return 1
 
-def consume_ref(x: Ref[i64]) -> i64:
+def consume_peek(x: Peek[i64]) -> i64:
     return 1
 "
     .to_string();
@@ -36,7 +36,7 @@ def consume_ref(x: Ref[i64]) -> i64:
 
     assert!(
         result.is_err(),
-        "Expected error for Mut and Ref conflict, but got OK"
+        "Expected error for Hand and Peek conflict, but got OK"
     );
 }
 
@@ -45,8 +45,8 @@ fn test_perm_multiple_refs_ok() {
     init_logs();
     let source = "
 def multiple_refs(x: i64) -> i64:
-    r1 = Ref(x)
-    r2 = Ref(x)
+    r1 = Peek(x)
+    r2 = Peek(x)
     return 1
 "
     .to_string();
@@ -61,7 +61,7 @@ def multiple_refs(x: i64) -> i64:
 
     assert!(
         result.is_ok(),
-        "Expected OK for multiple Refs, but got error: {:?}",
+        "Expected OK for multiple Peeks, but got error: {:?}",
         result.err()
     );
 }
@@ -70,12 +70,12 @@ def multiple_refs(x: i64) -> i64:
 fn test_perm_double_move_err() {
     init_logs();
     let source = "
-def double_move(x: Owned[i64]) -> i64:
-    y = consume_owned(x)
-    z = consume_owned(x) # Error: x moved twice
+def double_move(x: Held[i64]) -> i64:
+    y = consume_held(x)
+    z = consume_held(x) # Error: x moved twice
     return y + z
 
-def consume_owned(x: Owned[i64]) -> i64:
+def consume_held(x: Held[i64]) -> i64:
     return 1
 "
     .to_string();

@@ -173,7 +173,7 @@ def verify(
                             base_ty_name = getattr(base_ty, "__name__", str(base_ty))
 
                         type_aliases[name] = f"Refined[{base_ty_name}, {pred_src}]"
-                    except:
+                    except (TypeError, AttributeError, SyntaxError, OSError):
                         pass
 
             try:
@@ -213,10 +213,49 @@ def verify(
 
                 ann_str = str(actual_ann).lower()
 
+                from typing import get_origin, Annotated
+                from .types import (
+                    Buffer,
+                    Hand,
+                    Peek,
+                    SizedArray,
+                    Closure,
+                    FnPointer,
+                    Callable,
+                )
+
+                origin = get_origin(actual_ann) or actual_ann
+                is_buffer = (
+                    origin is Annotated
+                    and get_origin(actual_ann) is Annotated
+                    and getattr(actual_ann, "__metadata__", (None,))[0] == "buffer"
+                    or (isinstance(origin, type) and issubclass(origin, Buffer))
+                    or "buffer" in ann_str
+                )
+
+                is_ptr_wrapper = False
+                if isinstance(origin, type):
+                    if issubclass(
+                        origin, (Hand, Peek, SizedArray, Closure, FnPointer, Callable)
+                    ):
+                        is_ptr_wrapper = True
+                if not is_ptr_wrapper and any(
+                    x in ann_str
+                    for x in [
+                        "hand",
+                        "peek",
+                        "sizedarray",
+                        "closure",
+                        "fnpointer",
+                        "callable",
+                    ]
+                ):
+                    is_ptr_wrapper = True
+
                 # Default to i64 if unknown
                 c_ty = ctypes.c_int64
 
-                if "buffer" in ann_str:
+                if is_buffer:
                     # Buffer is a Fat Pointer (ptr, len)
                     c_args.append(ctypes.c_void_p)
                     c_args.append(ctypes.c_int64)
@@ -229,11 +268,9 @@ def verify(
                             break
                     arg_map.append(("buffer", len(c_args) - 2, item_size))
                 elif (
-                    any(x in ann_str for x in ["hand", "peek", "sizedarray", "closure"])
+                    is_ptr_wrapper
                     or getattr(actual_ann, "__lila_struct__", False)
                     or getattr(actual_ann, "__lila_enum__", False)
-                    or "fnpointer" in ann_str
-                    or "callable" in ann_str
                 ):
                     c_args.append(ctypes.c_void_p)
                     arg_map.append(("pointer", len(c_args) - 1))
