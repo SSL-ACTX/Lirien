@@ -53,15 +53,12 @@ impl Visitor for CaptureVisitor {
     }
 
     fn visit_stmt(&mut self, stmt: ast::Stmt) {
-        match &stmt {
-            ast::Stmt::Assign(a) => {
-                for target in &a.targets {
-                    self.visit_expr(target.clone());
-                }
-                self.visit_expr(*a.value.clone());
-                return;
+        if let ast::Stmt::Assign(a) = &stmt {
+            for target in &a.targets {
+                self.visit_expr(target.clone());
             }
-            _ => {}
+            self.visit_expr(*a.value.clone());
+            return;
         }
         self.generic_visit_stmt(stmt);
     }

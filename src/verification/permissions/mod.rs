@@ -71,10 +71,8 @@ impl<'a> PermissionVerifier<'a> {
                             }
                             _ => {
                                 let ty = self.func.get_type(def);
-                                if ty.is_pointer_like() {
-                                    if !self.value_roots.contains_key(&def) {
-                                        root = Some(def);
-                                    }
+                                if ty.is_pointer_like() && !self.value_roots.contains_key(&def) {
+                                    root = Some(def);
                                 }
                             }
                         }
@@ -133,11 +131,11 @@ impl<'a> PermissionVerifier<'a> {
             let ty = self.func.get_type(v);
             match ty {
                 Type::Held(_) | Type::Hand(_) => {
-                    solver.assert(&p_var.eq(&one));
+                    solver.assert(p_var.eq(&one));
                 }
                 _ if ty.is_pointer_like() => {
-                    solver.assert(&p_var.gt(&zero));
-                    solver.assert(&p_var.le(&one));
+                    solver.assert(p_var.gt(&zero));
+                    solver.assert(p_var.le(&one));
                 }
                 _ => {}
             }
@@ -184,17 +182,15 @@ impl<'a> PermissionVerifier<'a> {
                         };
 
                         // Assert that total permission on a root must not exceed 1.0
-                        solver.assert(path_cond.implies(&sum.le(&one)));
+                        solver.assert(path_cond.implies(sum.le(&one)));
 
                         // Only check for consistency if we have multiple terms,
                         // as single terms are already constrained to be <= 1.0
-                        if terms.len() > 1 {
-                            if solver.check() == SatResult::Unsat {
-                                return Err(format!(
-                                    "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at instruction {} in block {:?}. (Possible aliasing or use-after-move)",
-                                    root, idx, block.id
-                                ));
-                            }
+                        if terms.len() > 1 && solver.check() == SatResult::Unsat {
+                            return Err(format!(
+                                "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at instruction {} in block {:?}. (Possible aliasing or use-after-move)",
+                                root, idx, block.id
+                            ));
                         }
                     }
                 }

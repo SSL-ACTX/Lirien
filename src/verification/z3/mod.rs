@@ -149,6 +149,97 @@ pub fn verify_with_context(
     Ok(())
 }
 
+fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
+    // 6. Assert derived intervals and refinements
+    for (val, interval) in &t_ctx.analysis.intervals {
+        if let Some(ty) = t_ctx.func.value_types.get(val) {
+            if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
+                if let Some(bit_width) = ty.int_bit_width() {
+                    let is_signed = ty.is_signed();
+                    if let Bound::Finite(low) = interval.low {
+                        let low_bv = BV::from_i64(low as i64, bit_width);
+                        if is_signed {
+                            solver.assert(z3_bv.bvsge(&low_bv));
+                        } else {
+                            solver.assert(z3_bv.bvuge(&low_bv));
+                        }
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        let high_bv = BV::from_i64(high as i64, bit_width);
+                        if is_signed {
+                            solver.assert(z3_bv.bvsle(&high_bv));
+                        } else {
+                            solver.assert(z3_bv.bvule(&high_bv));
+                        }
+                    }
+                }
+            } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
+                if let Bound::Finite(low) = interval.low {
+                    let low_float = if matches!(ty, Type::F32) {
+                        Float::from_f32(low as f32)
+                    } else {
+                        Float::from_f64(low)
+                    };
+                    solver.assert(z3_float.ge(&low_float));
+                }
+                if let Bound::Finite(high) = interval.high {
+                    let high_float = if matches!(ty, Type::F32) {
+                        Float::from_f32(high as f32)
+                    } else {
+                        Float::from_f64(high)
+                    };
+                    solver.assert(z3_float.le(&high_float));
+                }
+            }
+        }
+    }
+
+    for ((val, b_id), interval) in &t_ctx.analysis.block_narrowing {
+        if let Some(path_cond) = t_ctx.block_conditions.get(b_id) {
+            if let Some(ty) = t_ctx.func.value_types.get(val) {
+                if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
+                    if let Some(bit_width) = ty.int_bit_width() {
+                        let is_signed = ty.is_signed();
+                        if let Bound::Finite(low) = interval.low {
+                            let low_bv = BV::from_i64(low as i64, bit_width);
+                            if is_signed {
+                                solver.assert(path_cond.implies(z3_bv.bvsge(&low_bv)));
+                            } else {
+                                solver.assert(path_cond.implies(z3_bv.bvuge(&low_bv)));
+                            }
+                        }
+                        if let Bound::Finite(high) = interval.high {
+                            let high_bv = BV::from_i64(high as i64, bit_width);
+                            if is_signed {
+                                solver.assert(path_cond.implies(z3_bv.bvsle(&high_bv)));
+                            } else {
+                                solver.assert(path_cond.implies(z3_bv.bvule(&high_bv)));
+                            }
+                        }
+                    }
+                } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
+                    if let Bound::Finite(low) = interval.low {
+                        let low_float = if matches!(ty, Type::F32) {
+                            Float::from_f32(low as f32)
+                        } else {
+                            Float::from_f64(low)
+                        };
+                        solver.assert(path_cond.implies(z3_float.ge(&low_float)));
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        let high_float = if matches!(ty, Type::F32) {
+                            Float::from_f32(high as f32)
+                        } else {
+                            Float::from_f64(high)
+                        };
+                        solver.assert(path_cond.implies(z3_float.le(&high_float)));
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn init_permissions(t_ctx: &mut TranslationContext) {
     // 2. Initialize Permission Variables for Fractional Permission Model
     for i in 0..t_ctx.func.value_count {
@@ -216,7 +307,7 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
             if incoming_edges.is_empty() {
                 solver.assert(path_cond.eq(&false_cond));
             } else {
-                let or_expr = Bool::or(&incoming_edges.iter().map(|&e| e).collect::<Vec<_>>());
+                let or_expr = Bool::or(&incoming_edges.to_vec());
                 solver.assert(path_cond.eq(&or_expr));
             }
         }
@@ -332,114 +423,10 @@ fn translate_constraints(
 
     for constraint in &inst.constraints {
         let z3_constraint = parse_bool_expr_with_resolver(constraint, &resolver)?;
-        t_ctx.solver.assert(&path_cond.implies(&z3_constraint));
+        t_ctx.solver.assert(path_cond.implies(&z3_constraint));
     }
 
     Ok(())
-}
-
-fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
-    // 6. Assert derived intervals and refinements
-    for (val, interval) in &t_ctx.analysis.intervals {
-        if let Some(ty) = t_ctx.func.value_types.get(val) {
-            if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
-                if let Some(bit_width) = ty.int_bit_width() {
-                    let is_signed = ty.is_signed();
-                    if let Bound::Finite(low) = interval.low {
-                        let low_bv = BV::from_i64(low as i64, bit_width);
-                        if is_signed {
-                            solver.assert(z3_bv.bvsge(&low_bv));
-                        } else {
-                            solver.assert(z3_bv.bvuge(&low_bv));
-                        }
-                    }
-                    if let Bound::Finite(high) = interval.high {
-                        let high_bv = BV::from_i64(high as i64, bit_width);
-                        if is_signed {
-                            solver.assert(z3_bv.bvsle(&high_bv));
-                        } else {
-                            solver.assert(z3_bv.bvule(&high_bv));
-                        }
-                    }
-                }
-            } else if let Some(z3_int) = t_ctx.z3_ints.get(val) {
-                if let Bound::Finite(low) = interval.low {
-                    solver.assert(z3_int.ge(&Int::from_i64(low as i64)));
-                }
-                if let Bound::Finite(high) = interval.high {
-                    solver.assert(z3_int.le(&Int::from_i64(high as i64)));
-                }
-            } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
-                if let Bound::Finite(low) = interval.low {
-                    let low_float = if matches!(ty, Type::F32) {
-                        Float::from_f32(low as f32)
-                    } else {
-                        Float::from_f64(low)
-                    };
-                    solver.assert(z3_float.ge(&low_float));
-                }
-                if let Bound::Finite(high) = interval.high {
-                    let high_float = if matches!(ty, Type::F32) {
-                        Float::from_f32(high as f32)
-                    } else {
-                        Float::from_f64(high)
-                    };
-                    solver.assert(z3_float.le(&high_float));
-                }
-            }
-        }
-    }
-    for ((val, b_id), interval) in &t_ctx.analysis.block_narrowing {
-        if let Some(path_cond) = t_ctx.block_conditions.get(b_id) {
-            if let Some(ty) = t_ctx.func.value_types.get(val) {
-                if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
-                    if let Some(bit_width) = ty.int_bit_width() {
-                        let is_signed = ty.is_signed();
-                        if let Bound::Finite(low) = interval.low {
-                            let low_bv = BV::from_i64(low as i64, bit_width);
-                            if is_signed {
-                                solver.assert(&path_cond.implies(&z3_bv.bvsge(&low_bv)));
-                            } else {
-                                solver.assert(&path_cond.implies(&z3_bv.bvuge(&low_bv)));
-                            }
-                        }
-                        if let Bound::Finite(high) = interval.high {
-                            let high_bv = BV::from_i64(high as i64, bit_width);
-                            if is_signed {
-                                solver.assert(&path_cond.implies(&z3_bv.bvsle(&high_bv)));
-                            } else {
-                                solver.assert(&path_cond.implies(&z3_bv.bvule(&high_bv)));
-                            }
-                        }
-                    }
-                } else if let Some(z3_int) = t_ctx.z3_ints.get(val) {
-                    if let Bound::Finite(low) = interval.low {
-                        solver.assert(&path_cond.implies(&z3_int.ge(&Int::from_i64(low as i64))));
-                    }
-                    if let Bound::Finite(high) = interval.high {
-                        solver.assert(&path_cond.implies(&z3_int.le(&Int::from_i64(high as i64))));
-                    }
-                } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
-                    if let Bound::Finite(low) = interval.low {
-                        let low_float = if matches!(ty, Type::F32) {
-                            Float::from_f32(low as f32)
-                        } else {
-                            Float::from_f64(low)
-                        };
-                        solver.assert(&path_cond.implies(&z3_float.ge(&low_float)));
-                    }
-                    if let Bound::Finite(high) = interval.high {
-                        let high_float = if matches!(ty, Type::F32) {
-                            Float::from_f32(high as f32)
-                        } else {
-                            Float::from_f64(high)
-                        };
-                        solver.assert(&path_cond.implies(&z3_float.le(&high_float)));
-                    }
-                }
-            }
-        }
-    }
 }
 
 fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Result<(), String> {
@@ -471,7 +458,7 @@ fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Res
                     if let Ok(expr) = res {
                         solver.push();
                         solver.assert(path_cond);
-                        solver.assert(&expr.not());
+                        solver.assert(expr.not());
                         if solver.check() != z3::SatResult::Unsat {
                             let loc_info = inst
                                 .location
@@ -547,7 +534,7 @@ fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<
                             if let Ok(expr) = res {
                                 solver.push();
                                 solver.assert(path_cond);
-                                solver.assert(&expr.not());
+                                solver.assert(expr.not());
                                 if solver.check() != z3::SatResult::Unsat {
                                     let loc_info = inst
                                         .location

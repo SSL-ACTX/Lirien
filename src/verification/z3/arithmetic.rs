@@ -100,20 +100,29 @@ pub fn translate(
                 let zero = BV::from_i64(0, bit_width);
                 let is_zero = z3_r.eq(&zero);
 
-                ctx.solver.push();
-                ctx.solver.assert(path_cond);
-                ctx.solver.assert(&is_zero);
-                if ctx.solver.check() != SatResult::Unsat {
-                    let loc_info = inst
-                        .location
-                        .map(|l| format!(" at {}", l))
-                        .unwrap_or_default();
-                    return Err(format!(
-                        "Potential division by zero at v{}{}",
-                        dest.0, loc_info
-                    ));
+                // Optimization: Use interval analysis to skip Z3 check if divisor is non-zero
+                let is_safe = if let Some(interval) = ctx.analysis.intervals.get(rhs) {
+                    interval.is_strictly_positive() || interval.is_strictly_negative()
+                } else {
+                    false
+                };
+
+                if !is_safe {
+                    ctx.solver.push();
+                    ctx.solver.assert(path_cond);
+                    ctx.solver.assert(&is_zero);
+                    if ctx.solver.check() != SatResult::Unsat {
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Potential division by zero at v{}{}",
+                            dest.0, loc_info
+                        ));
+                    }
+                    ctx.solver.pop(1);
                 }
-                ctx.solver.pop(1);
 
                 if let InstructionKind::SDiv(_, _, _) = &inst.kind {
                     ctx.solver
@@ -145,6 +154,7 @@ pub fn translate(
                 };
 
                 if !is_safe {
+                    // Verify safety via Z3
                     ctx.solver.push();
                     ctx.solver.assert(path_cond);
                     ctx.solver.assert(z3_r.eq(&zero));
@@ -371,6 +381,7 @@ pub fn translate(
                             };
 
                             if !is_safe {
+                                // Verify safety via Z3
                                 ctx.solver.push();
                                 ctx.solver.assert(path_cond);
                                 ctx.solver.assert(z3_src.lt(&zero));
@@ -413,6 +424,7 @@ pub fn translate(
                 };
 
                 if !is_safe {
+                    // Verify safety via Z3
                     ctx.solver.push();
                     ctx.solver.assert(path_cond);
 

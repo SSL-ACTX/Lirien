@@ -17,6 +17,6 @@ fn lila_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyfunction]
 fn set_log_level(level: String) -> PyResult<()> {
     diagnostics::set_log_level(&level)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+        .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
     Ok(())
 }

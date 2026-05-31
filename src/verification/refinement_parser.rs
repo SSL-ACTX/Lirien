@@ -19,8 +19,8 @@ impl<'a> Resolver<'a> {
         if name == "false" {
             return Some(Bool::from_bool(false));
         }
-        if name.starts_with('v') {
-            if let Ok(id) = name[1..].parse::<usize>() {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
                 let v = Value(id);
                 // In Lila, booleans are often modeled as BV1 or Int(0/1)
                 if let Some(bv) = self.bvs.get(&v) {
@@ -39,8 +39,8 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn resolve_int(&self, name: &str) -> Option<Int> {
-        if name.starts_with('v') {
-            if let Ok(id) = name[1..].parse::<usize>() {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
                 return self.ints.get(&Value(id)).cloned();
             }
         }
@@ -48,8 +48,8 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn resolve_bv(&self, name: &str) -> Option<BV> {
-        if name.starts_with('v') {
-            if let Ok(id) = name[1..].parse::<usize>() {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
                 return self.bvs.get(&Value(id)).cloned();
             }
         }
@@ -57,8 +57,8 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn resolve_float(&self, name: &str) -> Option<Float> {
-        if name.starts_with('v') {
-            if let Ok(id) = name[1..].parse::<usize>() {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
                 return self.floats.get(&Value(id)).cloned();
             }
         }
@@ -195,12 +195,8 @@ fn parse_bool_expr(
                     parse_bool_expr(parts[1], v_int, v_real, v_float, v_arr, v_bv, resolver);
                 let rhs_bool =
                     parse_bool_expr(parts[2], v_int, v_real, v_float, v_arr, v_bv, resolver);
-                if lhs_bool.is_ok() && rhs_bool.is_ok() {
-                    return Ok(if parts[0] == "=" {
-                        lhs_bool.unwrap().eq(&rhs_bool.unwrap())
-                    } else {
-                        lhs_bool.unwrap().xor(&rhs_bool.unwrap())
-                    });
+                if let (Ok(l), Ok(r)) = (lhs_bool, rhs_bool) {
+                    return Ok(if parts[0] == "=" { l.eq(&r) } else { l.xor(&r) });
                 }
             }
 

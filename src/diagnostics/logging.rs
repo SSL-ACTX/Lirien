@@ -1,8 +1,9 @@
 use std::sync::OnceLock;
 use tracing_subscriber::{fmt, prelude::*, reload, EnvFilter};
 
-static RELOAD_HANDLE: OnceLock<Box<dyn Fn(EnvFilter) -> Result<(), String> + Send + Sync>> =
-    OnceLock::new();
+type ReloadFn = Box<dyn Fn(EnvFilter) -> Result<(), String> + Send + Sync>;
+
+static RELOAD_HANDLE: OnceLock<ReloadFn> = OnceLock::new();
 
 pub fn init() {
     let filter = EnvFilter::try_from_env("LILA_LOG")

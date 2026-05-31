@@ -158,9 +158,9 @@ impl Interval {
                         (Bound::Finite(a), Bound::Finite(c)) => Bound::Finite(a * c),
                         _ => Bound::Finite(0.0),
                     };
-                } else if self.is_strictly_positive() && other.is_non_negative() {
-                    low = Bound::Finite(0.0);
-                } else if self.is_non_negative() && other.is_strictly_positive() {
+                } else if (self.is_strictly_positive() && other.is_non_negative())
+                    || (self.is_non_negative() && other.is_strictly_positive())
+                {
                     low = Bound::Finite(0.0);
                 }
 
@@ -283,8 +283,10 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                     .collect();
 
                 for (v, i) in pred_narrowing {
-                    if !block_narrowing.contains_key(&(v, block.id)) {
-                        block_narrowing.insert((v, block.id), i);
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        block_narrowing.entry((v, block.id))
+                    {
+                        e.insert(i);
                         changed = true;
                     }
                 }
@@ -517,8 +519,10 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                             .collect();
 
                         for (v, i) in current_narrowing {
-                            if !block_narrowing.contains_key(&(v, *target)) {
-                                block_narrowing.insert((v, *target), i);
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                block_narrowing.entry((v, *target))
+                            {
+                                e.insert(i);
                                 changed = true;
                             }
                         }

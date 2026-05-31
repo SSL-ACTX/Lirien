@@ -54,7 +54,7 @@ pub fn translate(
 
                 if let Ok(expr) = res {
                     // Inductive Hypothesis: Assume the function holds for smaller inputs.
-                    t_ctx.solver.assert(&path_cond.implies(&expr));
+                    t_ctx.solver.assert(path_cond.implies(&expr));
                 }
             }
         }

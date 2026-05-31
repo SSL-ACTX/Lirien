@@ -145,17 +145,52 @@ pub fn propagate_types(func: &mut Function) {
                     }
                     InstructionKind::Phi(d, mappings) => {
                         let current_ty = func.get_type(*d);
-                        if current_ty == Type::Unknown {
-                            for val in mappings.values() {
-                                let ty = func.get_type(*val);
-                                let base_ty = match ty {
-                                    Type::Refined(inner, _) => *inner,
-                                    other => other,
-                                };
-                                if base_ty != Type::Unknown {
-                                    new_types.insert(*d, base_ty);
-                                    break;
+                        let mut base_ty = Type::Unknown;
+                        let mut refined_sources = Vec::new();
+                        let mut all_base_types_match = true;
+
+                        for val in mappings.values() {
+                            let ty = func.get_type(*val);
+                            let (b_ty, is_refined) = match ty {
+                                Type::Refined(inner, _) => (*inner, true),
+                                other => (other, false),
+                            };
+
+                            if b_ty != Type::Unknown {
+                                if base_ty == Type::Unknown {
+                                    base_ty = b_ty.clone();
+                                } else if base_ty != b_ty {
+                                    all_base_types_match = false;
                                 }
+                                if is_refined
+                                    || b_ty.is_int()
+                                    || b_ty.is_float()
+                                    || b_ty == Type::Bool
+                                {
+                                    refined_sources.push(*val);
+                                }
+                            }
+                        }
+
+                        if base_ty != Type::Unknown && all_base_types_match {
+                            let new_ty = if !refined_sources.is_empty() {
+                                refined_sources.sort_by_key(|v| v.0);
+                                let constraints: Vec<String> = refined_sources
+                                    .iter()
+                                    .map(|v| format!("(= {{v}} {})", v))
+                                    .collect();
+                                let combined = if constraints.len() == 1 {
+                                    constraints[0].clone()
+                                } else {
+                                    format!("(| {})", constraints.join(" "))
+                                };
+                                Type::Refined(Box::new(base_ty), combined)
+                            } else {
+                                base_ty
+                            };
+
+                            if current_ty != new_ty {
+                                new_types.insert(*d, new_ty);
                             }
                         }
                     }
@@ -208,9 +243,7 @@ pub fn propagate_types(func: &mut Function) {
                 InstructionKind::Add(d, l, r) => {
                     let l_ty = func.get_type(*l);
                     let r_ty = func.get_type(*r);
-                    if matches!(l_ty, Type::F32 | Type::F64)
-                        || matches!(r_ty, Type::F32 | Type::F64)
-                    {
+                    if l_ty.is_float() || r_ty.is_float() {
                         Some(InstructionKind::FAdd(*d, *l, *r))
                     } else {
                         None
@@ -219,9 +252,7 @@ pub fn propagate_types(func: &mut Function) {
                 InstructionKind::Sub(d, l, r) => {
                     let l_ty = func.get_type(*l);
                     let r_ty = func.get_type(*r);
-                    if matches!(l_ty, Type::F32 | Type::F64)
-                        || matches!(r_ty, Type::F32 | Type::F64)
-                    {
+                    if l_ty.is_float() || r_ty.is_float() {
                         Some(InstructionKind::FSub(*d, *l, *r))
                     } else {
                         None
@@ -230,10 +261,17 @@ pub fn propagate_types(func: &mut Function) {
                 InstructionKind::Mul(d, l, r) => {
                     let l_ty = func.get_type(*l);
                     let r_ty = func.get_type(*r);
-                    if matches!(l_ty, Type::F32 | Type::F64)
-                        || matches!(r_ty, Type::F32 | Type::F64)
-                    {
+                    if l_ty.is_float() || r_ty.is_float() {
                         Some(InstructionKind::FMul(*d, *l, *r))
+                    } else {
+                        None
+                    }
+                }
+                InstructionKind::SDiv(d, l, r) | InstructionKind::UDiv(d, l, r) => {
+                    let l_ty = func.get_type(*l);
+                    let r_ty = func.get_type(*r);
+                    if l_ty.is_float() || r_ty.is_float() {
+                        Some(InstructionKind::FDiv(*d, *l, *r))
                     } else {
                         None
                     }
@@ -323,7 +361,10 @@ mod tests {
 
         propagate_types(&mut func);
 
-        assert_eq!(func.get_type(v1), Type::F64);
+        assert_eq!(
+            func.get_type(v1),
+            Type::Refined(Box::new(Type::F64), "(| (= {v} v0) (= {v} v2))".to_string())
+        );
         assert_eq!(
             func.get_type(v2),
             Type::Refined(Box::new(Type::F64), "(= {v} (+ v1 v0))".to_string())

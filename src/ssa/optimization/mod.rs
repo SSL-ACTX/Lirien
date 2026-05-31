@@ -1,5 +1,6 @@
 pub mod constant_folding;
 pub mod dce;
+pub mod inference;
 pub mod type_propagation;
 
 use super::ir::Function;
@@ -16,4 +17,7 @@ pub fn optimize(func: &mut Function) {
 
     // Dead Code Elimination
     dce::eliminate_dead_code(func);
+
+    // Embed Static Analysis Results as Liquid Types
+    inference::embed_intervals(func);
 }

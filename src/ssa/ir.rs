@@ -79,6 +79,21 @@ impl Type {
         }
     }
 
+    pub fn is_int(&self) -> bool {
+        match self {
+            Type::I8
+            | Type::U8
+            | Type::I16
+            | Type::U16
+            | Type::I32
+            | Type::U32
+            | Type::I64
+            | Type::U64 => true,
+            Type::Refined(inner, _) => inner.is_int(),
+            _ => false,
+        }
+    }
+
     pub fn int_bit_width(&self) -> Option<u32> {
         match self {
             Type::I8 | Type::U8 => Some(8),
@@ -995,11 +1010,10 @@ impl Instruction {
                 operands.push(*obj);
                 operands.push(*val);
             }
-            InstructionKind::EnumCreate(_, _, _, payload) => {
-                if let Some(p) = payload {
-                    operands.push(*p);
-                }
+            InstructionKind::EnumCreate(_, _, _, Some(p)) => {
+                operands.push(*p);
             }
+            InstructionKind::EnumCreate(_, _, _, None) => {}
             InstructionKind::EnumIsVariant(_, obj, _) | InstructionKind::EnumExtract(_, obj, _) => {
                 operands.push(*obj);
             }
