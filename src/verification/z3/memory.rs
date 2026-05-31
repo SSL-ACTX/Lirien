@@ -10,10 +10,16 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
         let ty = ctx.func.get_type(val);
 
         let mut is_mem_obj = false;
-        let curr_ty = ty.clone();
+        let mut curr_ty = ty.clone();
         let mut inner_ty = ty.clone();
+        let mut propagated_constraint = None;
         loop {
             match curr_ty {
+                Type::Refined(inner, constraint) => {
+                    propagated_constraint = Some(constraint.clone());
+                    curr_ty = *inner.clone();
+                    inner_ty = *inner;
+                }
                 Type::Array(inner, _) => {
                     is_mem_obj = true;
                     inner_ty = *inner;
@@ -55,9 +61,13 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
             }
+            if let Some(constraint) = &propagated_constraint {
+                let ref_expr = parse_array_refinement(constraint, &z3_val, inner_ty.is_float())?;
+                ctx.solver.assert(ref_expr);
+            }
 
             ctx.z3_arrays.insert(val, z3_val);
-        } else if let Type::Enum(_) = ty {
+        } else if let Type::Enum(_) = inner_ty {
             // Model Enums as a tag (BV) and a payload (Array)
             let tag_val = BV::new_const(format!("{}_v{}_tag_{}", ctx.func.name, i, ctx.uid), 8);
             ctx.z3_bvs.insert(val, tag_val);
@@ -70,7 +80,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 &val_sort,
             );
             ctx.z3_arrays.insert(val, payload_val);
-        } else if let Type::Buffer(_) = ty {
+        } else if let Type::Buffer(_) = inner_ty {
             let z3_len = BV::new_const(format!("{}_v{}_len_{}", ctx.func.name, i, ctx.uid), 64);
             let zero = BV::from_i64(0, 64);
             ctx.solver.assert(z3_len.bvsge(&zero));
@@ -79,11 +89,17 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 let ref_expr = parse_refinement(refinement, &z3_int, Some(&z3_len))?;
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
+                ctx.z3_ints.insert(val, z3_int.clone());
+            }
+            if let Some(constraint) = &propagated_constraint {
+                let z3_int = z3_len.to_int(true);
+                let ref_expr = parse_refinement(constraint, &z3_int, Some(&z3_len))?;
+                ctx.solver.assert(ref_expr);
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_len);
-        } else if ty.is_float() {
-            let z3_val = if matches!(ty, Type::F32) {
+        } else if inner_ty.is_float() {
+            let z3_val = if matches!(inner_ty, Type::F32) {
                 Float::new_const_float32(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid))
             } else {
                 Float::new_const_double(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid))
@@ -95,20 +111,36 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
             }
+            if let Some(constraint) = &propagated_constraint {
+                let ref_expr = crate::verification::refinement_parser::parse_float_refinement(
+                    constraint, &z3_val,
+                )?;
+                ctx.solver.assert(ref_expr);
+            }
             ctx.z3_floats.insert(val, z3_val);
         } else {
-            let bit_width = ty.int_bit_width().unwrap_or(64);
+            let bit_width = inner_ty.int_bit_width().unwrap_or(64);
             let z3_val = BV::new_const(format!("{}_v{}_{}", ctx.func.name, i, ctx.uid), bit_width);
 
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let is_signed = !matches!(
-                    ty,
+                    inner_ty,
                     Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
                 );
                 let z3_int = z3_val.to_int(is_signed);
                 let ref_expr = parse_refinement(refinement, &z3_int, Some(&z3_val))?;
                 ctx.solver.assert(ref_expr);
                 ctx.has_refinements = true;
+                ctx.z3_ints.insert(val, z3_int);
+            }
+            if let Some(constraint) = &propagated_constraint {
+                let is_signed = !matches!(
+                    inner_ty,
+                    Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
+                );
+                let z3_int = z3_val.to_int(is_signed);
+                let ref_expr = parse_refinement(constraint, &z3_int, Some(&z3_val))?;
+                ctx.solver.assert(ref_expr);
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_val);

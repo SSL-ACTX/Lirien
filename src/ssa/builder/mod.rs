@@ -268,19 +268,27 @@ impl CFGBuilder {
             .unwrap_or_default()
     }
 
-    pub fn add_instruction(&mut self, kind: InstructionKind) {
+    pub fn add_instruction(&mut self, kind: InstructionKind) -> &mut Instruction {
         let block_id = self.current_block;
-        self.add_instruction_to_block(block_id, kind);
+        self.add_instruction_to_block(block_id, kind)
     }
 
-    pub fn add_instruction_to_block(&mut self, block_id: BlockId, kind: InstructionKind) {
+    pub fn add_instruction_to_block(
+        &mut self,
+        block_id: BlockId,
+        kind: InstructionKind,
+    ) -> &mut Instruction {
         if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == block_id) {
             let inst = Instruction::new(kind, self.current_location);
             if let InstructionKind::Phi(_, _) = &inst.kind {
                 block.instructions.insert(0, inst);
+                &mut block.instructions[0]
             } else {
                 block.instructions.push(inst);
+                block.instructions.last_mut().unwrap()
             }
+        } else {
+            panic!("Block {} not found", block_id);
         }
     }
 

@@ -24,6 +24,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     FnPointer(Vec<Type>, Box<Type>),
     Closure(String, Vec<Type>, Box<Type>),
+    Refined(Box<Type>, String),
     Unknown,
 }
 
@@ -63,6 +64,7 @@ impl fmt::Display for Type {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
                 write!(f, "Closure {}({}) -> {}", name, inner.join(", "), ret)
             }
+            Type::Refined(inner, constraint) => write!(f, "Refined<{}, {}>", inner, constraint),
             Type::Unknown => write!(f, "unknown"),
         }
     }
@@ -70,7 +72,11 @@ impl fmt::Display for Type {
 
 impl Type {
     pub fn is_float(&self) -> bool {
-        matches!(self, Type::F32 | Type::F64)
+        match self {
+            Type::F32 | Type::F64 => true,
+            Type::Refined(inner, _) => inner.is_float(),
+            _ => false,
+        }
     }
 
     pub fn int_bit_width(&self) -> Option<u32> {
@@ -80,31 +86,38 @@ impl Type {
             Type::I32 | Type::U32 => Some(32),
             Type::I64 | Type::U64 => Some(64),
             Type::Bool => Some(1),
+            Type::Refined(inner, _) => inner.int_bit_width(),
             _ => None,
         }
     }
 
     pub fn is_signed(&self) -> bool {
-        matches!(self, Type::I8 | Type::I16 | Type::I32 | Type::I64)
+        match self {
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 => true,
+            Type::Refined(inner, _) => inner.is_signed(),
+            _ => false,
+        }
     }
 
     pub fn is_pointer_like(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Type::Peek(_)
-                | Type::Hand(_)
-                | Type::Held(_)
-                | Type::Buffer(_)
-                | Type::Array(_, _)
-                | Type::FnPointer(_, _)
-                | Type::Closure(_, _, _)
-        )
+            | Type::Hand(_)
+            | Type::Held(_)
+            | Type::Buffer(_)
+            | Type::Array(_, _)
+            | Type::FnPointer(_, _)
+            | Type::Closure(_, _, _) => true,
+            Type::Refined(inner, _) => inner.is_pointer_like(),
+            _ => false,
+        }
     }
 
     pub fn is_composite(&self) -> bool {
         match self {
             Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
             Type::Array(_, Some(_)) => true,
+            Type::Refined(inner, _) => inner.is_composite(),
             _ => false,
         }
     }
@@ -147,6 +160,7 @@ impl Type {
                 let total_align = self.align(struct_layouts);
                 (offset + total_align - 1) & !(total_align - 1)
             }
+            Type::Refined(inner, _) => inner.size(struct_layouts),
             Type::Enum(name) => {
                 if let Some(variants) = struct_layouts.get(name) {
                     let mut max_payload_size = 0;
@@ -234,6 +248,7 @@ impl Type {
                 }
                 max_align
             }
+            Type::Refined(inner, _) => inner.align(struct_layouts),
             _ => 8,
         }
     }
@@ -272,6 +287,7 @@ impl fmt::Display for SourceLocation {
 pub struct Instruction {
     pub kind: InstructionKind,
     pub location: Option<SourceLocation>,
+    pub constraints: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -363,179 +379,460 @@ impl fmt::Display for Instruction {
             .location
             .map(|l| format!("  ; at {}", l))
             .unwrap_or_default();
+        let constraints_str = if self.constraints.is_empty() {
+            String::new()
+        } else {
+            format!("  ; constraints: [{}]", self.constraints.join(", "))
+        };
         match &self.kind {
-            InstructionKind::Add(d, l, r) => write!(f, "  {} = add {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Sub(d, l, r) => write!(f, "  {} = sub {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Mul(d, l, r) => write!(f, "  {} = mul {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SDiv(d, l, r) => write!(f, "  {} = sdiv {}, {}{}", d, l, r, loc_str),
-            InstructionKind::UDiv(d, l, r) => write!(f, "  {} = udiv {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SRem(d, l, r) => write!(f, "  {} = srem {}, {}{}", d, l, r, loc_str),
-            InstructionKind::URem(d, l, r) => write!(f, "  {} = urem {}, {}{}", d, l, r, loc_str),
-
-            InstructionKind::And(d, l, r) => write!(f, "  {} = and {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Or(d, l, r) => write!(f, "  {} = or {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Xor(d, l, r) => write!(f, "  {} = xor {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Shl(d, l, r) => write!(f, "  {} = shl {}, {}{}", d, l, r, loc_str),
-            InstructionKind::LShr(d, l, r) => write!(f, "  {} = lshr {}, {}{}", d, l, r, loc_str),
-            InstructionKind::AShr(d, l, r) => write!(f, "  {} = ashr {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Not(d, s) => write!(f, "  {} = not {}{}", d, s, loc_str),
-
-            InstructionKind::FAdd(d, l, r) => write!(f, "  {} = fadd {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FSub(d, l, r) => write!(f, "  {} = fsub {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FMul(d, l, r) => write!(f, "  {} = fmul {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FDiv(d, l, r) => write!(f, "  {} = fdiv {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FSqrt(d, s) => write!(f, "  {} = sqrt {}{}", d, s, loc_str),
-            InstructionKind::FSin(d, s) => write!(f, "  {} = sin {}{}", d, s, loc_str),
-            InstructionKind::FCos(d, s) => write!(f, "  {} = cos {}{}", d, s, loc_str),
-            InstructionKind::FPow(d, b, e) => write!(f, "  {} = pow {}, {}{}", d, b, e, loc_str),
-
-            InstructionKind::Eq(d, l, r) => write!(f, "  {} = eq {}, {}{}", d, l, r, loc_str),
-            InstructionKind::Ne(d, l, r) => write!(f, "  {} = ne {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SLt(d, l, r) => write!(f, "  {} = slt {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SLe(d, l, r) => write!(f, "  {} = sle {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SGt(d, l, r) => write!(f, "  {} = sgt {}, {}{}", d, l, r, loc_str),
-            InstructionKind::SGe(d, l, r) => write!(f, "  {} = sge {}, {}{}", d, l, r, loc_str),
-            InstructionKind::ULt(d, l, r) => write!(f, "  {} = ult {}, {}{}", d, l, r, loc_str),
-            InstructionKind::ULe(d, l, r) => write!(f, "  {} = ule {}, {}{}", d, l, r, loc_str),
-            InstructionKind::UGt(d, l, r) => write!(f, "  {} = ugt {}, {}{}", d, l, r, loc_str),
-            InstructionKind::UGe(d, l, r) => write!(f, "  {} = uge {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FLt(d, l, r) => write!(f, "  {} = flt {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FLe(d, l, r) => write!(f, "  {} = fle {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FGt(d, l, r) => write!(f, "  {} = fgt {}, {}{}", d, l, r, loc_str),
-            InstructionKind::FGe(d, l, r) => write!(f, "  {} = fge {}, {}{}", d, l, r, loc_str),
-
-            InstructionKind::IToF(d, s, t) => write!(f, "  {} = itof {} to {}{}", d, s, t, loc_str),
-            InstructionKind::FToI(d, s, t) => write!(f, "  {} = ftoi {} to {}{}", d, s, t, loc_str),
-
-            InstructionKind::ConstInt(d, v) => write!(f, "  {} = const_int {}{}", d, v, loc_str),
-            InstructionKind::ConstFloat(d, v) => {
-                write!(f, "  {} = const_float {}{}", d, v, loc_str)
+            InstructionKind::Add(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = add {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
             }
-            InstructionKind::Jump(b) => write!(f, "  jump {}{}", b, loc_str),
-            InstructionKind::Branch(c, t, e) => write!(f, "  br {}, {}, {}{}", c, t, e, loc_str),
+            InstructionKind::Sub(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = sub {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::Mul(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = mul {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SDiv(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = sdiv {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::UDiv(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = udiv {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SRem(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = srem {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::URem(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = urem {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+
+            InstructionKind::And(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = and {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::Or(d, l, r) => {
+                write!(f, "  {} = or {}, {}{}{}", d, l, r, loc_str, constraints_str)
+            }
+            InstructionKind::Xor(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = xor {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::Shl(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = shl {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::LShr(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = lshr {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::AShr(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = ashr {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::Not(d, s) => {
+                write!(f, "  {} = not {}{}{}", d, s, loc_str, constraints_str)
+            }
+
+            InstructionKind::FAdd(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fadd {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FSub(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fsub {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FMul(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fmul {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FDiv(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fdiv {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FSqrt(d, s) => {
+                write!(f, "  {} = sqrt {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FSin(d, s) => {
+                write!(f, "  {} = sin {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FCos(d, s) => {
+                write!(f, "  {} = cos {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FPow(d, b, e) => {
+                write!(
+                    f,
+                    "  {} = pow {}, {}{}{}",
+                    d, b, e, loc_str, constraints_str
+                )
+            }
+
+            InstructionKind::Eq(d, l, r) => {
+                write!(f, "  {} = eq {}, {}{}{}", d, l, r, loc_str, constraints_str)
+            }
+            InstructionKind::Ne(d, l, r) => {
+                write!(f, "  {} = ne {}, {}{}{}", d, l, r, loc_str, constraints_str)
+            }
+            InstructionKind::SLt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = slt {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SLe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = sle {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SGt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = sgt {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SGe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = sge {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::ULt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = ult {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::ULe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = ule {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::UGt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = ugt {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::UGe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = uge {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FLt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = flt {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FLe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fle {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FGt(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fgt {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FGe(d, l, r) => {
+                write!(
+                    f,
+                    "  {} = fge {}, {}{}{}",
+                    d, l, r, loc_str, constraints_str
+                )
+            }
+
+            InstructionKind::IToF(d, s, t) => {
+                write!(
+                    f,
+                    "  {} = itof {} to {}{}{}",
+                    d, s, t, loc_str, constraints_str
+                )
+            }
+            InstructionKind::FToI(d, s, t) => {
+                write!(
+                    f,
+                    "  {} = ftoi {} to {}{}{}",
+                    d, s, t, loc_str, constraints_str
+                )
+            }
+
+            InstructionKind::ConstInt(d, v) => {
+                write!(f, "  {} = const_int {}{}{}", d, v, loc_str, constraints_str)
+            }
+            InstructionKind::ConstFloat(d, v) => {
+                write!(
+                    f,
+                    "  {} = const_float {}{}{}",
+                    d, v, loc_str, constraints_str
+                )
+            }
+            InstructionKind::Jump(b) => write!(f, "  jump {}{}{}", b, loc_str, constraints_str),
+            InstructionKind::Branch(c, t, e) => {
+                write!(f, "  br {}, {}, {}{}{}", c, t, e, loc_str, constraints_str)
+            }
             InstructionKind::Return(v) => match v {
-                Some(val) => write!(f, "  ret {}{}", val, loc_str),
-                None => write!(f, "  ret{}", loc_str),
+                Some(val) => write!(f, "  ret {}{}{}", val, loc_str, constraints_str),
+                None => write!(f, "  ret{}{}", loc_str, constraints_str),
             },
             InstructionKind::Phi(d, m) => {
                 let mappings: Vec<String> =
                     m.iter().map(|(b, v)| format!("{}: {}", b, v)).collect();
-                write!(f, "  {} = phi [{}]{}", d, mappings.join(", "), loc_str)
+                write!(
+                    f,
+                    "  {} = phi [{}]{}{}",
+                    d,
+                    mappings.join(", "),
+                    loc_str,
+                    constraints_str
+                )
             }
             InstructionKind::Call(d, func, args) => {
                 let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
-                    "  {} = call {}({}){}",
+                    "  {} = call {}({}){}{}",
                     d,
                     func,
                     args_str.join(", "),
-                    loc_str
+                    loc_str,
+                    constraints_str
                 )
             }
-            InstructionKind::Peek(d, s) => write!(f, "  {} = peek {}{}", d, s, loc_str),
-            InstructionKind::Hand(d, s) => write!(f, "  {} = hand {}{}", d, s, loc_str),
+            InstructionKind::Peek(d, s) => {
+                write!(f, "  {} = peek {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::Hand(d, s) => {
+                write!(f, "  {} = hand {}{}{}", d, s, loc_str, constraints_str)
+            }
             InstructionKind::ArrayLoad(d, arr, idx) => {
-                write!(f, "  {} = load {}[{}]{}", d, arr, idx, loc_str)
+                write!(
+                    f,
+                    "  {} = load {}[{}]{}{}",
+                    d, arr, idx, loc_str, constraints_str
+                )
             }
             InstructionKind::ArrayStore(d, arr, idx, val, ty) => {
                 write!(
                     f,
-                    "  {} = store {}[{}] <- {} (as {}){}",
-                    d, arr, idx, val, ty, loc_str
+                    "  {} = store {}[{}] <- {} (as {}){}{}",
+                    d, arr, idx, val, ty, loc_str, constraints_str
                 )
             }
             InstructionKind::BufferLoad(d, buf, idx) => {
-                write!(f, "  {} = bufload {}[{}]{}", d, buf, idx, loc_str)
+                write!(
+                    f,
+                    "  {} = bufload {}[{}]{}{}",
+                    d, buf, idx, loc_str, constraints_str
+                )
             }
             InstructionKind::BufferStore(d, buf, idx, val, ty) => {
                 write!(
                     f,
-                    "  {} = bufstore {}[{}] <- {} (as {}){}",
-                    d, buf, idx, val, ty, loc_str
+                    "  {} = bufstore {}[{}] <- {} (as {}){}{}",
+                    d, buf, idx, val, ty, loc_str, constraints_str
                 )
             }
             InstructionKind::BufferLen(d, buf) => {
-                write!(f, "  {} = buflen {}{}", d, buf, loc_str)
+                write!(f, "  {} = buflen {}{}{}", d, buf, loc_str, constraints_str)
             }
             InstructionKind::StructCreate(d, name, args) => {
                 let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
-                    "  {} = struct {} ({}){}",
+                    "  {} = struct {} ({}){}{}",
                     d,
                     name,
                     args_str.join(", "),
-                    loc_str
+                    loc_str,
+                    constraints_str
                 )
             }
             InstructionKind::StructLoad(d, obj, offset) => {
-                write!(f, "  {} = load {} + {}{}", d, obj, offset, loc_str)
+                write!(
+                    f,
+                    "  {} = load {} + {}{}{}",
+                    d, obj, offset, loc_str, constraints_str
+                )
             }
             InstructionKind::StructOffset(d, obj, offset) => {
-                write!(f, "  {} = offset {} + {}{}", d, obj, offset, loc_str)
+                write!(
+                    f,
+                    "  {} = offset {} + {}{}{}",
+                    d, obj, offset, loc_str, constraints_str
+                )
             }
             InstructionKind::StructSet(d, obj, offset, val, ty) => {
                 write!(
                     f,
-                    "  {} = set {} + {} <- {} (as {}){}",
-                    d, obj, offset, val, ty, loc_str
+                    "  {} = set {} + {} <- {} (as {}){}{}",
+                    d, obj, offset, val, ty, loc_str, constraints_str
                 )
             }
             InstructionKind::EnumCreate(d, name, tag_idx, payload) => {
                 if let Some(p) = payload {
-                    write!(f, "  {} = enum {}::{} ({}){}", d, name, tag_idx, p, loc_str)
+                    write!(
+                        f,
+                        "  {} = enum {}::{} ({}){}{}",
+                        d, name, tag_idx, p, loc_str, constraints_str
+                    )
                 } else {
-                    write!(f, "  {} = enum {}::{}{}", d, name, tag_idx, loc_str)
+                    write!(
+                        f,
+                        "  {} = enum {}::{}{}{}",
+                        d, name, tag_idx, loc_str, constraints_str
+                    )
                 }
             }
             InstructionKind::EnumIsVariant(d, e, tag_idx) => {
-                write!(f, "  {} = is_variant {} == {}{}", d, e, tag_idx, loc_str)
+                write!(
+                    f,
+                    "  {} = is_variant {} == {}{}{}",
+                    d, e, tag_idx, loc_str, constraints_str
+                )
             }
             InstructionKind::EnumExtract(d, e, tag_idx) => {
                 write!(
                     f,
-                    "  {} = extract_variant {} as {}{}",
-                    d, e, tag_idx, loc_str
+                    "  {} = extract_variant {} as {}{}{}",
+                    d, e, tag_idx, loc_str, constraints_str
                 )
             }
             InstructionKind::TupleCreate(d, elts) => {
                 let args_str: Vec<String> = elts.iter().map(|v| v.to_string()).collect();
-                write!(f, "  {} = tuple({}){}", d, args_str.join(", "), loc_str)
+                write!(
+                    f,
+                    "  {} = tuple({}){}{}",
+                    d,
+                    args_str.join(", "),
+                    loc_str,
+                    constraints_str
+                )
             }
             InstructionKind::TupleExtract(d, t, idx) => {
-                write!(f, "  {} = extract {}[{}] (tuple){}", d, t, idx, loc_str)
+                write!(
+                    f,
+                    "  {} = extract {}[{}] (tuple){}{}",
+                    d, t, idx, loc_str, constraints_str
+                )
             }
             InstructionKind::Lambda(d, name, captures) => {
                 let caps: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
-                    "  {} = lambda {}({}){}",
+                    "  {} = lambda {}({}){}{}",
                     d,
                     name,
                     caps.join(", "),
-                    loc_str
+                    loc_str,
+                    constraints_str
                 )
             }
             InstructionKind::IndirectCall(d, ptr, args) => {
                 let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
-                    "  {} = icall {}({}){}",
+                    "  {} = icall {}({}){}{}",
                     d,
                     ptr,
                     args_str.join(", "),
-                    loc_str
+                    loc_str,
+                    constraints_str
                 )
             }
-            InstructionKind::Nop => write!(f, "  nop{}", loc_str),
+            InstructionKind::Nop => write!(f, "  nop{}{}", loc_str, constraints_str),
         }
     }
 }
 
 impl Instruction {
     pub fn new(kind: InstructionKind, location: Option<SourceLocation>) -> Self {
-        Self { kind, location }
+        Self {
+            kind,
+            location,
+            constraints: Vec::new(),
+        }
+    }
+
+    pub fn with_constraints(mut self, constraints: Vec<String>) -> Self {
+        self.constraints = constraints;
+        self
+    }
+
+    pub fn add_constraint(&mut self, constraint: String) -> &mut Self {
+        self.constraints.push(constraint);
+        self
     }
 
     pub fn get_def(&self) -> Option<Value> {

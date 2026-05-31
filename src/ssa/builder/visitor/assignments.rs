@@ -48,6 +48,7 @@ impl CFGBuilder {
                         ));
                     }
                 }
+
                 if let ast::Expr::Name(name) = &*sub.value {
                     self.write_variable(name.id.to_string(), self.current_block, dest_arr);
                 }

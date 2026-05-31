@@ -304,8 +304,37 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                 | InstructionKind::Return(..)
                 | InstructionKind::Nop => {}
             }
+
+            // Translate logical constraints attached to the instruction
+            translate_constraints(t_ctx, inst, &path_cond)?;
         }
     }
+    Ok(())
+}
+
+fn translate_constraints(
+    t_ctx: &mut TranslationContext,
+    inst: &crate::ssa::ir::Instruction,
+    path_cond: &Bool,
+) -> Result<(), String> {
+    use crate::verification::refinement_parser::{parse_bool_expr_with_resolver, Resolver};
+
+    if inst.constraints.is_empty() {
+        return Ok(());
+    }
+
+    let resolver = Resolver {
+        ints: &t_ctx.z3_ints,
+        floats: &t_ctx.z3_floats,
+        bvs: &t_ctx.z3_bvs,
+        arrays: &t_ctx.z3_arrays,
+    };
+
+    for constraint in &inst.constraints {
+        let z3_constraint = parse_bool_expr_with_resolver(constraint, &resolver)?;
+        t_ctx.solver.assert(&path_cond.implies(&z3_constraint));
+    }
+
     Ok(())
 }
 

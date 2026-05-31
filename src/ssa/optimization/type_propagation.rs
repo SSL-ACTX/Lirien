@@ -29,10 +29,32 @@ pub fn propagate_types(func: &mut Function) {
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
-                            if l_ty != Type::Unknown {
-                                new_types.insert(*d, l_ty);
-                            } else if r_ty != Type::Unknown {
-                                new_types.insert(*d, r_ty);
+                            let base_ty = if l_ty != Type::Unknown { l_ty } else { r_ty };
+                            if base_ty != Type::Unknown {
+                                let inner_ty = match base_ty {
+                                    Type::Refined(inner, _) => *inner,
+                                    other => other,
+                                };
+                                let op_str = match &inst.kind {
+                                    InstructionKind::Add(_, _, _) => "+",
+                                    InstructionKind::Sub(_, _, _) => "-",
+                                    InstructionKind::Mul(_, _, _) => "*",
+                                    InstructionKind::SDiv(_, _, _)
+                                    | InstructionKind::UDiv(_, _, _) => "/",
+                                    InstructionKind::SRem(_, _, _)
+                                    | InstructionKind::URem(_, _, _) => "%",
+                                    InstructionKind::And(_, _, _) => "&",
+                                    InstructionKind::Or(_, _, _) => "|",
+                                    InstructionKind::Xor(_, _, _) => "^",
+                                    _ => "",
+                                };
+                                if !op_str.is_empty() {
+                                    let constraint = format!("(= {{v}} ({} {} {}))", op_str, l, r);
+                                    new_types
+                                        .insert(*d, Type::Refined(Box::new(inner_ty), constraint));
+                                } else {
+                                    new_types.insert(*d, inner_ty);
+                                }
                             }
                         }
                     }
@@ -79,10 +101,45 @@ pub fn propagate_types(func: &mut Function) {
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
+                            let mut base_ty = Type::Unknown;
                             if l_ty == Type::F64 || r_ty == Type::F64 {
-                                new_types.insert(*d, Type::F64);
+                                base_ty = Type::F64;
                             } else if l_ty == Type::F32 || r_ty == Type::F32 {
-                                new_types.insert(*d, Type::F32);
+                                base_ty = Type::F32;
+                            } else {
+                                if let Type::Refined(inner, _) = &l_ty {
+                                    if **inner == Type::F64 {
+                                        base_ty = Type::F64;
+                                    } else if **inner == Type::F32 {
+                                        base_ty = Type::F32;
+                                    }
+                                }
+                                if base_ty == Type::Unknown {
+                                    if let Type::Refined(inner, _) = &r_ty {
+                                        if **inner == Type::F64 {
+                                            base_ty = Type::F64;
+                                        } else if **inner == Type::F32 {
+                                            base_ty = Type::F32;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if base_ty != Type::Unknown {
+                                let op_str = match &inst.kind {
+                                    InstructionKind::FAdd(_, _, _) => "+",
+                                    InstructionKind::FSub(_, _, _) => "-",
+                                    InstructionKind::FMul(_, _, _) => "*",
+                                    InstructionKind::FDiv(_, _, _) => "/",
+                                    _ => "",
+                                };
+                                if !op_str.is_empty() {
+                                    let constraint = format!("(= {{v}} ({} {} {}))", op_str, l, r);
+                                    new_types
+                                        .insert(*d, Type::Refined(Box::new(base_ty), constraint));
+                                } else {
+                                    new_types.insert(*d, base_ty);
+                                }
                             }
                         }
                     }
@@ -91,8 +148,12 @@ pub fn propagate_types(func: &mut Function) {
                         if current_ty == Type::Unknown {
                             for val in mappings.values() {
                                 let ty = func.get_type(*val);
-                                if ty != Type::Unknown {
-                                    new_types.insert(*d, ty);
+                                let base_ty = match ty {
+                                    Type::Refined(inner, _) => *inner,
+                                    other => other,
+                                };
+                                if base_ty != Type::Unknown {
+                                    new_types.insert(*d, base_ty);
                                     break;
                                 }
                             }
@@ -263,7 +324,10 @@ mod tests {
         propagate_types(&mut func);
 
         assert_eq!(func.get_type(v1), Type::F64);
-        assert_eq!(func.get_type(v2), Type::F64);
+        assert_eq!(
+            func.get_type(v2),
+            Type::Refined(Box::new(Type::F64), "(= {v} (+ v1 v0))".to_string())
+        );
 
         let b1_ref = func.blocks.iter().find(|b| b.id == b1_id).unwrap();
         match &b1_ref.instructions[1].kind {

@@ -39,9 +39,11 @@ impl CFGBuilder {
                 let zero = self.func.next_value();
                 match self.func.return_type {
                     Type::F32 | Type::F64 => {
-                        self.add_instruction(InstructionKind::ConstFloat(zero, 0.0))
+                        self.add_instruction(InstructionKind::ConstFloat(zero, 0.0));
                     }
-                    _ => self.add_instruction(InstructionKind::ConstInt(zero, 0)),
+                    _ => {
+                        self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                    }
                 }
                 Some(zero)
             } else {
@@ -108,6 +110,8 @@ impl CFGBuilder {
                 self.seal_block(false_block)?;
 
                 self.start_block(true_block);
+                self.add_instruction(InstructionKind::Nop)
+                    .add_constraint(format!("(= {} true)", cond));
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
@@ -117,6 +121,8 @@ impl CFGBuilder {
                 }
 
                 self.start_block(false_block);
+                self.add_instruction(InstructionKind::Nop)
+                    .add_constraint(format!("(= {} false)", cond));
                 for stmt in s.orelse {
                     self.visit_stmt(stmt)?;
                 }
@@ -148,6 +154,8 @@ impl CFGBuilder {
 
                 self.seal_block(body_block)?;
                 self.start_block(body_block);
+                self.add_instruction(InstructionKind::Nop)
+                    .add_constraint(format!("(= {} true)", cond));
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
@@ -159,6 +167,8 @@ impl CFGBuilder {
                 self.loop_stack.pop();
                 self.seal_block(header_block)?;
                 self.start_block(exit_block);
+                self.add_instruction(InstructionKind::Nop)
+                    .add_constraint(format!("(= {} false)", cond));
                 self.seal_block(exit_block)?;
                 Ok(())
             }

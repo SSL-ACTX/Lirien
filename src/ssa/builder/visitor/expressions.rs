@@ -15,7 +15,23 @@ impl CFGBuilder {
                 self.update_location(expr_offset);
                 let dest = self.func.next_value();
                 let kind = self.build_binop(s.op, lhs, rhs, dest)?;
-                self.add_instruction(kind);
+                let op_str = match s.op {
+                    ast::Operator::Add => "+",
+                    ast::Operator::Sub => "-",
+                    ast::Operator::Mult => "*",
+                    ast::Operator::Div => "/",
+                    ast::Operator::Mod => "%",
+                    ast::Operator::BitAnd => "&",
+                    ast::Operator::BitOr => "|",
+                    ast::Operator::BitXor => "^",
+                    ast::Operator::LShift => "<<",
+                    ast::Operator::RShift => ">>",
+                    _ => "",
+                };
+                let inst = self.add_instruction(kind);
+                if !op_str.is_empty() {
+                    inst.add_constraint(format!("(= {} ({} {} {}))", dest, op_str, lhs, rhs));
+                }
                 Ok(dest)
             }
             ast::Expr::BoolOp(s) => {
@@ -68,17 +84,22 @@ impl CFGBuilder {
             ast::Expr::UnaryOp(s) => {
                 let operand = self.visit_expr(*s.operand)?;
                 let dest = self.func.next_value();
-                let kind = match s.op {
-                    ast::UnaryOp::Not => InstructionKind::Not(dest, operand),
-                    ast::UnaryOp::Invert => InstructionKind::Not(dest, operand),
+                let (kind, op_str) = match s.op {
+                    ast::UnaryOp::Not => (InstructionKind::Not(dest, operand), "not"),
+                    ast::UnaryOp::Invert => (InstructionKind::Not(dest, operand), "~"),
                     ast::UnaryOp::USub => {
                         let zero = self.func.next_value();
                         self.add_instruction(InstructionKind::ConstInt(zero, 0));
-                        InstructionKind::Sub(dest, zero, operand)
+                        (InstructionKind::Sub(dest, zero, operand), "-")
                     }
                     ast::UnaryOp::UAdd => return Ok(operand),
                 };
-                self.add_instruction(kind);
+                let inst = self.add_instruction(kind);
+                if op_str == "-" {
+                    inst.add_constraint(format!("(= {} (- 0 {}))", dest, operand));
+                } else if !op_str.is_empty() {
+                    inst.add_constraint(format!("(= {} ({} {}))", dest, op_str, operand));
+                }
                 Ok(dest)
             }
             ast::Expr::Compare(s) => {
@@ -95,35 +116,35 @@ impl CFGBuilder {
                 let is_float =
                     matches!(l_ty, Type::F32 | Type::F64) || matches!(r_ty, Type::F32 | Type::F64);
 
-                let kind = match s.ops[0] {
-                    ast::CmpOp::Eq => InstructionKind::Eq(dest, lhs, rhs),
-                    ast::CmpOp::NotEq => InstructionKind::Ne(dest, lhs, rhs),
+                let (kind, op_str) = match s.ops[0] {
+                    ast::CmpOp::Eq => (InstructionKind::Eq(dest, lhs, rhs), "="),
+                    ast::CmpOp::NotEq => (InstructionKind::Ne(dest, lhs, rhs), "!="),
                     ast::CmpOp::Lt => {
                         if is_float {
-                            InstructionKind::FLt(dest, lhs, rhs)
+                            (InstructionKind::FLt(dest, lhs, rhs), "<")
                         } else {
-                            InstructionKind::SLt(dest, lhs, rhs)
+                            (InstructionKind::SLt(dest, lhs, rhs), "<")
                         }
                     }
                     ast::CmpOp::LtE => {
                         if is_float {
-                            InstructionKind::FLe(dest, lhs, rhs)
+                            (InstructionKind::FLe(dest, lhs, rhs), "<=")
                         } else {
-                            InstructionKind::SLe(dest, lhs, rhs)
+                            (InstructionKind::SLe(dest, lhs, rhs), "<=")
                         }
                     }
                     ast::CmpOp::Gt => {
                         if is_float {
-                            InstructionKind::FGt(dest, lhs, rhs)
+                            (InstructionKind::FGt(dest, lhs, rhs), ">")
                         } else {
-                            InstructionKind::SGt(dest, lhs, rhs)
+                            (InstructionKind::SGt(dest, lhs, rhs), ">")
                         }
                     }
                     ast::CmpOp::GtE => {
                         if is_float {
-                            InstructionKind::FGe(dest, lhs, rhs)
+                            (InstructionKind::FGe(dest, lhs, rhs), ">=")
                         } else {
-                            InstructionKind::SGe(dest, lhs, rhs)
+                            (InstructionKind::SGe(dest, lhs, rhs), ">=")
                         }
                     }
                     _ => {
@@ -135,7 +156,8 @@ impl CFGBuilder {
                 };
 
                 self.func.set_type(dest, Type::Bool);
-                self.add_instruction(kind);
+                let inst = self.add_instruction(kind);
+                inst.add_constraint(format!("(= {} ({} {} {}))", dest, op_str, lhs, rhs));
                 Ok(dest)
             }
             ast::Expr::Constant(c) => {
@@ -143,15 +165,19 @@ impl CFGBuilder {
                 match c.value {
                     ast::Constant::Int(i) => {
                         let int_val = i.to_string().parse::<i64>().map_err(|_| "Int too large")?;
-                        self.add_instruction(InstructionKind::ConstInt(val, int_val));
+                        let inst = self.add_instruction(InstructionKind::ConstInt(val, int_val));
+                        inst.add_constraint(format!("(= {} {})", val, int_val));
                         self.func.set_type(val, Type::I64);
                     }
                     ast::Constant::Float(f) => {
-                        self.add_instruction(InstructionKind::ConstFloat(val, f));
+                        let inst = self.add_instruction(InstructionKind::ConstFloat(val, f));
+                        inst.add_constraint(format!("(= {} {})", val, f));
                         self.func.set_type(val, Type::F64);
                     }
                     ast::Constant::Bool(b) => {
-                        self.add_instruction(InstructionKind::ConstInt(val, if b { 1 } else { 0 }));
+                        let inst = self
+                            .add_instruction(InstructionKind::ConstInt(val, if b { 1 } else { 0 }));
+                        inst.add_constraint(format!("(= {} {})", val, b));
                         self.func.set_type(val, Type::Bool);
                     }
                     _ => return Err("Unsupported constant type".to_string()),
