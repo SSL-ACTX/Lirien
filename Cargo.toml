@@ -2,6 +2,14 @@
 name = "lila"
 version = "0.1.0"
 edition = "2021"
+authors = ["Seuriin <seuriin@gmail.com>"]
+description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift"
+repository = "https://github.com/SSL-ACTX/Lila"
+homepage = "https://github.com/SSL-ACTX/Lila"
+documentation = "https://github.com/SSL-ACTX/Lila"
+readme = "README.md"
+keywords = ["compiler", "verification", "jit", "python", "z3"]
+categories = ["compilers", "development-tools"]
 license = "AGPL-3.0-only"
 
 [lib]

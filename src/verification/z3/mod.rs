@@ -111,19 +111,63 @@ pub fn verify_with_context(
     // 1. Initialize Z3 values for all SSA values
     memory::init_values(&mut t_ctx)?;
 
-    // 2. Initialize Permission Variables for Fractional Permission Model
-    for i in 0..func.value_count {
-        let v = Value(i);
-        let ty = func.get_type(v);
-        if ty.is_pointer_like() {
-            let p_var = z3::ast::Real::new_const(format!("{}_perm_v{}_{}", func.name, i, uid));
-            t_ctx.z3_perms.insert(v, p_var);
+    init_permissions(&mut t_ctx);
+
+    assert_cfg_constraints(&mut t_ctx, solver);
+
+    translate_instructions(&mut t_ctx)?;
+
+    assert_derived_intervals(&t_ctx, solver);
+
+    // 7. Generate Fractional Permission Assertions (Must be AFTER path constraints and instructions are translated)
+    perm_verifier.generate_assertions(
+        solver,
+        &liveness,
+        &t_ctx.z3_perms,
+        &t_ctx.block_conditions,
+    )?;
+
+    verify_return_refinements(&t_ctx, solver)?;
+
+    verify_call_arguments(&t_ctx, solver)?;
+
+    // 11. Final Consistency Check
+    if !t_ctx.has_refinements && t_ctx.z3_perms.is_empty() {
+        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements or pointers).", func.name);
+    } else {
+        tracing::info!(target: "lila::verify::z3", "Performing final consistency check for '{}'...", func.name);
+        if solver.check() == z3::SatResult::Unsat {
+            return Err(
+                "Formal verification failed: Logical contradiction or permission conflict detected."
+                    .to_string(),
+            );
         }
     }
 
+    tracing::info!(target: "lila::verify::z3", "Proof successful for '{}'", func.name);
+    Ok(())
+}
+
+fn init_permissions(t_ctx: &mut TranslationContext) {
+    // 2. Initialize Permission Variables for Fractional Permission Model
+    for i in 0..t_ctx.func.value_count {
+        let v = Value(i);
+        let ty = t_ctx.func.get_type(v);
+        if ty.is_pointer_like() {
+            let p_var =
+                z3::ast::Real::new_const(format!("{}_perm_v{}_{}", t_ctx.func.name, i, t_ctx.uid));
+            t_ctx.z3_perms.insert(v, p_var);
+        }
+    }
+}
+
+fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
     // 3. Declare Booleans for all blocks and known edges
-    for block in &func.blocks {
-        let b_cond = Bool::new_const(format!("{}_block_{}_{}", func.name, block.id.0, uid));
+    for block in &t_ctx.func.blocks {
+        let b_cond = Bool::new_const(format!(
+            "{}_block_{}_{}",
+            t_ctx.func.name, block.id.0, t_ctx.uid
+        ));
         t_ctx.block_conditions.insert(block.id, b_cond);
 
         if let Some(last_inst) = block.instructions.last() {
@@ -131,19 +175,19 @@ pub fn verify_with_context(
                 InstructionKind::Jump(target) => {
                     let e_cond = Bool::new_const(format!(
                         "{}_edge_{}_{}_{}",
-                        func.name, block.id.0, target.0, uid
+                        t_ctx.func.name, block.id.0, target.0, t_ctx.uid
                     ));
                     t_ctx.edge_conditions.insert((block.id, *target), e_cond);
                 }
                 InstructionKind::Branch(_, t_block, f_block) => {
                     let et_cond = Bool::new_const(format!(
                         "{}_edge_{}_{}_{}",
-                        func.name, block.id.0, t_block.0, uid
+                        t_ctx.func.name, block.id.0, t_block.0, t_ctx.uid
                     ));
                     t_ctx.edge_conditions.insert((block.id, *t_block), et_cond);
                     let ef_cond = Bool::new_const(format!(
                         "{}_edge_{}_{}_{}",
-                        func.name, block.id.0, f_block.0, uid
+                        t_ctx.func.name, block.id.0, f_block.0, t_ctx.uid
                     ));
                     t_ctx.edge_conditions.insert((block.id, *f_block), ef_cond);
                 }
@@ -155,12 +199,12 @@ pub fn verify_with_context(
     // 4. Assert Structural CFG Constraints
     let true_cond = Bool::from_bool(true);
     let false_cond = Bool::from_bool(false);
-    if let Some(entry_cond) = t_ctx.block_conditions.get(&func.entry_block) {
+    if let Some(entry_cond) = t_ctx.block_conditions.get(&t_ctx.func.entry_block) {
         solver.assert(entry_cond.eq(&true_cond));
     }
-    for block in &func.blocks {
+    for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
-        if block.id != func.entry_block {
+        if block.id != t_ctx.func.entry_block {
             let mut incoming_edges = Vec::new();
             for (edge_src, edge_dst) in t_ctx.edge_conditions.keys() {
                 if *edge_dst == block.id {
@@ -176,10 +220,12 @@ pub fn verify_with_context(
             }
         }
     }
+}
 
+fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> {
     // 5. Translate Instructions (Arithmetic, Memory, Control Flow)
-    tracing::info!(target: "lila::verify::z3", "Translating instructions for '{}'...", func.name);
-    for block in &func.blocks {
+    tracing::info!(target: "lila::verify::z3", "Translating instructions for '{}'...", t_ctx.func.name);
+    for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
         for inst in &block.instructions {
             match &inst.kind {
@@ -223,12 +269,12 @@ pub fn verify_with_context(
                 | InstructionKind::IToF(..)
                 | InstructionKind::FToI(..)
                 | InstructionKind::Not(..) => {
-                    arithmetic::translate(&mut t_ctx, inst, &path_cond)?;
+                    arithmetic::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::Jump(_)
                 | InstructionKind::Branch(..)
                 | InstructionKind::Phi(..) => {
-                    control_flow::translate(&mut t_ctx, inst, &path_cond, block.id)?;
+                    control_flow::translate(t_ctx, inst, &path_cond, block.id)?;
                 }
                 InstructionKind::ArrayLoad(..)
                 | InstructionKind::ArrayStore(..)
@@ -244,10 +290,10 @@ pub fn verify_with_context(
                 | InstructionKind::EnumExtract(..)
                 | InstructionKind::Peek(..)
                 | InstructionKind::Hand(..) => {
-                    memory::translate(&mut t_ctx, inst, &path_cond)?;
+                    memory::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
-                    tuples::translate(&mut t_ctx, inst, &path_cond)?;
+                    tuples::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
@@ -257,9 +303,12 @@ pub fn verify_with_context(
             }
         }
     }
+    Ok(())
+}
 
+fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
     // 6. Assert derived intervals and refinements
-    for (val, interval) in &analysis.intervals {
+    for (val, interval) in &t_ctx.analysis.intervals {
         if let Some(ty) = t_ctx.func.value_types.get(val) {
             if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
                 if let Some(bit_width) = ty.int_bit_width() {
@@ -301,7 +350,7 @@ pub fn verify_with_context(
             }
         }
     }
-    for ((val, b_id), interval) in &analysis.block_narrowing {
+    for ((val, b_id), interval) in &t_ctx.analysis.block_narrowing {
         if let Some(path_cond) = t_ctx.block_conditions.get(b_id) {
             if let Some(ty) = t_ctx.func.value_types.get(val) {
                 if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
@@ -345,22 +394,16 @@ pub fn verify_with_context(
             }
         }
     }
+}
 
-    // 7. Generate Fractional Permission Assertions (Must be AFTER path constraints and instructions are translated)
-    perm_verifier.generate_assertions(
-        solver,
-        &liveness,
-        &t_ctx.z3_perms,
-        &t_ctx.block_conditions,
-    )?;
-
+fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Result<(), String> {
     // 8. Verify Return Refinements
-    if let Some(ret_ref) = &func.ret_refinement {
-        for block in &func.blocks {
+    if let Some(ret_ref) = &t_ctx.func.ret_refinement {
+        for block in &t_ctx.func.blocks {
             let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
             for inst in &block.instructions {
                 if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
-                    let ty = func.get_type(*ret_val);
+                    let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         crate::verification::refinement_parser::parse_refinement(
                             ret_ref,
@@ -400,8 +443,12 @@ pub fn verify_with_context(
         }
     }
 
+    Ok(())
+}
+
+fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<(), String> {
     // 10. Verify Call Arguments
-    for block in &func.blocks {
+    for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
         for inst in &block.instructions {
             if let InstructionKind::Call(_, target_name, args) = &inst.kind {
@@ -409,7 +456,7 @@ pub fn verify_with_context(
                 if let Some(sig) = registry.get(target_name) {
                     for (i, arg_val) in args.iter().enumerate() {
                         if let Some(ref_str) = sig.arg_refinements.get(&i) {
-                            let arg_ty = func.get_type(*arg_val);
+                            let arg_ty = t_ctx.func.get_type(*arg_val);
                             let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(arg_val) {
                                 crate::verification::refinement_parser::parse_refinement(
                                     ref_str,
@@ -451,19 +498,5 @@ pub fn verify_with_context(
         }
     }
 
-    // 11. Final Consistency Check
-    if !t_ctx.has_refinements && t_ctx.z3_perms.is_empty() {
-        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements or pointers).", func.name);
-    } else {
-        tracing::info!(target: "lila::verify::z3", "Performing final consistency check for '{}'...", func.name);
-        if solver.check() == z3::SatResult::Unsat {
-            return Err(
-                "Formal verification failed: Logical contradiction or permission conflict detected."
-                    .to_string(),
-            );
-        }
-    }
-
-    tracing::info!(target: "lila::verify::z3", "Proof successful for '{}'", func.name);
     Ok(())
 }

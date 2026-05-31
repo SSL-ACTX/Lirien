@@ -6,11 +6,30 @@ build-backend = "maturin"
 name = "lila"
 version = "0.1.0"
 description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift"
+authors = [{name = "Seuriin", email = "seuriin@gmail.com"}]
+maintainers = [{name = "Seuriin", email = "seuriin@gmail.com"}]
+readme = "README.md"
 requires-python = ">=3.8"
-license = "AGPL-3.0"
+license = {text = "AGPL-3.0"}
+keywords = ["compiler", "verification", "jit", "python", "z3", "cranelift"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Compilers",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "typing_extensions; python_version < '3.9'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/SSL-ACTX/Lila"
+Repository = "https://github.com/SSL-ACTX/Lila"
+Documentation = "https://github.com/SSL-ACTX/Lila"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

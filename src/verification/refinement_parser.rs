@@ -1,4 +1,5 @@
 use std::ops::Neg;
+#[allow(unused)]
 use z3::ast::{Array, Ast, Bool, Float, Int, Real, RoundingMode, BV};
 
 pub fn parse_refinement(refinement: &str, v: &Int, v_bv: Option<&BV>) -> Result<Bool, String> {
