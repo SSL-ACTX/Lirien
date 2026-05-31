@@ -272,6 +272,52 @@ impl Type {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Value(pub usize);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PathElement {
+    Field(usize),
+    Index(Value),
+}
+
+impl fmt::Display for PathElement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PathElement::Field(i) => write!(f, ".{}", i),
+            PathElement::Index(v) => write!(f, "[{}]", v),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct AccessPath(pub Vec<PathElement>);
+
+impl fmt::Display for AccessPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for el in &self.0 {
+            write!(f, "{}", el)?;
+        }
+        Ok(())
+    }
+}
+
+impl AccessPath {
+    pub fn extend(&self, el: PathElement) -> Self {
+        let mut new_path = self.0.clone();
+        new_path.push(el);
+        AccessPath(new_path)
+    }
+
+    pub fn is_prefix_of(&self, other: &AccessPath) -> bool {
+        if self.0.len() > other.0.len() {
+            return false;
+        }
+        self.0.iter().zip(other.0.iter()).all(|(a, b)| a == b)
+    }
+
+    pub fn overlaps(&self, other: &AccessPath) -> bool {
+        self.is_prefix_of(other) || other.is_prefix_of(self)
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v{}", self.0)

@@ -87,7 +87,8 @@ impl CFGBuilder {
             }
             ast::Stmt::Return(s) => {
                 let val = if let Some(expr) = s.value {
-                    Some(self.visit_expr(*expr)?)
+                    let v = self.visit_expr(*expr)?;
+                    Some(self.auto_load(v))
                 } else {
                     None
                 };

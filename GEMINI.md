@@ -35,6 +35,7 @@ The Python-side DSL must feel like native Python, hiding all low-level C-ABI det
 
 ### 3.1 Verification Workflow
 *   **Rust First:** Always run `cargo check` and `cargo test` **before** running `maturin develop`. Never attempt to build the Python module if the Rust core is in an inconsistent or failing state.
+*   **Maturin Reflection:** AFTER changes to the Rust core are verified, you MUST run `maturin develop` to reflect these changes in the Python environment. It won't magically reflect. Gemini AI is dumb as hell so it has to be taught like a damn kid—never forget this step.
 
 ### 3.2 Centralized Diagnostics
 *   Do not use `println!` or `eprintln!`.

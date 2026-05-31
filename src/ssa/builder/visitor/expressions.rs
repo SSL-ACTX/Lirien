@@ -10,8 +10,10 @@ impl CFGBuilder {
 
         match expr {
             ast::Expr::BinOp(s) => {
-                let lhs = self.visit_expr(*s.left)?;
-                let rhs = self.visit_expr(*s.right)?;
+                let mut lhs = self.visit_expr(*s.left)?;
+                let mut rhs = self.visit_expr(*s.right)?;
+                lhs = self.auto_load(lhs);
+                rhs = self.auto_load(rhs);
                 self.update_location(expr_offset);
                 let dest = self.func.next_value();
                 let kind = self.build_binop(s.op, lhs, rhs, dest)?;
@@ -42,6 +44,7 @@ impl CFGBuilder {
                 let merge_block = self.create_block();
                 let result_var = "bool_op_tmp".to_string();
                 let mut last_val = self.visit_expr(s.values[0].clone())?;
+                last_val = self.auto_load(last_val);
 
                 for i in 1..s.values.len() {
                     let next_block = self.create_block();
@@ -71,6 +74,7 @@ impl CFGBuilder {
                     self.seal_block(next_block)?;
                     self.start_block(next_block);
                     last_val = self.visit_expr(s.values[i].clone())?;
+                    last_val = self.auto_load(last_val);
                 }
 
                 self.write_variable(result_var.clone(), self.current_block, last_val);
@@ -82,7 +86,8 @@ impl CFGBuilder {
                 self.read_variable(result_var, merge_block)
             }
             ast::Expr::UnaryOp(s) => {
-                let operand = self.visit_expr(*s.operand)?;
+                let mut operand = self.visit_expr(*s.operand)?;
+                operand = self.auto_load(operand);
                 let dest = self.func.next_value();
                 let (kind, op_str) = match s.op {
                     ast::UnaryOp::Not => (InstructionKind::Not(dest, operand), "not"),
@@ -106,8 +111,10 @@ impl CFGBuilder {
                 if s.ops.len() != 1 || s.comparators.len() != 1 {
                     return Err("Complex comparisons not supported yet".to_string());
                 }
-                let lhs = self.visit_expr(*s.left)?;
-                let rhs = self.visit_expr(s.comparators[0].clone())?;
+                let mut lhs = self.visit_expr(*s.left)?;
+                let mut rhs = self.visit_expr(s.comparators[0].clone())?;
+                lhs = self.auto_load(lhs);
+                rhs = self.auto_load(rhs);
                 self.update_location(expr_offset);
                 let dest = self.func.next_value();
 
@@ -187,7 +194,8 @@ impl CFGBuilder {
             ast::Expr::Name(n) => self.read_variable(n.id.to_string(), self.current_block),
             ast::Expr::Attribute(s) => {
                 let obj = self.visit_expr(*s.value.clone())?;
-                let mut curr_ty = self.func.get_type(obj);
+                let orig_ty = self.func.get_type(obj);
+                let mut curr_ty = orig_ty.clone();
 
                 // Handle .val unwrap for Refined types (no-op in IR)
                 if s.attr.as_str() == "val" {
@@ -200,8 +208,10 @@ impl CFGBuilder {
                     }
                 }
 
+                let mut is_ptr = false;
                 while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
                     curr_ty = *inner;
+                    is_ptr = true;
                 }
 
                 if let Type::Struct(struct_name) = curr_ty {
@@ -212,7 +222,7 @@ impl CFGBuilder {
                         })?;
 
                     let fields = self.func.struct_layouts.get(&struct_name).unwrap();
-                    let field_ty = fields
+                    let mut field_ty = fields
                         .iter()
                         .find(|(f, _)| f == s.attr.as_str())
                         .unwrap()
@@ -228,7 +238,21 @@ impl CFGBuilder {
 
                     let dest = self.func.next_value();
                     self.update_location(expr_offset);
-                    if field_ty.is_composite() {
+
+                    if is_ptr {
+                        // If parent is a pointer, field access returns a pointer to the field
+                        field_ty = match orig_ty {
+                            Type::Hand(_) => Type::Hand(Box::new(field_ty)),
+                            Type::Peek(_) => Type::Peek(Box::new(field_ty)),
+                            Type::Held(_) => Type::Held(Box::new(field_ty)),
+                            _ => field_ty, // Should not happen given is_ptr
+                        };
+                        self.add_instruction(InstructionKind::StructOffset(
+                            dest,
+                            obj,
+                            field_offset,
+                        ));
+                    } else if field_ty.is_composite() {
                         self.add_instruction(InstructionKind::StructOffset(
                             dest,
                             obj,
@@ -237,6 +261,7 @@ impl CFGBuilder {
                     } else {
                         self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
                     }
+
                     self.func.set_type(dest, field_ty);
                     Ok(dest)
                 } else {
@@ -249,7 +274,8 @@ impl CFGBuilder {
             }
             ast::Expr::Subscript(s) => {
                 let arr = self.visit_expr(*s.value)?;
-                let idx = self.visit_expr(*s.slice)?;
+                let mut idx = self.visit_expr(*s.slice)?;
+                idx = self.auto_load(idx);
                 let dest = self.func.next_value();
                 match self.func.get_type(arr) {
                     Type::Buffer(inner) => {
@@ -382,20 +408,36 @@ impl CFGBuilder {
                     };
                     let fn_ty = self.func.get_type(fn_val);
 
+                    let (arg_types, ret_ty) = match fn_ty {
+                        Type::Closure(_, params, ret) | Type::FnPointer(params, ret) => {
+                            (params, *ret)
+                        }
+                        _ => (Vec::new(), Type::Unknown),
+                    };
+
                     let mut args = Vec::new();
-                    for arg in s.args {
-                        args.push(self.visit_expr(arg)?);
+                    for (i, arg) in s.args.into_iter().enumerate() {
+                        let mut v = self.visit_expr(arg)?;
+                        if i < arg_types.len() {
+                            let expected_ty = &arg_types[i];
+                            if expected_ty.is_int()
+                                || expected_ty.is_float()
+                                || *expected_ty == Type::Bool
+                            {
+                                v = self.auto_load(v);
+                            }
+                        } else {
+                            let ty = self.func.get_type(v);
+                            if !matches!(ty, Type::Held(_)) {
+                                v = self.auto_load(v);
+                            }
+                        }
+                        args.push(v);
                     }
 
                     let dest = self.func.next_value();
                     self.update_location(expr_offset);
                     self.add_instruction(InstructionKind::IndirectCall(dest, fn_val, args));
-
-                    let ret_ty = if let Type::Closure(_, _, ret) | Type::FnPointer(_, ret) = fn_ty {
-                        *ret
-                    } else {
-                        Type::Unknown
-                    };
                     self.func.set_type(dest, ret_ty);
                     return Ok(dest);
                 }
@@ -595,27 +637,52 @@ impl CFGBuilder {
                     return Ok(dest);
                 }
 
+                // Look up return type and arg types in registry or self
+                let mut ret_ty = Type::Unknown;
+                let mut arg_types = Vec::new();
+                if func_name == self.func.name {
+                    ret_ty = self.func.return_type.clone();
+                    for i in 0..self.func.arg_count {
+                        arg_types.push(self.func.get_type(Value(i)));
+                    }
+                } else if let Ok(registry) = crate::bridge::registry::GLOBAL_REGISTRY.lock() {
+                    if let Some(sig) = registry.get(&func_name) {
+                        ret_ty = sig.return_type.clone();
+                        arg_types = sig.arg_types.clone();
+                    }
+                }
+
                 let mut args = Vec::new();
+                let mut arg_idx = 0;
                 if let Some(obj) = method_obj {
                     args.push(obj);
+                    arg_idx += 1;
                 }
                 for arg in s.args {
-                    args.push(self.visit_expr(arg)?);
+                    let mut v = self.visit_expr(arg)?;
+                    if arg_idx < arg_types.len() {
+                        let expected_ty = &arg_types[arg_idx];
+                        // Only auto-load if the function expects a primitive value
+                        if expected_ty.is_int()
+                            || expected_ty.is_float()
+                            || *expected_ty == Type::Bool
+                        {
+                            v = self.auto_load(v);
+                        }
+                    } else {
+                        // If signature unknown, only auto-load if it's not Held (to preserve moves)
+                        let ty = self.func.get_type(v);
+                        if !matches!(ty, Type::Held(_)) {
+                            v = self.auto_load(v);
+                        }
+                    }
+                    args.push(v);
+                    arg_idx += 1;
                 }
 
                 let dest = self.func.next_value();
                 self.update_location(expr_offset);
                 self.add_instruction(InstructionKind::Call(dest, func_name.clone(), args));
-
-                // Look up return type in registry or self
-                let mut ret_ty = Type::Unknown;
-                if func_name == self.func.name {
-                    ret_ty = self.func.return_type.clone();
-                } else if let Ok(registry) = crate::bridge::registry::GLOBAL_REGISTRY.lock() {
-                    if let Some(sig) = registry.get(&func_name) {
-                        ret_ty = sig.return_type.clone();
-                    }
-                }
                 self.func.set_type(dest, ret_ty);
                 Ok(dest)
             }

@@ -1,13 +1,13 @@
 use crate::ssa::analysis::liveness::LivenessAnalysisResults;
-use crate::ssa::ir::{BlockId, Function, InstructionKind, Type, Value};
+use crate::ssa::ir::{AccessPath, BlockId, Function, InstructionKind, PathElement, Type, Value};
 use std::collections::{HashMap, HashSet};
 use z3::ast::{Bool, Real};
 use z3::{SatResult, Solver};
 
 pub struct PermissionVerifier<'a> {
     func: &'a Function,
-    // Maps each Value to the Root it originates from.
-    value_roots: HashMap<Value, Value>,
+    // Maps each Value to the Root it originates from and its AccessPath.
+    value_roots: HashMap<Value, (Value, AccessPath)>,
     uid: usize,
 }
 
@@ -26,16 +26,39 @@ impl<'a> PermissionVerifier<'a> {
         self.uid = uid;
     }
 
+    fn get_field_index(&self, src: Value, offset: usize) -> usize {
+        let ty = self.func.get_type(src);
+        let mut inner_ty = ty;
+        while let Type::Hand(t) | Type::Peek(t) | Type::Held(t) | Type::Refined(t, _) = inner_ty {
+            inner_ty = t.as_ref().clone();
+        }
+
+        if let Type::Struct(name) = inner_ty {
+            if let Some(fields) = self.func.struct_layouts.get(&name) {
+                let mut curr_offset = 0;
+                for (i, (_, f_ty)) in fields.iter().enumerate() {
+                    let align = f_ty.align(&self.func.struct_layouts);
+                    curr_offset = (curr_offset + align - 1) & !(align - 1);
+                    if curr_offset == offset {
+                        return i;
+                    }
+                    curr_offset += f_ty.size(&self.func.struct_layouts);
+                }
+            }
+        }
+        offset
+    }
+
     fn analyze_roots(&mut self) {
         // 1. Initial roots: all Held values and arguments
         for i in 0..self.func.arg_count {
             let v = Value(i);
-            self.value_roots.insert(v, v);
+            self.value_roots.insert(v, (v, AccessPath::default()));
         }
         for i in 0..self.func.value_count {
             let v = Value(i);
             if let Type::Held(_) = self.func.get_type(v) {
-                self.value_roots.insert(v, v);
+                self.value_roots.insert(v, (v, AccessPath::default()));
             }
         }
 
@@ -46,25 +69,46 @@ impl<'a> PermissionVerifier<'a> {
             for block in &self.func.blocks {
                 for inst in &block.instructions {
                     if let Some(def) = inst.get_def() {
-                        let mut root = None;
+                        let mut root_info = None;
                         match &inst.kind {
                             InstructionKind::Peek(_, src)
                             | InstructionKind::Hand(_, src)
-                            | InstructionKind::StructOffset(_, src, _)
                             | InstructionKind::StructLoad(_, src, _)
-                            | InstructionKind::ArrayLoad(_, src, _)
                             | InstructionKind::BufferLoad(_, src, _)
-                            | InstructionKind::TupleExtract(_, src, _)
-                            | InstructionKind::EnumExtract(_, src, _)
                             | InstructionKind::StructSet(_, src, _, _, _)
                             | InstructionKind::ArrayStore(_, src, _, _, _)
                             | InstructionKind::BufferStore(_, src, _, _, _) => {
-                                root = self.value_roots.get(src).copied();
+                                root_info = self.value_roots.get(src).cloned();
+                            }
+                            InstructionKind::StructOffset(_, src, offset) => {
+                                let field_idx = self.get_field_index(*src, *offset);
+                                root_info = self
+                                    .value_roots
+                                    .get(src)
+                                    .map(|(r, p)| (*r, p.extend(PathElement::Field(field_idx))));
+                            }
+                            InstructionKind::ArrayLoad(_, src, idx_val) => {
+                                root_info = self
+                                    .value_roots
+                                    .get(src)
+                                    .map(|(r, p)| (*r, p.extend(PathElement::Index(*idx_val))));
+                            }
+                            InstructionKind::TupleExtract(_, src, idx) => {
+                                root_info = self
+                                    .value_roots
+                                    .get(src)
+                                    .map(|(r, p)| (*r, p.extend(PathElement::Field(*idx))));
+                            }
+                            InstructionKind::EnumExtract(_, src, idx) => {
+                                root_info = self
+                                    .value_roots
+                                    .get(src)
+                                    .map(|(r, p)| (*r, p.extend(PathElement::Field(*idx))));
                             }
                             InstructionKind::Phi(_, mappings) => {
                                 for v in mappings.values() {
-                                    if let Some(r) = self.value_roots.get(v) {
-                                        root = Some(*r);
+                                    if let Some(ri) = self.value_roots.get(v) {
+                                        root_info = Some(ri.clone());
                                         break;
                                     }
                                 }
@@ -72,13 +116,14 @@ impl<'a> PermissionVerifier<'a> {
                             _ => {
                                 let ty = self.func.get_type(def);
                                 if ty.is_pointer_like() && !self.value_roots.contains_key(&def) {
-                                    root = Some(def);
+                                    root_info = Some((def, AccessPath::default()));
                                 }
                             }
                         }
 
-                        if let Some(r) = root {
-                            if self.value_roots.insert(def, r) != Some(r) {
+                        if let Some(ri) = root_info {
+                            if self.value_roots.get(&def) != Some(&ri) {
+                                self.value_roots.insert(def, ri);
                                 changed = true;
                             }
                         }
@@ -116,6 +161,43 @@ impl<'a> PermissionVerifier<'a> {
         }
     }
 
+    fn get_target_path(&self, inst: &InstructionKind, u: Value) -> Option<AccessPath> {
+        let (_, path) = self.value_roots.get(&u)?;
+        match inst {
+            InstructionKind::StructSet(_, obj, offset, _, _) if *obj == u => {
+                let field_idx = self.get_field_index(*obj, *offset);
+                Some(path.extend(PathElement::Field(field_idx)))
+            }
+            InstructionKind::StructLoad(_, obj, offset) if *obj == u => {
+                let field_idx = self.get_field_index(*obj, *offset);
+                Some(path.extend(PathElement::Field(field_idx)))
+            }
+            InstructionKind::StructOffset(_, obj, offset) if *obj == u => {
+                let field_idx = self.get_field_index(*obj, *offset);
+                Some(path.extend(PathElement::Field(field_idx)))
+            }
+            InstructionKind::ArrayLoad(_, src, idx_val) if *src == u => {
+                Some(path.extend(PathElement::Index(*idx_val)))
+            }
+            InstructionKind::ArrayStore(_, arr, idx_val, _, _) if *arr == u => {
+                Some(path.extend(PathElement::Index(*idx_val)))
+            }
+            InstructionKind::BufferLoad(_, src, idx_val) if *src == u => {
+                Some(path.extend(PathElement::Index(*idx_val)))
+            }
+            InstructionKind::BufferStore(_, buf, idx_val, _, _) if *buf == u => {
+                Some(path.extend(PathElement::Index(*idx_val)))
+            }
+            InstructionKind::TupleExtract(_, src, idx) if *src == u => {
+                Some(path.extend(PathElement::Field(*idx)))
+            }
+            InstructionKind::EnumExtract(_, src, idx) if *src == u => {
+                Some(path.extend(PathElement::Field(*idx)))
+            }
+            _ => Some(path.clone()),
+        }
+    }
+
     pub fn generate_assertions(
         &self,
         solver: &Solver,
@@ -141,7 +223,7 @@ impl<'a> PermissionVerifier<'a> {
             }
         }
 
-        let all_roots: HashSet<Value> = self.value_roots.values().cloned().collect();
+        let all_roots: HashSet<Value> = self.value_roots.values().map(|(r, _)| *r).collect();
 
         // 2. Perform flow-sensitive verification
         for block in &self.func.blocks {
@@ -165,32 +247,58 @@ impl<'a> PermissionVerifier<'a> {
 
                 // A. Check Fractional Permission Sum for each Root
                 for &root in &all_roots {
-                    let mut terms = Vec::new();
-                    for &v in &active_values {
-                        if self.value_roots.get(&v) == Some(&root) {
+                    let root_values: Vec<Value> = active_values
+                        .iter()
+                        .filter(|v| self.value_roots.get(v).map(|(r, _)| *r) == Some(root))
+                        .copied()
+                        .collect();
+
+                    // Find terminal values (those with no live descendants)
+                    let terminal_values: Vec<Value> = root_values
+                        .iter()
+                        .filter(|&v| {
+                            let (_, path) = self.value_roots.get(v).unwrap();
+                            !root_values.iter().any(|&other| {
+                                if other == *v {
+                                    return false;
+                                }
+                                let (_, other_path) = self.value_roots.get(&other).unwrap();
+                                path.is_prefix_of(other_path) && *path != *other_path
+                            })
+                        })
+                        .copied()
+                        .collect();
+
+                    // Group terminal values by path and assert sum <= 1.0
+                    let mut path_groups: HashMap<AccessPath, Vec<Value>> = HashMap::new();
+                    for &v in &terminal_values {
+                        let (_, path) = self.value_roots.get(&v).unwrap();
+                        path_groups.entry(path.clone()).or_default().push(v);
+                    }
+
+                    for (path, group) in path_groups {
+                        let mut terms = Vec::new();
+                        for &v in &group {
                             if let Some(p_var) = value_perms.get(&v) {
                                 terms.push(p_var);
                             }
                         }
-                    }
 
-                    if !terms.is_empty() {
-                        let sum = if terms.len() == 1 {
-                            terms[0].clone()
-                        } else {
-                            Real::add(terms.as_slice())
-                        };
+                        if !terms.is_empty() {
+                            let sum = if terms.len() == 1 {
+                                terms[0].clone()
+                            } else {
+                                Real::add(terms.as_slice())
+                            };
 
-                        // Assert that total permission on a root must not exceed 1.0
-                        solver.assert(path_cond.implies(sum.le(&one)));
+                            solver.assert(path_cond.implies(sum.le(&one)));
 
-                        // Only check for consistency if we have multiple terms,
-                        // as single terms are already constrained to be <= 1.0
-                        if terms.len() > 1 && solver.check() == SatResult::Unsat {
-                            return Err(format!(
-                                "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at instruction {} in block {:?}. (Possible aliasing or use-after-move)",
-                                root, idx, block.id
-                            ));
+                            if terms.len() > 1 && solver.check() == SatResult::Unsat {
+                                return Err(format!(
+                                    "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at path {} at instruction {} in block {:?}.",
+                                    root, path, idx, block.id
+                                ));
+                            }
                         }
                     }
                 }
@@ -201,31 +309,33 @@ impl<'a> PermissionVerifier<'a> {
                     let is_mutating = self.requires_exclusive(&inst.kind, u);
 
                     if is_moving || is_mutating {
-                        if let Some(&root) = self.value_roots.get(&u) {
+                        if let Some((root, _u_orig_path)) = self.value_roots.get(&u) {
+                            let affected_path = self.get_target_path(&inst.kind, u).unwrap();
                             for &v in live_out {
                                 if Some(v) == inst.get_def() {
                                     continue;
-                                } // Skip the value we just defined (the new state)
+                                }
+                                if let Some((v_root, v_path)) = self.value_roots.get(&v) {
+                                    if v_root == root && affected_path.overlaps(v_path) {
+                                        // Specific path overlap + Exclusive access/Move = Violation
+                                        solver.push();
+                                        solver.assert(path_cond);
+                                        let check_res = solver.check();
+                                        solver.pop(1);
 
-                                if self.value_roots.get(&v) == Some(&root) {
-                                    // Potential violation: trying to move/mutate while other references are live.
-                                    // This includes 'u' itself if it's still live after this instruction.
-                                    // Optimization: only call solver if it's not obviously safe
-                                    solver.push();
-                                    solver.assert(path_cond);
-                                    let check_res = solver.check();
-                                    solver.pop(1);
-
-                                    if check_res == SatResult::Sat {
-                                        return Err(format!(
-                                            "Memory safety violation: Root {:?} is {} via value {:?}, but still referenced by live value {:?} at instruction {} in block {:?}.",
-                                            root,
-                                            if is_moving { "moved" } else { "mutated" },
-                                            u,
-                                            v,
-                                            idx,
-                                            block.id
-                                        ));
+                                        if check_res == SatResult::Sat {
+                                            return Err(format!(
+                                                "Memory safety violation: Root {:?} at path {} is {} via value {:?}, but overlapping path {} is still referenced by live value {:?} at instruction {} in block {:?}.",
+                                                root,
+                                                affected_path,
+                                                if is_moving { "moved" } else { "mutated" },
+                                                u,
+                                                v_path,
+                                                v,
+                                                idx,
+                                                block.id
+                                            ));
+                                        }
                                     }
                                 }
                             }
