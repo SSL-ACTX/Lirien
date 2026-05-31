@@ -108,7 +108,6 @@ def _discover_types(
                         pred_src = pred_src[:-1]
 
                 base_ty = obj.base_type
-                from typing import get_origin
 
                 if hasattr(base_ty, "__origin__") and hasattr(base_ty, "__metadata__"):
                     # Handle Annotated (e.g. Buffer[i64])
@@ -250,14 +249,16 @@ def _create_jit_wrapper(
 ) -> Callable:
     """Create a ctypes wrapper for a JIT-compiled function pointer, supporting recursion for higher-order functions."""
     c_args = []
+    arg_map = []
     if is_closure:
         c_args.append(ctypes.c_void_p)  # ctx_ptr
 
-    for arg_ty in arg_types:
+    for i, arg_ty in enumerate(arg_types):
         arg_ty_str = str(arg_ty).lower()
         if "buffer" in arg_ty_str:
             c_args.append(ctypes.c_void_p)
             c_args.append(ctypes.c_int64)
+            arg_map.append(("buffer", len(c_args) - 2, 8))  # Simplified
         elif any(
             x in arg_ty_str
             for x in [
@@ -270,17 +271,29 @@ def _create_jit_wrapper(
             ]
         ):
             c_args.append(ctypes.c_void_p)
+            arg_map.append(("pointer", len(c_args) - 1))
         else:
             c_args.append(_get_ctypes_type(arg_ty_str))
+            arg_map.append(("value", len(c_args) - 1))
 
-    ret_ty_str = str(ret_type).lower()
-    if "none" in ret_ty_str or ret_type is None:
+    is_tuple_return, TupleReturn, c_args, arg_map = _handle_tuple_return(
+        ret_type, c_args, arg_map
+    )
+
+    if is_tuple_return:
         c_ret = None
-    elif "tuple" in ret_ty_str:
-        # TODO: Handle tuple return in nested wrappers
-        c_ret = ctypes.c_void_p
+        if hasattr(ret_type, "__args__"):
+            tuple_types = ret_type.__args__
+        else:
+            from .types import i64
+
+            tuple_types = [i64, i64]
     else:
-        c_ret = _get_ctypes_type(ret_ty_str)
+        ret_ty_str = str(ret_type).lower()
+        if "none" in ret_ty_str or ret_type is None:
+            c_ret = None
+        else:
+            c_ret = _get_ctypes_type(ret_ty_str)
 
     # If it's a closure, the code_ptr passed here is the closure_ptr.
     # We need to load the actual function address from closure_ptr[0].
@@ -291,49 +304,25 @@ def _create_jit_wrapper(
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(actual_fn_ptr)
 
     def jit_call(*args):
-        processed_args = []
+        processed_args, ret_struct = _prepare_runtime_args(
+            args, arg_map, c_args, is_tuple_return, TupleReturn
+        )
         if is_closure:
-            processed_args.append(code_ptr)
-
-        arg_idx = 0
-        for arg_ty in arg_types:
-            arg = args[arg_idx]
-            arg_ty_str = str(arg_ty).lower()
-            if "buffer" in arg_ty_str:
-                if hasattr(arg, "ctypes"):
-                    processed_args.append(ctypes.c_void_p(arg.ctypes.data))
-                    processed_args.append(ctypes.c_int64(arg.size))
-                else:
-                    mv = memoryview(arg)
-                    item_size = ctypes.sizeof(_get_ctypes_type(arg_ty_str))
-                    processed_args.append(
-                        ctypes.addressof((ctypes.c_char * mv.nbytes).from_buffer(arg))
-                    )
-                    processed_args.append(ctypes.c_int64(mv.nbytes // item_size))
-            elif any(
-                x in arg_ty_str
-                for x in [
-                    "hand",
-                    "peek",
-                    "sizedarray",
-                    "fnpointer",
-                    "callable",
-                    "closure",
-                ]
-            ):
-                if hasattr(arg, "__lila_ptr__"):
-                    processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
-                else:
-                    processed_args.append(arg)
-            else:
-                processed_args.append(_get_ctypes_type(arg_ty_str)(arg))
-            arg_idx += 1
+            # If it's a tuple return, TupleReturn* is at index 0, so ctx_ptr is at index 1.
+            # Otherwise, ctx_ptr is at index 0.
+            insert_idx = 1 if is_tuple_return else 0
+            processed_args.insert(insert_idx, code_ptr)
 
         res = c_func(*processed_args)
+
+        if is_tuple_return:
+            # Convert ctypes structure back to Python tuple
+            return tuple(getattr(ret_struct, f"f{i}") for i in range(len(tuple_types)))
 
         # Recursively wrap if the return type is another function
         from .types import FnPointer, Closure
 
+        ret_ty_str = str(ret_type).lower()
         if (
             "fnpointer" in ret_ty_str
             or "callable" in ret_ty_str
@@ -417,6 +406,127 @@ def _prepare_runtime_args(
     return processed_args, ret_struct
 
 
+def _setup_logging(log_level: str) -> Tuple[str, str]:
+    """Override LILA_LOG level and return (log_level, old_log_level) for restoration."""
+    if log_level:
+        old_log = os.environ.get("LILA_LOG", "info")
+        lila_core.set_log_level(log_level)
+        os.environ["LILA_LOG"] = log_level
+        return log_level, old_log
+    return None, None
+
+
+def _restore_logging(log_level: str, old_log: str):
+    """Restore the original LILA_LOG level."""
+    if log_level:
+        lila_core.set_log_level(old_log)
+        os.environ["LILA_LOG"] = old_log
+
+
+def _prepare_source_and_name(
+    func: Callable, class_name: str = None, method_name: str = None
+) -> Tuple[str, str]:
+    """Extract and dedent source code, handling method name overrides and AST adjustments."""
+    source = textwrap.dedent(inspect.getsource(func))
+    target_func_name = method_name if method_name else func.__name__
+
+    if class_name:
+        tree = ast.parse(source)
+        func_def = tree.body[0]
+        func_def.name = target_func_name
+
+        if func_def.args.args and func_def.args.args[0].arg == "self":
+            if not func_def.args.args[0].annotation:
+                func_def.args.args[0].annotation = ast.Subscript(
+                    value=ast.Name(id="Hand", ctx=ast.Load()),
+                    slice=ast.Name(id=class_name, ctx=ast.Load()),
+                    ctx=ast.Load(),
+                )
+        source = ast.unparse(tree)
+
+    return source, target_func_name
+
+
+def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
+    """Validate runtime refinements for arguments."""
+    for i, param in enumerate(sig.parameters.values()):
+        if i < len(args):
+            ann = param.annotation
+            if hasattr(ann, "predicate") and ann.predicate:
+                if not ann.predicate(args[i]):
+                    raise ValueError(
+                        f"Runtime Refinement Violation for argument '{param.name}': "
+                        f"Value {args[i]} does not satisfy the predicate."
+                    )
+
+
+def _wrap_return_value(res: Any, ret_ann: Any) -> Any:
+    """Wrap the JIT return value if it represents a higher-order function."""
+    from .types import FnPointer, Closure
+
+    ret_ann_str = str(ret_ann).lower()
+    if (
+        "fnpointer" in ret_ann_str
+        or "callable" in ret_ann_str
+        or "closure" in ret_ann_str
+        or isinstance(ret_ann, FnPointer)
+    ):
+        is_cls = "closure" in ret_ann_str or isinstance(ret_ann, Closure)
+        return _create_jit_wrapper(
+            res, ret_ann.arg_types, ret_ann.ret_type, is_closure=is_cls
+        )
+    return res
+
+
+def _get_ctypes_return_type(ret_ann: Any) -> Any:
+    """Determine the ctypes return type from the annotation."""
+    # Unwrap Refined type if necessary
+    actual_ann = getattr(ret_ann, "base_type", ret_ann)
+    ret_ann_str = str(actual_ann).lower()
+
+    if (
+        actual_ann is None
+        or actual_ann is inspect.Signature.empty
+        or "none" in ret_ann_str
+    ):
+        return None
+    return _get_ctypes_type(ret_ann_str)
+
+
+def _create_wrapper(
+    func: Callable,
+    code_ptr: int,
+    c_args: List[Any],
+    arg_map: List[Any],
+    sig: inspect.Signature,
+    is_tuple_return: bool,
+    TupleReturn: Any,
+    tuple_types: List[Any],
+):
+    """Generate the final Python wrapper that handles runtime checks and interop."""
+    c_ret = None if is_tuple_return else _get_ctypes_return_type(sig.return_annotation)
+    c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
+
+    def wrapper(*args):
+        _check_runtime_refinements(sig, args)
+
+        processed_args, ret_struct = _prepare_runtime_args(
+            args, arg_map, c_args, is_tuple_return, TupleReturn
+        )
+
+        res = c_func(*processed_args)
+
+        if is_tuple_return:
+            return tuple(getattr(ret_struct, f"f{i}") for i in range(len(tuple_types)))
+
+        return _wrap_return_value(res, sig.return_annotation)
+
+    print(f"[Lila] JIT compiled '{func.__name__}' successfully.")
+    wrapper.__lila_jit__ = True
+    wrapper.__lila_ptr__ = code_ptr
+    return wrapper
+
+
 def verify(
     strict: bool = True,
     log_level: str = None,
@@ -430,7 +540,6 @@ def verify(
     :param strict: If True, raises VerificationError on failure. If False, falls back to Python.
     :param log_level: Override LILA_LOG level (e.g., 'info', 'debug', 'warn').
     """
-    import os
 
     # Handle the case where the decorator is used without parentheses: @verify
     if callable(strict) and log_level is None and _struct_layouts is None:
@@ -439,34 +548,12 @@ def verify(
         return verify(strict=True)(func)
 
     def decorator(func: T) -> T:
-        # Phase 0: Setup Logging Override
-        if log_level:
-            old_log = os.environ.get("LILA_LOG", "info")
-            lila_core.set_log_level(log_level)
-            os.environ["LILA_LOG"] = log_level
+        log_lvl, old_log = _setup_logging(log_level)
+        source, target_func_name = _prepare_source_and_name(
+            func, _class_name, _method_name
+        )
 
-        # Phase 1: AST Extraction
         try:
-            source = textwrap.dedent(inspect.getsource(func))
-
-            # Use the provided method name if available, otherwise fallback to function name
-            target_func_name = _method_name if _method_name else func.__name__
-
-            if _class_name:
-                tree = ast.parse(source)
-                func_def = tree.body[0]
-                # Rename the function in the AST to match the registry name
-                func_def.name = target_func_name
-
-                if func_def.args.args and func_def.args.args[0].arg == "self":
-                    if not func_def.args.args[0].annotation:
-                        func_def.args.args[0].annotation = ast.Subscript(
-                            value=ast.Name(id="Hand", ctx=ast.Load()),
-                            slice=ast.Name(id=_class_name, ctx=ast.Load()),
-                            ctx=ast.Load(),
-                        )
-                source = ast.unparse(tree)
-
             struct_layouts, enum_layouts, type_aliases = _discover_types(
                 func, _struct_layouts
             )
@@ -476,85 +563,33 @@ def verify(
                     source, target_func_name, struct_layouts, enum_layouts, type_aliases
                 )
             finally:
-                if log_level:
-                    lila_core.set_log_level(old_log)
-                    os.environ["LILA_LOG"] = old_log
+                _restore_logging(log_lvl, old_log)
 
-            # Create a ctypes function pointer
             sig = inspect.signature(func)
             c_args, arg_map = _map_ctypes_arguments(sig, _class_name)
-
-            ret_ann = sig.return_annotation
-            ret_ann_str = str(ret_ann).lower()
-
             is_tuple_return, TupleReturn, c_args, arg_map = _handle_tuple_return(
-                ret_ann, c_args, arg_map
+                sig.return_annotation, c_args, arg_map
             )
 
+            tuple_types = []
             if is_tuple_return:
-                c_ret = None
-                if hasattr(ret_ann, "__args__"):
-                    tuple_types = ret_ann.__args__
+                if hasattr(sig.return_annotation, "__args__"):
+                    tuple_types = sig.return_annotation.__args__
                 else:
                     from .types import i64
 
                     tuple_types = [i64, i64]
-            else:
-                if (
-                    ret_ann is None
-                    or ret_ann is inspect.Signature.empty
-                    or ret_ann_str == "none"
-                ):
-                    c_ret = None
-                else:
-                    c_ret = _get_ctypes_type(ret_ann_str)
 
-            c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
-
-            def wrapper(*args):
-                # Runtime Refinement Checks
-                for i, param in enumerate(sig.parameters.values()):
-                    if i < len(args):
-                        ann = param.annotation
-                        if hasattr(ann, "predicate") and ann.predicate:
-                            if not ann.predicate(args[i]):
-                                raise ValueError(
-                                    f"Runtime Refinement Violation for argument '{param.name}': "
-                                    f"Value {args[i]} does not satisfy the predicate."
-                                )
-
-                processed_args, ret_struct = _prepare_runtime_args(
-                    args, arg_map, c_args, is_tuple_return, TupleReturn
-                )
-
-                res = c_func(*processed_args)
-
-                if is_tuple_return:
-                    # Convert ctypes structure back to Python tuple
-                    return tuple(
-                        getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
-                    )
-
-                # Wrap returned function pointer/closure
-                from .types import FnPointer, Closure
-
-                if (
-                    "fnpointer" in ret_ann_str
-                    or "callable" in ret_ann_str
-                    or "closure" in ret_ann_str
-                    or isinstance(ret_ann, FnPointer)
-                ):
-                    is_cls = "closure" in ret_ann_str or isinstance(ret_ann, Closure)
-                    return _create_jit_wrapper(
-                        res, ret_ann.arg_types, ret_ann.ret_type, is_closure=is_cls
-                    )
-
-                return res
-
-            print(f"[Lila] JIT compiled '{func.__name__}' successfully.")
-            wrapper.__lila_jit__ = True
-            wrapper.__lila_ptr__ = code_ptr
-            return wrapper
+            return _create_wrapper(
+                func,
+                code_ptr,
+                c_args,
+                arg_map,
+                sig,
+                is_tuple_return,
+                TupleReturn,
+                tuple_types,
+            )
         except Exception as e:
             error_msg = format_verification_error(func.__name__, source, str(e))
             if strict:

@@ -23,9 +23,9 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 - [x] **Structural Pattern Matching**: Support Python `match` statements for Enums.
 - [x] **Type Inference**: Reduce the need for explicit type annotations on local variables.
 - [x] **Improved Diagnostics**: Better error messages for verification failures with source-level highlights.
-- [ ] **Refactoring**: Extract the monolithic `@verify` decorator logic in `compiler.py` into private module-level helper functions for better maintainability and testability.
+- [x] **Refactoring**: Extract the monolithic `@verify` decorator logic in `compiler.py` into private module-level helper functions for better maintainability and testability.
 
 ### 3. Advanced Features
 - [ ] **Recursive Functions**: Support verification of recursive logic (requires induction/invariants).
-- [ ] **Higher-Order Functions**: Basic support for lambdas and passing functions.
+- [x] **Higher-Order Functions**: Basic support for lambdas and passing functions.
 - [ ] **SIMD Auto-vectorization**: Leverage Cranelift's SIMD capabilities for verified buffer operations.
