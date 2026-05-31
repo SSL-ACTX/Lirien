@@ -598,6 +598,131 @@ impl CFGBuilder {
                         self.func.set_type(dest, Type::I64);
                         return Ok(dest);
                     }
+                } else if func_name == "parallel_for" {
+                    if s.args.len() != 2 {
+                        return Err(
+                            "parallel_for expects 2 arguments: range and body lambda".to_string()
+                        );
+                    }
+
+                    // 1. Parse range
+                    let (start_v, stop_v, step_v) = if let ast::Expr::Call(range_call) = &s.args[0]
+                    {
+                        if let ast::Expr::Name(n) = &*range_call.func {
+                            if n.id.as_str() == "range" {
+                                let (start, end, step) = match range_call.args.len() {
+                                    1 => (None, self.visit_expr(range_call.args[0].clone())?, None),
+                                    2 => (
+                                        Some(self.visit_expr(range_call.args[0].clone())?),
+                                        self.visit_expr(range_call.args[1].clone())?,
+                                        None,
+                                    ),
+                                    3 => (
+                                        Some(self.visit_expr(range_call.args[0].clone())?),
+                                        self.visit_expr(range_call.args[1].clone())?,
+                                        Some(self.visit_expr(range_call.args[2].clone())?),
+                                    ),
+                                    _ => return Err("Unsupported range() signature".to_string()),
+                                };
+
+                                let s_v = if let Some(v) = start {
+                                    v
+                                } else {
+                                    let zero = self.func.next_value();
+                                    self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                                    zero
+                                };
+                                let st_v = if let Some(v) = step {
+                                    v
+                                } else {
+                                    let one = self.func.next_value();
+                                    self.add_instruction(InstructionKind::ConstInt(one, 1));
+                                    one
+                                };
+                                (s_v, end, st_v)
+                            } else {
+                                return Err(
+                                    "parallel_for first argument must be range()".to_string()
+                                );
+                            }
+                        } else {
+                            return Err("parallel_for first argument must be range()".to_string());
+                        }
+                    } else {
+                        return Err("parallel_for first argument must be range()".to_string());
+                    };
+
+                    // 2. Parse lambda
+                    if let ast::Expr::Lambda(lambda) = &s.args[1] {
+                        if lambda.args.args.len() != 1 {
+                            return Err(
+                                "parallel_for lambda must take exactly 1 argument (the index)"
+                                    .to_string(),
+                            );
+                        }
+                        let index_name = lambda.args.args[0].def.arg.to_string();
+
+                        let body_block = self.create_block();
+                        let exit_block = self.create_block();
+
+                        let index_var = self.func.next_value();
+                        self.func.set_type(index_var, Type::I64);
+
+                        // Capture analysis
+                        use crate::ssa::builder::capture_analysis::CaptureVisitor;
+                        use rustpython_ast::Visitor;
+                        let mut capture_visitor = CaptureVisitor::new(vec![index_name.clone()]);
+                        capture_visitor.visit_expr(*lambda.body.clone());
+
+                        let mut captures = Vec::new();
+                        for var_name in capture_visitor.captures {
+                            if self.variable_defs.contains_key(&var_name) {
+                                captures.push(self.read_variable(var_name, self.current_block)?);
+                            }
+                        }
+
+                        let prev_block = self.current_block;
+                        self.link_blocks(prev_block, body_block);
+                        self.link_blocks(prev_block, exit_block);
+
+                        self.seal_block(body_block)?;
+                        self.start_block(body_block);
+                        self.write_variable(index_name, body_block, index_var);
+
+                        self.visit_expr(*lambda.body.clone())?;
+
+                        // Transition to exit block
+                        if !self.is_terminated(self.current_block) {
+                            self.add_instruction(InstructionKind::Jump(exit_block));
+                            self.link_blocks(self.current_block, exit_block);
+                        }
+
+                        self.start_block(exit_block);
+                        self.seal_block(exit_block)?;
+
+                        // Add ParallelFor to the original block
+                        self.current_block = prev_block;
+                        self.update_location(expr_offset);
+                        self.add_instruction(InstructionKind::ParallelFor {
+                            index_var,
+                            start: start_v,
+                            stop: stop_v,
+                            step: step_v,
+                            body_block,
+                            exit_block,
+                            captures,
+                        });
+                        self.add_instruction(InstructionKind::Jump(exit_block));
+
+                        // Switch back to exit block for subsequent instructions
+                        self.current_block = exit_block;
+
+                        let dest = self.func.next_value();
+                        self.func.set_type(dest, Type::Unknown);
+                        return Ok(dest);
+                    } else {
+                        return Err("parallel_for second argument must be a lambda".to_string());
+                    }
                 } else if func_name == "math.sqrt" {
                     if s.args.len() != 1 {
                         return Err("sqrt() expects 1 argument".to_string());

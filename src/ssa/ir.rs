@@ -432,6 +432,15 @@ pub enum InstructionKind {
     IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
 
     Release(Value), // Explicitly release a borrow/permission
+    ParallelFor {
+        index_var: Value,
+        start: Value,
+        stop: Value,
+        step: Value,
+        body_block: BlockId,
+        exit_block: BlockId,
+        captures: Vec<Value>,
+    },
     Nop,
 }
 
@@ -875,6 +884,28 @@ impl fmt::Display for Instruction {
             }
             InstructionKind::Release(v) => {
                 write!(f, "  release {}{}{}", v, loc_str, constraints_str)
+            }
+            InstructionKind::ParallelFor {
+                index_var,
+                start,
+                stop,
+                step,
+                body_block,
+                exit_block,
+                captures,
+            } => {
+                let captures_str: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  pfor {} in range({}, {}, {}) body: {:?}, exit: {:?}, captures: [{}]",
+                    index_var,
+                    start,
+                    stop,
+                    step,
+                    body_block,
+                    exit_block,
+                    captures_str.join(", ")
+                )
             }
             InstructionKind::Nop => write!(f, "  nop{}{}", loc_str, constraints_str),
         }

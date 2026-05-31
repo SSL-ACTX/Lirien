@@ -8,6 +8,7 @@ pub struct PermissionVerifier<'a> {
     func: &'a Function,
     // Maps each Value to the Root it originates from and its AccessPath.
     value_roots: HashMap<Value, (Value, AccessPath)>,
+    parallel_blocks: HashSet<BlockId>,
     uid: usize,
 }
 
@@ -16,10 +17,44 @@ impl<'a> PermissionVerifier<'a> {
         let mut verifier = Self {
             func,
             value_roots: HashMap::new(),
+            parallel_blocks: HashSet::new(),
             uid: 0,
         };
         verifier.analyze_roots();
+        verifier.analyze_parallel_blocks();
         verifier
+    }
+
+    fn analyze_parallel_blocks(&mut self) {
+        let mut parallel_roots = Vec::new();
+        for block in &self.func.blocks {
+            for inst in &block.instructions {
+                if let InstructionKind::ParallelFor {
+                    body_block,
+                    exit_block,
+                    ..
+                } = &inst.kind
+                {
+                    parallel_roots.push((*body_block, *exit_block));
+                }
+            }
+        }
+
+        for (body, exit) in parallel_roots {
+            let mut visited = HashSet::new();
+            let mut stack = vec![body];
+            while let Some(curr) = stack.pop() {
+                if curr == exit || !visited.insert(curr) {
+                    continue;
+                }
+                self.parallel_blocks.insert(curr);
+                if let Some(block) = self.func.blocks.iter().find(|b| b.id == curr) {
+                    for &succ in &block.successors {
+                        stack.push(succ);
+                    }
+                }
+            }
+        }
     }
 
     pub fn set_uid(&mut self, uid: usize) {
@@ -138,9 +173,8 @@ impl<'a> PermissionVerifier<'a> {
 
     fn is_consuming(&self, inst: &InstructionKind, val: Value) -> bool {
         let ty = self.func.get_type(val);
-        // Only pointer-like types can be "consumed" or moved.
-        // Peek references are specifically designed to be reused.
-        if !ty.is_pointer_like() || matches!(ty, Type::Peek(_)) {
+        // Primitives and shared references (Peek, Buffer) are not consumed by use.
+        if !ty.is_pointer_like() || matches!(ty, Type::Peek(_) | Type::Buffer(_)) {
             return false;
         }
 
@@ -213,6 +247,10 @@ impl<'a> PermissionVerifier<'a> {
     ) -> Result<(), String> {
         let zero = Real::from_rational(0, 1);
         let one = Real::from_rational(1, 1);
+
+        // Symbolic loop count for parallel partitioning
+        let loop_count = Real::new_const(format!("loop_count_{}", self.uid));
+        solver.assert(loop_count.gt(&one));
 
         // 1. Constrain symbolic permission weights
         for (&v, p_var) in value_perms {
@@ -291,18 +329,30 @@ impl<'a> PermissionVerifier<'a> {
                         }
 
                         if !terms.is_empty() {
-                            let sum = if terms.len() == 1 {
+                            let mut sum = if terms.len() == 1 {
                                 terms[0].clone()
                             } else {
                                 Real::add(terms.as_slice())
                             };
 
+                            if self.parallel_blocks.contains(&block.id) {
+                                sum = sum * loop_count.clone();
+                            }
+
                             solver.assert(path_cond.implies(sum.le(&one)));
 
-                            if terms.len() > 1 && solver.check() == SatResult::Unsat {
+                            if (terms.len() > 1 || self.parallel_blocks.contains(&block.id))
+                                && solver.check() == SatResult::Unsat
+                            {
+                                let error_msg = if self.parallel_blocks.contains(&block.id) {
+                                    format!("Possible data-race: Parallel iterations conflict on shared state for root {:?} at path {}", root, path)
+                                } else {
+                                    format!("Memory safety violation: No valid fractional permission partitioning exists for root {:?} at path {}", root, path)
+                                };
+
                                 return Err(format!(
-                                    "Memory safety violation: No valid fractional permission partitioning exists for root {:?} at path {} at instruction {} in block {:?}.",
-                                    root, path, idx, block.id
+                                    "{} at instruction {} in block {:?}.",
+                                    error_msg, idx, block.id
                                 ));
                             }
                         }

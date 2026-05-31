@@ -23,6 +23,7 @@ from .types import (
 )
 from .compiler import (
     verify,
+    parallel_for,
     VerificationError,
     configure_tracing,
     LIVENESS,
@@ -41,6 +42,7 @@ __all__ = [
     "struct",
     "enum",
     "verify",
+    "parallel_for",
     "VerificationError",
     "Refined",
     "SizedArray",

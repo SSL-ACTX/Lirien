@@ -130,6 +130,7 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
         | InstructionKind::Release(_)
+        | InstructionKind::ParallelFor { .. }
         | InstructionKind::Nop => None,
     }
 }
@@ -244,6 +245,20 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         InstructionKind::Release(v) => {
             operands.push(*v);
         }
+        InstructionKind::ParallelFor {
+            start,
+            stop,
+            step,
+            captures,
+            ..
+        } => {
+            operands.push(*start);
+            operands.push(*stop);
+            operands.push(*step);
+            for v in captures {
+                operands.push(*v);
+            }
+        }
         InstructionKind::ConstInt(_, _) | InstructionKind::ConstFloat(_, _) => {}
     }
     operands
@@ -271,6 +286,9 @@ fn has_side_effects(inst: &Instruction) -> bool {
 
         // Explicit permission release
         InstructionKind::Release(_) => true,
+
+        // Parallel loop
+        InstructionKind::ParallelFor { .. } => true,
 
         // Lambda creation has the side effect of capturing and heap-allocating
         InstructionKind::Lambda(_, _, _) => true,

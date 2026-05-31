@@ -286,6 +286,19 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
                 _ => {}
             }
         }
+
+        // Handle implicit edges from ParallelFor
+        for inst in &block.instructions {
+            if let InstructionKind::ParallelFor { body_block, .. } = &inst.kind {
+                let e_cond = Bool::new_const(format!(
+                    "{}_edge_{}_{}_{}",
+                    t_ctx.func.name, block.id.0, body_block.0, t_ctx.uid
+                ));
+                t_ctx
+                    .edge_conditions
+                    .insert((block.id, *body_block), e_cond);
+            }
+        }
     }
 
     // 4. Assert Structural CFG Constraints
@@ -392,9 +405,45 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                 }
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
-                | InstructionKind::Return(..)
-                | InstructionKind::Nop
-                | InstructionKind::Release(_) => {}
+                | InstructionKind::Return(..) => {}
+                InstructionKind::ParallelFor {
+                    index_var,
+                    start,
+                    stop,
+                    body_block,
+                    ..
+                } => {
+                    if let Some(edge_p) = t_ctx.edge_conditions.get(&(block.id, *body_block)) {
+                        t_ctx.solver.assert(edge_p.eq(&path_cond));
+                    }
+
+                    if let Some(body_cond) = t_ctx.block_conditions.get(body_block) {
+                        let idx_int = if let Some(bv) = t_ctx.z3_bvs.get(index_var) {
+                            bv.to_int(true)
+                        } else {
+                            t_ctx.z3_ints.get(index_var).unwrap().clone()
+                        };
+                        let start_int = if let Some(bv) = t_ctx.z3_bvs.get(start) {
+                            bv.to_int(true)
+                        } else {
+                            t_ctx.z3_ints.get(start).unwrap().clone()
+                        };
+                        let stop_int = if let Some(bv) = t_ctx.z3_bvs.get(stop) {
+                            bv.to_int(true)
+                        } else {
+                            t_ctx.z3_ints.get(stop).unwrap().clone()
+                        };
+
+                        // In the loop body, start <= index < stop
+                        t_ctx
+                            .solver
+                            .assert(body_cond.implies(idx_int.ge(&start_int)));
+                        t_ctx
+                            .solver
+                            .assert(body_cond.implies(idx_int.lt(&stop_int)));
+                    }
+                }
+                InstructionKind::Nop | InstructionKind::Release(_) => {}
             }
 
             // Translate logical constraints attached to the instruction
