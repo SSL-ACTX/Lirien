@@ -158,7 +158,7 @@ pub fn lower_instruction<M: Module>(
         InstructionKind::Lambda(dest, name, captures) => {
             higher_order::lower_lambda(ctx, *dest, name, captures)
         }
-        InstructionKind::Nop => Ok(()),
+        InstructionKind::Nop | InstructionKind::Release(_) => Ok(()),
     }
 }
 

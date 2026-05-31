@@ -180,7 +180,26 @@ Lila provides visual highlights for verification failures, mapping IR-level logi
    |                ^--- Logic error detected here
 ```
 
-### 9. GIL-less Parallelism
+### 9. Centralized Granular Tracing
+Lila features a highly controllable diagnostics system. You can toggle granular debug levels for specific sub-systems (Liveness, Z3 Translation, SSA Optimization) directly from Python to isolate issues in the compiler pipeline.
+
+```python
+from lila import configure_tracing, LIVENESS, VERIFY, SSA
+
+# Only see detailed liveness logs and SSA optimizations, keep everything else at info
+configure_tracing({
+    LIVENESS: "debug", 
+    SSA: "debug",
+    VERIFY: "info"
+})
+
+@verify
+def debug_target(x: Held[i64]):
+    # Detailed state transitions will now appear in your console
+    ...
+```
+
+### 10. GIL-less Parallelism
 Since Lila code operates on raw memory and avoids `PyObject` manipulation, it can execute across multiple threads without ever acquiring the Global Interpreter Lock.
 
 ---

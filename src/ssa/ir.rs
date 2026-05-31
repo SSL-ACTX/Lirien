@@ -431,6 +431,7 @@ pub enum InstructionKind {
     Lambda(Value, String, Vec<Value>), // dest, func_name, captured_vals
     IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
 
+    Release(Value), // Explicitly release a borrow/permission
     Nop,
 }
 
@@ -872,6 +873,9 @@ impl fmt::Display for Instruction {
                     constraints_str
                 )
             }
+            InstructionKind::Release(v) => {
+                write!(f, "  release {}{}{}", v, loc_str, constraints_str)
+            }
             InstructionKind::Nop => write!(f, "  nop{}{}", loc_str, constraints_str),
         }
     }
@@ -1081,6 +1085,9 @@ impl Instruction {
                 for v in args {
                     operands.push(*v);
                 }
+            }
+            InstructionKind::Release(v) => {
+                operands.push(*v);
             }
             _ => {}
         }

@@ -393,7 +393,8 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
                 | InstructionKind::Return(..)
-                | InstructionKind::Nop => {}
+                | InstructionKind::Nop
+                | InstructionKind::Release(_) => {}
             }
 
             // Translate logical constraints attached to the instruction

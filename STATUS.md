@@ -13,5 +13,6 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 - [ ] **SIMD Auto-vectorization**: Leverage Cranelift's SIMD capabilities for verified buffer operations.
 
 ### 3. Developer Ergonomics
+- [x] **Centralized Granular Tracing**: Implemented a controllable tracing system (Rust & Python) allowing component-specific debug levels.
 - [ ] **Non-Lexical Lifetimes (NLL)**: Use SMT-guided liveness to automatically infer borrow lifetimes and eliminate redundant `Mut`/`Ref` annotations.
-- [ ] **Python Context Managers**: Support `with` blocks for explicit, safe scoped borrowing.
+- [x] **Python Context Managers**: Support `with` blocks for explicit, safe scoped borrowing.

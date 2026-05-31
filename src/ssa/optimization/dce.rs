@@ -129,6 +129,7 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
+        | InstructionKind::Release(_)
         | InstructionKind::Nop => None,
     }
 }
@@ -240,6 +241,9 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
                 operands.push(*v);
             }
         }
+        InstructionKind::Release(v) => {
+            operands.push(*v);
+        }
         InstructionKind::ConstInt(_, _) | InstructionKind::ConstFloat(_, _) => {}
     }
     operands
@@ -264,6 +268,9 @@ fn has_side_effects(inst: &Instruction) -> bool {
 
         // Reference creation (prevents optimization of the referent)
         InstructionKind::Peek(_, _) | InstructionKind::Hand(_, _) => true,
+
+        // Explicit permission release
+        InstructionKind::Release(_) => true,
 
         // Lambda creation has the side effect of capturing and heap-allocating
         InstructionKind::Lambda(_, _, _) => true,

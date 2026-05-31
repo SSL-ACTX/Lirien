@@ -81,6 +81,7 @@ pub fn analyze_liveness(func: &Function) -> LivenessAnalysisResults {
         let mut current_live = live_out.get(&block.id).unwrap().clone();
         for (idx, inst) in block.instructions.iter().enumerate().rev() {
             inst_live_out.insert((block.id.0, idx), current_live.clone());
+            tracing::debug!(target: "lila::liveness", "Block {} Inst {}: {:?}, live_out: {:?}", block.id.0, idx, inst.kind, current_live);
 
             if let Some(def) = inst.get_def() {
                 current_live.remove(&def);

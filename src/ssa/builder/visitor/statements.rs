@@ -547,6 +547,29 @@ impl CFGBuilder {
                 self.start_block(exit_block);
                 Ok(())
             }
+            ast::Stmt::With(s) => {
+                let mut targets = Vec::new();
+                for item in s.items {
+                    let val = self.visit_expr(item.context_expr)?;
+                    if let Some(vars) = item.optional_vars {
+                        self.handle_assignment_target(&vars, val)?;
+                        // Collect variable names from the target expression
+                        self.collect_variable_names(&vars, &mut targets);
+                    }
+                }
+
+                for stmt in s.body {
+                    self.visit_stmt(stmt)?;
+                }
+
+                // Explicitly release the current value of each variable introduced by the with block
+                for var_name in targets {
+                    if let Ok(val) = self.read_variable(var_name, self.current_block) {
+                        self.add_instruction(InstructionKind::Release(val));
+                    }
+                }
+                Ok(())
+            }
             ast::Stmt::Break(_) => {
                 if let Some((_, exit_block)) = self.loop_stack.last() {
                     let eb = *exit_block;

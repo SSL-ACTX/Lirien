@@ -74,12 +74,15 @@ impl<'a> PermissionVerifier<'a> {
                             InstructionKind::Peek(_, src)
                             | InstructionKind::Hand(_, src)
                             | InstructionKind::StructLoad(_, src, _)
-                            | InstructionKind::BufferLoad(_, src, _)
-                            | InstructionKind::StructSet(_, src, _, _, _)
+                            | InstructionKind::BufferLoad(_, src, _) => {
+                                root_info = self.value_roots.get(src).cloned();
+                            }
+                            InstructionKind::StructSet(_, src, _, _, _)
                             | InstructionKind::ArrayStore(_, src, _, _, _)
                             | InstructionKind::BufferStore(_, src, _, _, _) => {
                                 root_info = self.value_roots.get(src).cloned();
                             }
+
                             InstructionKind::StructOffset(_, src, offset) => {
                                 let field_idx = self.get_field_index(*src, *offset);
                                 root_info = self
@@ -135,18 +138,21 @@ impl<'a> PermissionVerifier<'a> {
 
     fn is_consuming(&self, inst: &InstructionKind, val: Value) -> bool {
         let ty = self.func.get_type(val);
-        if !matches!(ty, Type::Held(_)) {
+        // Only pointer-like types can be "consumed" or moved.
+        // Peek references are specifically designed to be reused.
+        if !ty.is_pointer_like() || matches!(ty, Type::Peek(_)) {
             return false;
         }
 
         match inst {
             InstructionKind::Call(_, _, args) => args.contains(&val),
             InstructionKind::Return(Some(v)) => *v == val,
-            InstructionKind::StructSet(_, _, _, v, _) => *v == val,
-            InstructionKind::ArrayStore(_, _, _, v, _) => *v == val,
-            InstructionKind::BufferStore(_, _, _, v, _) => *v == val,
+            InstructionKind::StructSet(_, obj, _, v, _) => *v == val || *obj == val,
+            InstructionKind::ArrayStore(_, arr, _, v, _) => *v == val || *arr == val,
+            InstructionKind::BufferStore(_, buf, _, v, _) => *v == val || *buf == val,
             InstructionKind::TupleCreate(_, elts) => elts.contains(&val),
             InstructionKind::EnumCreate(_, _, _, Some(v)) => *v == val,
+            InstructionKind::Release(v) => *v == val,
             _ => false,
         }
     }
@@ -232,12 +238,12 @@ impl<'a> PermissionVerifier<'a> {
                 .ok_or_else(|| format!("Missing path condition for block {:?}", block.id))?;
 
             for (idx, inst) in block.instructions.iter().enumerate() {
-                let live_out = liveness
-                    .inst_live_out
-                    .get(&(block.id.0, idx))
-                    .ok_or_else(|| {
-                        format!("Missing liveness for block {:?} inst {}", block.id, idx)
-                    })?;
+                let live_out_opt = liveness.inst_live_out.get(&(block.id.0, idx));
+                tracing::debug!(target: "lila::verify", "Block {} Inst {}: {:?}, live_out lookup: {:?}", block.id.0, idx, inst.kind, live_out_opt);
+
+                let live_out = live_out_opt.ok_or_else(|| {
+                    format!("Missing liveness for block {:?} inst {}", block.id, idx)
+                })?;
 
                 // Active values = values live after this instruction + the value defined by this instruction
                 let mut active_values = live_out.clone();
@@ -311,12 +317,24 @@ impl<'a> PermissionVerifier<'a> {
                     if is_moving || is_mutating {
                         if let Some((root, _u_orig_path)) = self.value_roots.get(&u) {
                             let affected_path = self.get_target_path(&inst.kind, u).unwrap();
+                            tracing::debug!(target: "lila::verify", "Checking conflict for {:?} at path {}, live_out: {:?}", u, affected_path, live_out);
                             for &v in live_out {
                                 if Some(v) == inst.get_def() {
                                     continue;
                                 }
                                 if let Some((v_root, v_path)) = self.value_roots.get(&v) {
+                                    tracing::debug!(target: "lila::verify", "  Comparing with {:?} at path {}", v, v_path);
                                     if v_root == root && affected_path.overlaps(v_path) {
+                                        // Ignore if v is an ancestor of the value being used (u),
+                                        // as u is a reborrow/sub-reference of v.
+                                        let (u_root, u_path) = self.value_roots.get(&u).unwrap();
+                                        if u_root == v_root
+                                            && v_path.is_prefix_of(u_path)
+                                            && v_path != u_path
+                                        {
+                                            continue;
+                                        }
+
                                         // Specific path overlap + Exclusive access/Move = Violation
                                         solver.push();
                                         solver.assert(path_cond);

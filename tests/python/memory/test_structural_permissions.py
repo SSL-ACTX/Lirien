@@ -54,6 +54,31 @@ class TestStructuralPermissions(unittest.TestCase):
         self.assertEqual(p.y, 100)
         self.assertEqual(p.x, 200)
 
+    def test_with_block_scope(self):
+        @verify
+        def with_scope(p: Hand[Point]) -> None:
+            with p.x as px:
+                px.val = 50
+            # px is explicitly released here
+            p.x = 100  # This should be safe because px was released
+
+        p = Point(x=0, y=0)
+        with_scope(p)
+        self.assertEqual(p.x, 100)
+
+    def test_with_block_use_after_fail(self):
+        p = Point(x=0, y=0)
+        with self.assertRaises(Exception) as cm:
+
+            @verify
+            def use_after(p: Hand[Point]) -> None:
+                with p.x as px:
+                    px.val = 50
+                px.val = 100  # px should be released here
+
+            use_after(p)
+        self.assertIn("Memory safety violation", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

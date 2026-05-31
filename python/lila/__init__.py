@@ -21,7 +21,18 @@ from .types import (
     Callable,
     Closure,
 )
-from .compiler import verify, VerificationError
+from .compiler import (
+    verify,
+    VerificationError,
+    configure_tracing,
+    LIVENESS,
+    VERIFY,
+    Z3,
+    SSA,
+    BACKEND,
+    BRIDGE,
+    ALL,
+)
 
 __all__ = [
     "Hand",
@@ -44,4 +55,12 @@ __all__ = [
     "u64",
     "f32",
     "f64",
+    "configure_tracing",
+    "LIVENESS",
+    "VERIFY",
+    "Z3",
+    "SSA",
+    "BACKEND",
+    "BRIDGE",
+    "ALL",
 ]

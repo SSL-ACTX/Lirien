@@ -10,6 +10,26 @@ from .types import TYPE_MAP, Buffer, Hand, Peek, SizedArray, Closure, FnPointer
 T = TypeVar("T", bound=Callable)
 
 
+def configure_tracing(config: Dict[str, str]):
+    """
+    Configure granular tracing for Lila components.
+
+    Example:
+        configure_tracing({"liveness": "debug", "verify": "info"})
+    """
+    lila_core.configure_tracing(config)
+
+
+# Component names for tracing
+LIVENESS = "liveness"
+VERIFY = "verify"
+Z3 = "verify::z3"
+SSA = "ssa"
+BACKEND = "backend"
+BRIDGE = "bridge"
+ALL = "all"
+
+
 class VerificationError(Exception):
     """Raised when Lila formal verification or JIT compilation fails in strict mode."""
 
