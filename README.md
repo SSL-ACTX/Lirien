@@ -118,7 +118,32 @@ def create_some(x: i64) -> i64:
     return -1
 ```
 
-### 5. Higher-Order Functions: First-Class Verified Logic
+### 5. Recursive Functions: Inductive Reasoning
+Lila can formally prove properties of recursive functions using inductive hypotheses and precise interval analysis. It ensures that recursive calls satisfy the function's own refinements and that return values satisfy refinements across inductive steps.
+```python
+from lila import verify, i64, Refined
+
+# Result is always >= 1
+StrictPositive = Refined[i64, lambda x: x >= 1]
+# Input bounded to prevent signed overflow during induction
+SmallPos = Refined[i64, lambda x: (0 <= x) & (x <= 20)]
+
+@verify
+def factorial(n: SmallPos) -> StrictPositive:
+    if n <= 1:
+        return 1
+    # Lila proves inductively: n * fac(n-1) >= 2 * 1 >= 1
+    return n * factorial(n - 1)
+
+@verify
+def fib(n: SmallPos) -> i64:
+    if n <= 0: return 0
+    if n == 1: return 1
+    # Verified with nested recursive calls
+    return fib(n - 1) + fib(n - 2)
+```
+
+### 6. Higher-Order Functions: First-Class Verified Logic
 Lila supports closures and lambdas with full formal verification of their capture environments. Captured variables are automatically detected, bundled into heap-allocated environments, and verified for safe access.
 ```python
 from lila import verify, i64, Closure
@@ -132,7 +157,7 @@ add5 = make_adder(5)
 result = add5(10) # result = 15
 ```
 
-### 6. Verified Buffer and NumPy Interop
+### 7. Verified Buffer and NumPy Interop
 Seamlessly operate on high-performance memory buffers (like NumPy arrays) with Z3-proven bounds checking.
 ```python
 from lila import verify, Buffer, f64
@@ -145,7 +170,7 @@ def scale_vector(vec: Buffer[f64], factor: f64) -> None:
         vec[i] *= factor
 ```
 
-### 7. Source-Level Diagnostics
+### 8. Source-Level Diagnostics
 Lila provides visual highlights for verification failures, mapping IR-level logic errors back to your original Python source code for immediate debugging.
 ```text
 [Lila Warning] Lila Verification Failed for 'divide_unsafe': Potential division by zero at v2
@@ -155,7 +180,7 @@ Lila provides visual highlights for verification failures, mapping IR-level logi
    |                ^--- Logic error detected here
 ```
 
-### 8. GIL-less Parallelism
+### 9. GIL-less Parallelism
 Since Lila code operates on raw memory and avoids `PyObject` manipulation, it can execute across multiple threads without ever acquiring the Global Interpreter Lock.
 
 ---
@@ -219,5 +244,8 @@ Extending the bit-accurate model to prove stability and bound precision loss in 
 <div align="center">
 
 Built with 🦀 & 🐍 by [Seuriin](https://github.com/SSL-ACTX)
+
+</div>
+
 
 </div>

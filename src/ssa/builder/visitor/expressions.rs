@@ -581,9 +581,11 @@ impl CFGBuilder {
                 self.update_location(expr_offset);
                 self.add_instruction(InstructionKind::Call(dest, func_name.clone(), args));
 
-                // Look up return type in registry
+                // Look up return type in registry or self
                 let mut ret_ty = Type::Unknown;
-                if let Ok(registry) = crate::bridge::registry::GLOBAL_REGISTRY.lock() {
+                if func_name == self.func.name {
+                    ret_ty = self.func.return_type.clone();
+                } else if let Ok(registry) = crate::bridge::registry::GLOBAL_REGISTRY.lock() {
                     if let Some(sig) = registry.get(&func_name) {
                         ret_ty = sig.return_type.clone();
                     }

@@ -61,6 +61,7 @@ pub fn verify_and_compile(
             }
         }
         let return_type = ssa.return_type.clone();
+        let return_refinement = ssa.ret_refinement.clone();
 
         let code_ptr = crate::backend::compile(&ssa)
             .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
@@ -72,6 +73,7 @@ pub fn verify_and_compile(
                 arg_types,
                 arg_refinements,
                 return_type,
+                return_refinement,
                 pointer: code_ptr,
             });
         }

@@ -6,6 +6,7 @@ use z3::ast::{Array, Bool, Float, Int, BV};
 use z3::{Context, Solver};
 
 pub mod arithmetic;
+pub mod calls;
 pub mod control_flow;
 pub mod memory;
 pub mod tuples;
@@ -295,9 +296,11 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
                     tuples::translate(t_ctx, inst, &path_cond)?;
                 }
+                InstructionKind::Call(..) => {
+                    calls::translate(t_ctx, inst, &path_cond)?;
+                }
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
-                | InstructionKind::Call(..)
                 | InstructionKind::Return(..)
                 | InstructionKind::Nop => {}
             }
@@ -330,6 +333,13 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                         }
                     }
                 }
+            } else if let Some(z3_int) = t_ctx.z3_ints.get(val) {
+                if let Bound::Finite(low) = interval.low {
+                    solver.assert(z3_int.ge(&Int::from_i64(low as i64)));
+                }
+                if let Bound::Finite(high) = interval.high {
+                    solver.assert(z3_int.le(&Int::from_i64(high as i64)));
+                }
             } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                 if let Bound::Finite(low) = interval.low {
                     let low_float = if matches!(ty, Type::F32) {
@@ -359,19 +369,26 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                         if let Bound::Finite(low) = interval.low {
                             let low_bv = BV::from_i64(low as i64, bit_width);
                             if is_signed {
-                                solver.assert(path_cond.implies(&z3_bv.bvsge(&low_bv)));
+                                solver.assert(&path_cond.implies(&z3_bv.bvsge(&low_bv)));
                             } else {
-                                solver.assert(path_cond.implies(&z3_bv.bvuge(&low_bv)));
+                                solver.assert(&path_cond.implies(&z3_bv.bvuge(&low_bv)));
                             }
                         }
                         if let Bound::Finite(high) = interval.high {
                             let high_bv = BV::from_i64(high as i64, bit_width);
                             if is_signed {
-                                solver.assert(path_cond.implies(&z3_bv.bvsle(&high_bv)));
+                                solver.assert(&path_cond.implies(&z3_bv.bvsle(&high_bv)));
                             } else {
-                                solver.assert(path_cond.implies(&z3_bv.bvule(&high_bv)));
+                                solver.assert(&path_cond.implies(&z3_bv.bvule(&high_bv)));
                             }
                         }
+                    }
+                } else if let Some(z3_int) = t_ctx.z3_ints.get(val) {
+                    if let Bound::Finite(low) = interval.low {
+                        solver.assert(&path_cond.implies(&z3_int.ge(&Int::from_i64(low as i64))));
+                    }
+                    if let Bound::Finite(high) = interval.high {
+                        solver.assert(&path_cond.implies(&z3_int.le(&Int::from_i64(high as i64))));
                     }
                 } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                     if let Bound::Finite(low) = interval.low {
@@ -380,7 +397,7 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                         } else {
                             Float::from_f64(low)
                         };
-                        solver.assert(path_cond.implies(&z3_float.ge(&low_float)));
+                        solver.assert(&path_cond.implies(&z3_float.ge(&low_float)));
                     }
                     if let Bound::Finite(high) = interval.high {
                         let high_float = if matches!(ty, Type::F32) {
@@ -388,7 +405,7 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                         } else {
                             Float::from_f64(high)
                         };
-                        solver.assert(path_cond.implies(&z3_float.le(&high_float)));
+                        solver.assert(&path_cond.implies(&z3_float.le(&high_float)));
                     }
                 }
             }
@@ -453,7 +470,30 @@ fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<
         for inst in &block.instructions {
             if let InstructionKind::Call(_, target_name, args) = &inst.kind {
                 let registry = crate::bridge::registry::GLOBAL_REGISTRY.lock().unwrap();
-                if let Some(sig) = registry.get(target_name) {
+                let sig = if target_name == &t_ctx.func.name {
+                    // Recursive call: use current function's signature
+                    let mut arg_types = Vec::new();
+                    let mut arg_refinements = HashMap::new();
+                    for i in 0..t_ctx.func.arg_count {
+                        let v = Value(i);
+                        arg_types.push(t_ctx.func.get_type(v));
+                        if let Some(ref_str) = t_ctx.func.refinements.get(&v) {
+                            arg_refinements.insert(i, ref_str.clone());
+                        }
+                    }
+                    Some(crate::bridge::registry::FunctionSignature {
+                        name: target_name.clone(),
+                        arg_types,
+                        arg_refinements,
+                        return_type: t_ctx.func.return_type.clone(),
+                        return_refinement: t_ctx.func.ret_refinement.clone(),
+                        pointer: 0,
+                    })
+                } else {
+                    registry.get(target_name).cloned()
+                };
+
+                if let Some(sig) = sig {
                     for (i, arg_val) in args.iter().enumerate() {
                         if let Some(ref_str) = sig.arg_refinements.get(&i) {
                             let arg_ty = t_ctx.func.get_type(*arg_val);

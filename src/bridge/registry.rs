@@ -9,6 +9,7 @@ pub struct FunctionSignature {
     pub arg_types: Vec<Type>,
     pub arg_refinements: HashMap<usize, String>,
     pub return_type: Type,
+    pub return_refinement: Option<String>,
     pub pointer: usize,
 }
 
