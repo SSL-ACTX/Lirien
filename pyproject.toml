@@ -34,4 +34,5 @@ Documentation = "https://github.com/SSL-ACTX/Lila"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "lila.lila_core"
+module-name = "lila.lila_bridge"
+manifest-path = "crates/lila-bridge/Cargo.toml"

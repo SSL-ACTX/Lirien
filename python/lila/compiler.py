@@ -4,7 +4,7 @@ import textwrap
 import os
 import ctypes
 from typing import Callable, TypeVar, Any, Dict, List, Tuple
-from . import lila_core
+from . import lila_bridge
 from .types import TYPE_MAP, Buffer, Hand, Peek, SizedArray, Closure, FnPointer
 
 T = TypeVar("T", bound=Callable)
@@ -17,7 +17,7 @@ def configure_tracing(config: Dict[str, str]):
     Example:
         configure_tracing({"liveness": "debug", "verify": "info"})
     """
-    lila_core.configure_tracing(config)
+    lila_bridge.configure_tracing(config)
 
 
 def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
@@ -439,7 +439,7 @@ def _setup_logging(log_level: str) -> Tuple[str, str]:
     """Override LILA_LOG level and return (log_level, old_log_level) for restoration."""
     if log_level:
         old_log = os.environ.get("LILA_LOG", "info")
-        lila_core.set_log_level(log_level)
+        lila_bridge.set_log_level(log_level)
         os.environ["LILA_LOG"] = log_level
         return log_level, old_log
     return None, None
@@ -448,7 +448,7 @@ def _setup_logging(log_level: str) -> Tuple[str, str]:
 def _restore_logging(log_level: str, old_log: str):
     """Restore the original LILA_LOG level."""
     if log_level:
-        lila_core.set_log_level(old_log)
+        lila_bridge.set_log_level(old_log)
         os.environ["LILA_LOG"] = old_log
 
 
@@ -588,7 +588,7 @@ def verify(
             )
 
             try:
-                code_ptr = lila_core.verify_and_compile(
+                code_ptr = lila_bridge.verify_and_compile(
                     source, target_func_name, struct_layouts, enum_layouts, type_aliases
                 )
             finally:
