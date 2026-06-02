@@ -67,6 +67,12 @@ pub fn translate(
                             ctx.solver.assert(edge_cond.implies(z3_dest.eq(z3_src)));
                         }
                     }
+
+                    if let (Some(p_dest), Some(p_src)) =
+                        (ctx.z3_perms.get(dest), ctx.z3_perms.get(src_val))
+                    {
+                        ctx.solver.assert(edge_cond.implies(p_dest.eq(p_src)));
+                    }
                 }
             }
         }

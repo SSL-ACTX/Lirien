@@ -1,3 +1,5 @@
+pub mod tracker;
+
 use lila_ir::analysis::liveness::LivenessAnalysisResults;
 use lila_ir::ir::{AccessPath, BlockId, Function, InstructionKind, PathElement, Type, Value};
 use std::collections::{HashMap, HashSet};
@@ -5,11 +7,11 @@ use z3::ast::{Bool, Real};
 use z3::{SatResult, Solver};
 
 pub struct PermissionVerifier<'a> {
-    func: &'a Function,
+    pub func: &'a Function,
     // Maps each Value to the Root it originates from and its AccessPath.
-    value_roots: HashMap<Value, (Value, AccessPath)>,
-    parallel_blocks: HashSet<BlockId>,
-    uid: usize,
+    pub value_roots: HashMap<Value, (Value, AccessPath)>,
+    pub parallel_blocks: HashSet<BlockId>,
+    pub uid: usize,
 }
 
 impl<'a> PermissionVerifier<'a> {
@@ -171,73 +173,6 @@ impl<'a> PermissionVerifier<'a> {
         }
     }
 
-    fn is_consuming(&self, inst: &InstructionKind, val: Value) -> bool {
-        let ty = self.func.get_type(val);
-        // Primitives and shared references (Peek, Buffer) are not consumed by use.
-        if !ty.is_pointer_like() || matches!(ty, Type::Peek(_) | Type::Buffer(_)) {
-            return false;
-        }
-
-        match inst {
-            InstructionKind::Call(_, _, args) => args.contains(&val),
-            InstructionKind::Return(Some(v)) => *v == val,
-            InstructionKind::StructSet(_, obj, _, v, _) => *v == val || *obj == val,
-            InstructionKind::ArrayStore(_, arr, _, v, _) => *v == val || *arr == val,
-            InstructionKind::BufferStore(_, buf, _, v, _) => *v == val || *buf == val,
-            InstructionKind::TupleCreate(_, elts) => elts.contains(&val),
-            InstructionKind::EnumCreate(_, _, _, Some(v)) => *v == val,
-            InstructionKind::Release(v) => *v == val,
-            _ => false,
-        }
-    }
-
-    fn requires_exclusive(&self, inst: &InstructionKind, val: Value) -> bool {
-        match inst {
-            InstructionKind::StructSet(_, obj, _, _, _) => *obj == val,
-            InstructionKind::ArrayStore(_, arr, _, _, _) => *arr == val,
-            InstructionKind::BufferStore(_, buf, _, _, _) => *buf == val,
-            InstructionKind::Hand(_, src) => *src == val,
-            _ => false,
-        }
-    }
-
-    fn get_target_path(&self, inst: &InstructionKind, u: Value) -> Option<AccessPath> {
-        let (_, path) = self.value_roots.get(&u)?;
-        match inst {
-            InstructionKind::StructSet(_, obj, offset, _, _) if *obj == u => {
-                let field_idx = self.get_field_index(*obj, *offset);
-                Some(path.extend(PathElement::Field(field_idx)))
-            }
-            InstructionKind::StructLoad(_, obj, offset) if *obj == u => {
-                let field_idx = self.get_field_index(*obj, *offset);
-                Some(path.extend(PathElement::Field(field_idx)))
-            }
-            InstructionKind::StructOffset(_, obj, offset) if *obj == u => {
-                let field_idx = self.get_field_index(*obj, *offset);
-                Some(path.extend(PathElement::Field(field_idx)))
-            }
-            InstructionKind::ArrayLoad(_, src, idx_val) if *src == u => {
-                Some(path.extend(PathElement::Index(*idx_val)))
-            }
-            InstructionKind::ArrayStore(_, arr, idx_val, _, _) if *arr == u => {
-                Some(path.extend(PathElement::Index(*idx_val)))
-            }
-            InstructionKind::BufferLoad(_, src, idx_val) if *src == u => {
-                Some(path.extend(PathElement::Index(*idx_val)))
-            }
-            InstructionKind::BufferStore(_, buf, idx_val, _, _) if *buf == u => {
-                Some(path.extend(PathElement::Index(*idx_val)))
-            }
-            InstructionKind::TupleExtract(_, src, idx) if *src == u => {
-                Some(path.extend(PathElement::Field(*idx)))
-            }
-            InstructionKind::EnumExtract(_, src, idx) if *src == u => {
-                Some(path.extend(PathElement::Field(*idx)))
-            }
-            _ => Some(path.clone()),
-        }
-    }
-
     pub fn generate_assertions(
         &self,
         solver: &Solver,
@@ -252,32 +187,21 @@ impl<'a> PermissionVerifier<'a> {
         let loop_count = Real::new_const(format!("loop_count_{}", self.uid));
         solver.assert(loop_count.gt(&one));
 
-        // 1. Constrain symbolic permission weights
-        for (&v, p_var) in value_perms {
-            let ty = self.func.get_type(v);
-            match ty {
-                Type::Held(_) | Type::Hand(_) => {
-                    solver.assert(p_var.eq(&one));
-                }
-                _ if ty.is_pointer_like() => {
-                    solver.assert(p_var.gt(&zero));
-                    solver.assert(p_var.le(&one));
-                }
-                _ => {}
-            }
-        }
-
         let all_roots: HashSet<Value> = self.value_roots.values().map(|(r, _)| *r).collect();
 
-        // 2. Perform flow-sensitive verification
+        // 1. Perform flow-sensitive verification
         for block in &self.func.blocks {
             let path_cond = block_conditions
                 .get(&block.id)
                 .ok_or_else(|| format!("Missing path condition for block {:?}", block.id))?;
 
+            if !self.parallel_blocks.contains(&block.id) {
+                continue;
+            }
+
             for (idx, inst) in block.instructions.iter().enumerate() {
                 let live_out_opt = liveness.inst_live_out.get(&(block.id.0, idx));
-                tracing::debug!(target: "lila::verify", "Block {} Inst {}: {:?}, live_out lookup: {:?}", block.id.0, idx, inst.kind, live_out_opt);
+                tracing::debug!(target: "lila::verify", "Parallel Block {} Inst {}: {:?}, live_out lookup: {:?}", block.id.0, idx, inst.kind, live_out_opt);
 
                 let live_out = live_out_opt.ok_or_else(|| {
                     format!("Missing liveness for block {:?} inst {}", block.id, idx)
@@ -289,7 +213,7 @@ impl<'a> PermissionVerifier<'a> {
                     active_values.insert(def);
                 }
 
-                // A. Check Fractional Permission Sum for each Root
+                // Check Fractional Permission Sum for each Root
                 for &root in &all_roots {
                     let root_values: Vec<Value> = active_values
                         .iter()
@@ -324,88 +248,39 @@ impl<'a> PermissionVerifier<'a> {
                         let mut terms = Vec::new();
                         for &v in &group {
                             if let Some(p_var) = value_perms.get(&v) {
+                                // Constrain weights on-demand
+                                let ty = self.func.get_type(v);
+                                match ty {
+                                    Type::Held(_) | Type::Hand(_) => {
+                                        solver.assert(p_var.eq(&one));
+                                    }
+                                    _ if ty.is_pointer_like() => {
+                                        solver.assert(p_var.gt(&zero));
+                                        solver.assert(p_var.le(&one));
+                                    }
+                                    _ => {}
+                                }
                                 terms.push(p_var);
                             }
                         }
 
                         if !terms.is_empty() {
-                            let mut sum = if terms.len() == 1 {
+                            let sum = if terms.len() == 1 {
                                 terms[0].clone()
                             } else {
                                 Real::add(terms.as_slice())
                             };
 
-                            if self.parallel_blocks.contains(&block.id) {
-                                sum *= loop_count.clone();
-                            }
+                            let parallel_sum = sum * loop_count.clone();
+                            solver.assert(path_cond.implies(parallel_sum.le(&one)));
 
-                            solver.assert(path_cond.implies(sum.le(&one)));
-
-                            if (terms.len() > 1 || self.parallel_blocks.contains(&block.id))
-                                && solver.check() == SatResult::Unsat
-                            {
-                                let error_msg = if self.parallel_blocks.contains(&block.id) {
-                                    format!("Possible data-race: Parallel iterations conflict on shared state for root {:?} at path {}", root, path)
-                                } else {
-                                    format!("Memory safety violation: No valid fractional permission partitioning exists for root {:?} at path {}", root, path)
-                                };
+                            if solver.check() == SatResult::Unsat {
+                                let error_msg = format!("Possible data-race: Parallel iterations conflict on shared state for root {:?} at path {}", root, path);
 
                                 return Err(format!(
                                     "{} at instruction {} in block {:?}.",
                                     error_msg, idx, block.id
                                 ));
-                            }
-                        }
-                    }
-                }
-
-                // B. Check for Linear Move Violations & Exclusive Access
-                for &u in &inst.get_uses() {
-                    let is_moving = self.is_consuming(&inst.kind, u);
-                    let is_mutating = self.requires_exclusive(&inst.kind, u);
-
-                    if is_moving || is_mutating {
-                        if let Some((root, _u_orig_path)) = self.value_roots.get(&u) {
-                            let affected_path = self.get_target_path(&inst.kind, u).unwrap();
-                            tracing::debug!(target: "lila::verify", "Checking conflict for {:?} at path {}, live_out: {:?}", u, affected_path, live_out);
-                            for &v in live_out {
-                                if Some(v) == inst.get_def() {
-                                    continue;
-                                }
-                                if let Some((v_root, v_path)) = self.value_roots.get(&v) {
-                                    tracing::debug!(target: "lila::verify", "  Comparing with {:?} at path {}", v, v_path);
-                                    if v_root == root && affected_path.overlaps(v_path) {
-                                        // Ignore if v is an ancestor of the value being used (u),
-                                        // as u is a reborrow/sub-reference of v.
-                                        let (u_root, u_path) = self.value_roots.get(&u).unwrap();
-                                        if u_root == v_root
-                                            && v_path.is_prefix_of(u_path)
-                                            && v_path != u_path
-                                        {
-                                            continue;
-                                        }
-
-                                        // Specific path overlap + Exclusive access/Move = Violation
-                                        solver.push();
-                                        solver.assert(path_cond);
-                                        let check_res = solver.check();
-                                        solver.pop(1);
-
-                                        if check_res == SatResult::Sat {
-                                            return Err(format!(
-                                                "Memory safety violation: Root {:?} at path {} is {} via value {:?}, but overlapping path {} is still referenced by live value {:?} at instruction {} in block {:?}.",
-                                                root,
-                                                affected_path,
-                                                if is_moving { "moved" } else { "mutated" },
-                                                u,
-                                                v_path,
-                                                v,
-                                                idx,
-                                                block.id
-                                            ));
-                                        }
-                                    }
-                                }
                             }
                         }
                     }

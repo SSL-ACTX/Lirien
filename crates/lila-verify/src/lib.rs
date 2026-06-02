@@ -3,6 +3,7 @@ pub mod refinement_parser;
 pub mod z3;
 
 use self::z3::verify_with_context;
+use crate::permissions::tracker::OwnershipTracker;
 use crate::permissions::PermissionVerifier;
 use ::z3::{Context, Params, Solver};
 use lila_ir::analysis::{interval, liveness};
@@ -28,6 +29,11 @@ pub fn verify(func: &Function) -> Result<(), String> {
     // 3. Setup Fractional Permission Verifier
     let mut perm_verifier = PermissionVerifier::new(func);
     perm_verifier.set_uid(uid);
+
+    // 3.5. Fast Rust-Native Ownership Check
+    tracing::info!(target: "lila::verify", "Running Ownership Tracker for '{}'...", func.name);
+    let ownership_tracker = OwnershipTracker::new(func, &perm_verifier.value_roots, &liveness);
+    ownership_tracker.verify()?;
 
     // 4. Logic Verification with Z3
     tracing::info!(target: "lila::verify", "Starting Z3 verification for '{}'...", func.name);

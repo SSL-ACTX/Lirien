@@ -317,6 +317,18 @@ impl AccessPath {
     pub fn overlaps(&self, other: &AccessPath) -> bool {
         self.is_prefix_of(other) || other.is_prefix_of(self)
     }
+
+    pub fn lca(&self, other: &AccessPath) -> Self {
+        let mut common = Vec::new();
+        for (a, b) in self.0.iter().zip(other.0.iter()) {
+            if a == b {
+                common.push(a.clone());
+            } else {
+                break;
+            }
+        }
+        AccessPath(common)
+    }
 }
 
 impl fmt::Display for Value {

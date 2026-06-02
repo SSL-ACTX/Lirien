@@ -241,6 +241,16 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
 }
 
 fn init_permissions(t_ctx: &mut TranslationContext) {
+    let has_parallel = t_ctx.func.blocks.iter().any(|b| {
+        b.instructions
+            .iter()
+            .any(|i| matches!(i.kind, InstructionKind::ParallelFor { .. }))
+    });
+
+    if !has_parallel {
+        return;
+    }
+
     // 2. Initialize Permission Variables for Fractional Permission Model
     for i in 0..t_ctx.func.value_count {
         let v = Value(i);
