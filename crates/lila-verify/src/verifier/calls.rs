@@ -1,9 +1,17 @@
-use crate::z3::TranslationContext;
+use crate::verifier::TranslationContext;
 use lila_ir::ir::{Instruction, Value};
 use z3::ast::Bool;
 
-pub fn translate(
-    t_ctx: &TranslationContext,
+pub fn translate<
+    B: crate::backend::SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
     inst: &Instruction,
     path_cond: &Bool,
 ) -> Result<(), String> {
@@ -37,11 +45,8 @@ pub fn translate(
             if let Some(ret_ref) = &sig.return_refinement {
                 let ty = t_ctx.func.get_type(*dest);
                 let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(dest) {
-                    crate::refinement_parser::parse_refinement(
-                        ret_ref,
-                        &z3_bv.to_int(ty.is_signed()),
-                        Some(z3_bv),
-                    )
+                    let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
+                    crate::refinement_parser::parse_refinement(ret_ref, &bv_int, Some(z3_bv))
                 } else if let Some(z3_int) = t_ctx.z3_ints.get(dest) {
                     crate::refinement_parser::parse_refinement(ret_ref, z3_int, None)
                 } else if let Some(z3_float) = t_ctx.z3_floats.get(dest) {
@@ -52,7 +57,8 @@ pub fn translate(
 
                 if let Ok(expr) = res {
                     // Inductive Hypothesis: Assume the function holds for smaller inputs.
-                    t_ctx.solver.assert(path_cond.implies(&expr));
+                    let __tmp = t_ctx.backend.bool_implies(path_cond, &expr);
+                    t_ctx.backend.assert(&__tmp);
                 }
             }
         }

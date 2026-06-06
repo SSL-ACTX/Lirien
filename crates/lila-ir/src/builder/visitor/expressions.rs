@@ -198,10 +198,8 @@ impl CFGBuilder {
                 let curr_ty = orig_ty.clone();
 
                 // Handle .val unwrap for Refined types (no-op in IR)
-                if s.attr.as_str() == "val" {
-                    if !matches!(curr_ty, Type::Struct(_)) {
-                        return Ok(obj);
-                    }
+                if s.attr.as_str() == "val" && !matches!(curr_ty, Type::Struct(_)) {
+                    return Ok(obj);
                 }
 
                 if let Type::Struct(struct_name) = curr_ty {
@@ -212,7 +210,7 @@ impl CFGBuilder {
                         })?;
 
                     let fields = self.func.struct_layouts.get(&struct_name).unwrap();
-                    let mut field_ty = fields
+                    let field_ty = fields
                         .iter()
                         .find(|(f, _)| f == s.attr.as_str())
                         .unwrap()

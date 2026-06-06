@@ -1,6 +1,5 @@
 use crate::builder::CFGBuilder;
-use crate::ir::{InstructionKind, SourceLocation, Type, Value};
-use rustpython_ast as ast;
+use crate::ir::{InstructionKind, SourceLocation, Value};
 
 impl CFGBuilder {
     pub(super) fn get_constant_int(&self, val: Value) -> Option<i64> {
@@ -30,17 +29,5 @@ impl CFGBuilder {
 
     pub(super) fn auto_load(&mut self, val: Value) -> Value {
         val
-    }
-
-    pub(super) fn collect_variable_names(&self, expr: &ast::Expr, names: &mut Vec<String>) {
-        match expr {
-            ast::Expr::Name(n) => names.push(n.id.to_string()),
-            ast::Expr::Tuple(t) => {
-                for elt in &t.elts {
-                    self.collect_variable_names(elt, names);
-                }
-            }
-            _ => {}
-        }
     }
 }

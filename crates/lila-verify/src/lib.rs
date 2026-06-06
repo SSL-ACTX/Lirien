@@ -1,7 +1,9 @@
+pub mod backend;
 pub mod refinement_parser;
-pub mod z3;
+pub mod verifier;
+pub mod z3_backend;
 
-use self::z3::verify_with_context;
+use self::verifier::verify_with_context;
 use ::z3::{Context, Params, Solver};
 use lila_ir::analysis::{interval, liveness};
 use lila_ir::ir::Function;
@@ -23,8 +25,8 @@ pub fn verify(func: &Function) -> Result<(), String> {
     tracing::info!(target: "lila::verify", "Running interval analysis for '{}'...", func.name);
     let analysis_results = interval::analyze(func);
 
-    // 3. Logic Verification with Z3
-    tracing::info!(target: "lila::verify", "Starting Z3 verification for '{}'...", func.name);
+    // 3. Logic Verification with Backend
+    tracing::info!(target: "lila::verify", "Starting verification for '{}'...", func.name);
     let ctx = Context::thread_local();
     let solver = Solver::new();
 
@@ -33,5 +35,7 @@ pub fn verify(func: &Function) -> Result<(), String> {
     params.set_u32("timeout", 5000);
     solver.set_params(&params);
 
-    verify_with_context(&ctx, &solver, func, &analysis_results, liveness, uid)
+    let mut backend = z3_backend::Z3Backend::new(&ctx, &solver);
+
+    verify_with_context(&mut backend, func, &analysis_results, liveness, uid)
 }

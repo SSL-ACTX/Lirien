@@ -1,9 +1,7 @@
+use crate::backend::SolverBackend;
 use lila_ir::analysis::interval::{Bound, IntervalAnalysisResults};
 use lila_ir::ir::{BlockId, Function, InstructionKind, Type, Value};
 use std::collections::HashMap;
-
-use z3::ast::{Array, Bool, Float, Int, BV};
-use z3::{Context, Solver};
 
 pub mod arithmetic;
 pub mod calls;
@@ -44,55 +42,71 @@ pub fn get_leaf_offsets(
     }
 }
 
-pub fn copy_composite_z3<'a>(
-    t_ctx: &TranslationContext<'a>,
-    current_state: Array,
+pub fn copy_composite<
+    'a,
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'a, B>,
+    current_state: B::Array,
     src_val: Value,
     src_ty: &Type,
     dest_base_offset: i64,
-) -> Array {
+) -> B::Array {
     let mut new_state = current_state;
     let mut leaves = Vec::new();
     get_leaf_offsets(src_ty, &t_ctx.func.struct_layouts, 0, &mut leaves);
 
-    if let Some(src_array) = t_ctx.z3_arrays.get(&src_val) {
+    if let Some(src_array) = t_ctx.z3_arrays.get(&src_val).cloned() {
         for (offset, _leaf_ty) in leaves {
-            let src_offset_z3 = Int::from_i64(offset as i64);
-            let dest_offset_z3 = Int::from_i64(dest_base_offset + offset as i64);
-            let val = src_array.select(&src_offset_z3);
-            new_state = new_state.store(&dest_offset_z3, &val);
+            let src_offset_z3 = t_ctx.backend.int_from_i64(offset as i64);
+            let dest_offset_z3 = t_ctx.backend.int_from_i64(dest_base_offset + offset as i64);
+            let val = t_ctx.backend.array_select_bv(&src_array, &src_offset_z3);
+            new_state = t_ctx
+                .backend
+                .array_store_bv(&new_state, &dest_offset_z3, &val);
         }
     }
     new_state
 }
 
-pub struct TranslationContext<'a> {
-    pub ctx: &'a Context,
-    pub solver: &'a Solver,
+pub struct TranslationContext<'a, B: SolverBackend> {
+    pub backend: &'a mut B,
     pub func: &'a Function,
     pub analysis: &'a IntervalAnalysisResults,
     pub uid: usize,
-    pub z3_ints: HashMap<Value, Int>, // Kept for refinement parsing
-    pub z3_floats: HashMap<Value, Float>,
-    pub z3_bvs: HashMap<Value, BV>,
-    pub z3_arrays: HashMap<Value, Array>,
+    pub z3_ints: HashMap<Value, B::Int>,
+    pub z3_floats: HashMap<Value, B::Float>,
+    pub z3_bvs: HashMap<Value, B::BV>,
+    pub z3_arrays: HashMap<Value, B::Array>,
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
-    pub block_conditions: HashMap<BlockId, Bool>,
-    pub edge_conditions: HashMap<(BlockId, BlockId), Bool>,
+    pub block_conditions: HashMap<BlockId, B::Bool>,
+    pub edge_conditions: HashMap<(BlockId, BlockId), B::Bool>,
     pub has_refinements: bool,
 }
 
-pub fn verify_with_context(
-    ctx: &Context,
-    solver: &Solver,
+pub fn verify_with_context<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    backend: &mut B,
     func: &Function,
     analysis: &IntervalAnalysisResults,
     _liveness: lila_ir::analysis::liveness::LivenessAnalysisResults,
     uid: usize,
 ) -> Result<(), String> {
     let mut t_ctx = TranslationContext {
-        ctx,
-        solver,
+        backend,
         func,
         analysis,
         uid,
@@ -109,31 +123,41 @@ pub fn verify_with_context(
     // 1. Initialize Z3 values for all SSA values
     memory::init_values(&mut t_ctx)?;
 
-    assert_cfg_constraints(&mut t_ctx, solver);
+    assert_cfg_constraints(&mut t_ctx);
 
     translate_instructions(&mut t_ctx)?;
 
-    assert_derived_intervals(&t_ctx, solver);
+    assert_derived_intervals(&mut t_ctx);
 
-    verify_return_refinements(&t_ctx, solver)?;
+    verify_return_refinements(&mut t_ctx)?;
 
-    verify_call_arguments(&t_ctx, solver)?;
+    verify_call_arguments(&mut t_ctx)?;
 
     // 11. Final Consistency Check
     if !t_ctx.has_refinements {
-        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements).", func.name);
+        tracing::info!(target: "lila::verify::verifier", "Skipping final consistency check for '{}' (no refinements).", func.name);
     } else {
-        tracing::info!(target: "lila::verify::z3", "Performing final consistency check for '{}'...", func.name);
-        if solver.check() == z3::SatResult::Unsat {
+        tracing::info!(target: "lila::verify::verifier", "Performing final consistency check for '{}'...", func.name);
+        if t_ctx.backend.check() == Ok(false) {
             return Err("Formal verification failed: Logical contradiction detected.".to_string());
         }
     }
 
-    tracing::info!(target: "lila::verify::z3", "Proof successful for '{}'", func.name);
+    tracing::info!(target: "lila::verify::verifier", "Proof successful for '{}'", func.name);
     Ok(())
 }
 
-fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
+fn assert_derived_intervals<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) {
     // 6. Assert derived intervals and refinements
     for (val, interval) in &t_ctx.analysis.intervals {
         if let Some(ty) = t_ctx.func.value_types.get(val) {
@@ -141,38 +165,44 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                 if let Some(bit_width) = ty.int_bit_width() {
                     let is_signed = ty.is_signed();
                     if let Bound::Finite(low) = interval.low {
-                        let low_bv = BV::from_i64(low as i64, bit_width);
+                        let low_bv = t_ctx.backend.bv_from_i64(low as i64, bit_width);
                         if is_signed {
-                            solver.assert(z3_bv.bvsge(&low_bv));
+                            let __tmp = t_ctx.backend.bv_sge(z3_bv, &low_bv);
+                            t_ctx.backend.assert(&__tmp);
                         } else {
-                            solver.assert(z3_bv.bvuge(&low_bv));
+                            let __tmp = t_ctx.backend.bv_uge(z3_bv, &low_bv);
+                            t_ctx.backend.assert(&__tmp);
                         }
                     }
                     if let Bound::Finite(high) = interval.high {
-                        let high_bv = BV::from_i64(high as i64, bit_width);
+                        let high_bv = t_ctx.backend.bv_from_i64(high as i64, bit_width);
                         if is_signed {
-                            solver.assert(z3_bv.bvsle(&high_bv));
+                            let __tmp = t_ctx.backend.bv_sle(z3_bv, &high_bv);
+                            t_ctx.backend.assert(&__tmp);
                         } else {
-                            solver.assert(z3_bv.bvule(&high_bv));
+                            let __tmp = t_ctx.backend.bv_ule(z3_bv, &high_bv);
+                            t_ctx.backend.assert(&__tmp);
                         }
                     }
                 }
             } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                 if let Bound::Finite(low) = interval.low {
                     let low_float = if matches!(ty, Type::F32) {
-                        Float::from_f32(low as f32)
+                        t_ctx.backend.float_from_f32(low as f32)
                     } else {
-                        Float::from_f64(low)
+                        t_ctx.backend.float_from_f64(low)
                     };
-                    solver.assert(z3_float.ge(&low_float));
+                    let __tmp = t_ctx.backend.float_ge(z3_float, &low_float);
+                    t_ctx.backend.assert(&__tmp);
                 }
                 if let Bound::Finite(high) = interval.high {
                     let high_float = if matches!(ty, Type::F32) {
-                        Float::from_f32(high as f32)
+                        t_ctx.backend.float_from_f32(high as f32)
                     } else {
-                        Float::from_f64(high)
+                        t_ctx.backend.float_from_f64(high)
                     };
-                    solver.assert(z3_float.le(&high_float));
+                    let __tmp = t_ctx.backend.float_le(z3_float, &high_float);
+                    t_ctx.backend.assert(&__tmp);
                 }
             }
         }
@@ -185,38 +215,50 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                     if let Some(bit_width) = ty.int_bit_width() {
                         let is_signed = ty.is_signed();
                         if let Bound::Finite(low) = interval.low {
-                            let low_bv = BV::from_i64(low as i64, bit_width);
+                            let low_bv = t_ctx.backend.bv_from_i64(low as i64, bit_width);
                             if is_signed {
-                                solver.assert(path_cond.implies(z3_bv.bvsge(&low_bv)));
+                                let __inner = t_ctx.backend.bv_sge(z3_bv, &low_bv);
+                                let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                                t_ctx.backend.assert(&__tmp);
                             } else {
-                                solver.assert(path_cond.implies(z3_bv.bvuge(&low_bv)));
+                                let __inner = t_ctx.backend.bv_uge(z3_bv, &low_bv);
+                                let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                                t_ctx.backend.assert(&__tmp);
                             }
                         }
                         if let Bound::Finite(high) = interval.high {
-                            let high_bv = BV::from_i64(high as i64, bit_width);
+                            let high_bv = t_ctx.backend.bv_from_i64(high as i64, bit_width);
                             if is_signed {
-                                solver.assert(path_cond.implies(z3_bv.bvsle(&high_bv)));
+                                let __inner = t_ctx.backend.bv_sle(z3_bv, &high_bv);
+                                let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                                t_ctx.backend.assert(&__tmp);
                             } else {
-                                solver.assert(path_cond.implies(z3_bv.bvule(&high_bv)));
+                                let __inner = t_ctx.backend.bv_ule(z3_bv, &high_bv);
+                                let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                                t_ctx.backend.assert(&__tmp);
                             }
                         }
                     }
                 } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                     if let Bound::Finite(low) = interval.low {
                         let low_float = if matches!(ty, Type::F32) {
-                            Float::from_f32(low as f32)
+                            t_ctx.backend.float_from_f32(low as f32)
                         } else {
-                            Float::from_f64(low)
+                            t_ctx.backend.float_from_f64(low)
                         };
-                        solver.assert(path_cond.implies(z3_float.ge(&low_float)));
+                        let __inner = t_ctx.backend.float_ge(z3_float, &low_float);
+                        let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                        t_ctx.backend.assert(&__tmp);
                     }
                     if let Bound::Finite(high) = interval.high {
                         let high_float = if matches!(ty, Type::F32) {
-                            Float::from_f32(high as f32)
+                            t_ctx.backend.float_from_f32(high as f32)
                         } else {
-                            Float::from_f64(high)
+                            t_ctx.backend.float_from_f64(high)
                         };
-                        solver.assert(path_cond.implies(z3_float.le(&high_float)));
+                        let __inner = t_ctx.backend.float_le(z3_float, &high_float);
+                        let __tmp = t_ctx.backend.bool_implies(path_cond, &__inner);
+                        t_ctx.backend.assert(&__tmp);
                     }
                 }
             }
@@ -224,10 +266,20 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
     }
 }
 
-fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
+fn assert_cfg_constraints<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) {
     // 3. Declare Booleans for all blocks and known edges
     for block in &t_ctx.func.blocks {
-        let b_cond = Bool::new_const(format!(
+        let b_cond = t_ctx.backend.bool_const(&format!(
             "{}_block_{}_{}",
             t_ctx.func.name, block.id.0, t_ctx.uid
         ));
@@ -236,19 +288,19 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
         if let Some(last_inst) = block.instructions.last() {
             match &last_inst.kind {
                 InstructionKind::Jump(target) => {
-                    let e_cond = Bool::new_const(format!(
+                    let e_cond = t_ctx.backend.bool_const(&format!(
                         "{}_edge_{}_{}_{}",
                         t_ctx.func.name, block.id.0, target.0, t_ctx.uid
                     ));
                     t_ctx.edge_conditions.insert((block.id, *target), e_cond);
                 }
                 InstructionKind::Branch(_, t_block, f_block) => {
-                    let et_cond = Bool::new_const(format!(
+                    let et_cond = t_ctx.backend.bool_const(&format!(
                         "{}_edge_{}_{}_{}",
                         t_ctx.func.name, block.id.0, t_block.0, t_ctx.uid
                     ));
                     t_ctx.edge_conditions.insert((block.id, *t_block), et_cond);
-                    let ef_cond = Bool::new_const(format!(
+                    let ef_cond = t_ctx.backend.bool_const(&format!(
                         "{}_edge_{}_{}_{}",
                         t_ctx.func.name, block.id.0, f_block.0, t_ctx.uid
                     ));
@@ -261,7 +313,7 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
         // Handle implicit edges from ParallelFor
         for inst in &block.instructions {
             if let InstructionKind::ParallelFor { body_block, .. } = &inst.kind {
-                let e_cond = Bool::new_const(format!(
+                let e_cond = t_ctx.backend.bool_const(&format!(
                     "{}_edge_{}_{}_{}",
                     t_ctx.func.name, block.id.0, body_block.0, t_ctx.uid
                 ));
@@ -273,10 +325,11 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
     }
 
     // 4. Assert Structural CFG Constraints
-    let true_cond = Bool::from_bool(true);
-    let false_cond = Bool::from_bool(false);
+    let true_cond = t_ctx.backend.bool_from_bool(true);
+    let false_cond = t_ctx.backend.bool_from_bool(false);
     if let Some(entry_cond) = t_ctx.block_conditions.get(&t_ctx.func.entry_block) {
-        solver.assert(entry_cond.eq(&true_cond));
+        let __tmp = t_ctx.backend.bool_eq(entry_cond, &true_cond);
+        t_ctx.backend.assert(&__tmp);
     }
     for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
@@ -289,18 +342,30 @@ fn assert_cfg_constraints(t_ctx: &mut TranslationContext, solver: &Solver) {
                 }
             }
             if incoming_edges.is_empty() {
-                solver.assert(path_cond.eq(&false_cond));
+                let __tmp = t_ctx.backend.bool_eq(&path_cond, &false_cond);
+                t_ctx.backend.assert(&__tmp);
             } else {
-                let or_expr = Bool::or(&incoming_edges.to_vec());
-                solver.assert(path_cond.eq(&or_expr));
+                let or_expr = t_ctx.backend.bool_or(&incoming_edges);
+                let __tmp = t_ctx.backend.bool_eq(&path_cond, &or_expr);
+                t_ctx.backend.assert(&__tmp);
             }
         }
     }
 }
 
-fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> {
+fn translate_instructions<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) -> Result<(), String> {
     // 5. Translate Instructions (Arithmetic, Memory, Control Flow)
-    tracing::info!(target: "lila::verify::z3", "Translating instructions for '{}'...", t_ctx.func.name);
+    tracing::info!(target: "lila::verify::verifier", "Translating instructions for '{}'...", t_ctx.func.name);
     for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap().clone();
         for inst in &block.instructions {
@@ -383,33 +448,35 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                     ..
                 } => {
                     if let Some(edge_p) = t_ctx.edge_conditions.get(&(block.id, *body_block)) {
-                        t_ctx.solver.assert(edge_p.eq(&path_cond));
+                        let __tmp = t_ctx.backend.bool_eq(edge_p, &path_cond);
+                        t_ctx.backend.assert(&__tmp);
                     }
 
                     if let Some(body_cond) = t_ctx.block_conditions.get(body_block) {
                         let idx_int = if let Some(bv) = t_ctx.z3_bvs.get(index_var) {
-                            bv.to_int(true)
+                            t_ctx.backend.bv_to_int(bv, true)
                         } else {
                             t_ctx.z3_ints.get(index_var).unwrap().clone()
                         };
                         let start_int = if let Some(bv) = t_ctx.z3_bvs.get(start) {
-                            bv.to_int(true)
+                            t_ctx.backend.bv_to_int(bv, true)
                         } else {
                             t_ctx.z3_ints.get(start).unwrap().clone()
                         };
                         let stop_int = if let Some(bv) = t_ctx.z3_bvs.get(stop) {
-                            bv.to_int(true)
+                            t_ctx.backend.bv_to_int(bv, true)
                         } else {
                             t_ctx.z3_ints.get(stop).unwrap().clone()
                         };
 
                         // In the loop body, start <= index < stop
-                        t_ctx
-                            .solver
-                            .assert(body_cond.implies(idx_int.ge(&start_int)));
-                        t_ctx
-                            .solver
-                            .assert(body_cond.implies(idx_int.lt(&stop_int)));
+                        let __inner1 = t_ctx.backend.int_ge(&idx_int, &start_int);
+                        let __tmp1 = t_ctx.backend.bool_implies(body_cond, &__inner1);
+                        t_ctx.backend.assert(&__tmp1);
+
+                        let __inner2 = t_ctx.backend.int_lt(&idx_int, &stop_int);
+                        let __tmp2 = t_ctx.backend.bool_implies(body_cond, &__inner2);
+                        t_ctx.backend.assert(&__tmp2);
                     }
                 }
                 InstructionKind::Nop => {}
@@ -422,10 +489,18 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
     Ok(())
 }
 
-fn translate_constraints(
-    t_ctx: &mut TranslationContext,
+fn translate_constraints<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
     inst: &lila_ir::ir::Instruction,
-    path_cond: &Bool,
+    path_cond: &B::Bool,
 ) -> Result<(), String> {
     use crate::refinement_parser::{parse_bool_expr_with_resolver, Resolver};
 
@@ -442,13 +517,24 @@ fn translate_constraints(
 
     for constraint in &inst.constraints {
         let z3_constraint = parse_bool_expr_with_resolver(constraint, &resolver)?;
-        t_ctx.solver.assert(path_cond.implies(&z3_constraint));
+        let __tmp = t_ctx.backend.bool_implies(path_cond, &z3_constraint);
+        t_ctx.backend.assert(&__tmp);
     }
 
     Ok(())
 }
 
-fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Result<(), String> {
+fn verify_return_refinements<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) -> Result<(), String> {
     // 8. Verify Return Refinements
     if let Some(ret_ref) = &t_ctx.func.ret_refinement {
         for block in &t_ctx.func.blocks {
@@ -457,11 +543,8 @@ fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Res
                 if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
-                        crate::refinement_parser::parse_refinement(
-                            ret_ref,
-                            &z3_bv.to_int(ty.is_signed()),
-                            Some(z3_bv),
-                        )
+                        let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
+                        crate::refinement_parser::parse_refinement(ret_ref, &bv_int, Some(z3_bv))
                     } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
                         crate::refinement_parser::parse_refinement(ret_ref, z3_int, None)
                     } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
@@ -471,10 +554,11 @@ fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Res
                     };
 
                     if let Ok(expr) = res {
-                        solver.push();
-                        solver.assert(path_cond);
-                        solver.assert(expr.not());
-                        if solver.check() != z3::SatResult::Unsat {
+                        t_ctx.backend.push();
+                        t_ctx.backend.assert(path_cond);
+                        let __tmp = t_ctx.backend.bool_not(&expr);
+                        t_ctx.backend.assert(&__tmp);
+                        if t_ctx.backend.check() != Ok(false) {
                             let loc_info = inst
                                 .location
                                 .map(|l| format!(" at {}", l))
@@ -484,7 +568,7 @@ fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Res
                                 ret_val, ret_ref, loc_info
                             ));
                         }
-                        solver.pop(1);
+                        t_ctx.backend.pop(1);
                     }
                 }
             }
@@ -494,7 +578,17 @@ fn verify_return_refinements(t_ctx: &TranslationContext, solver: &Solver) -> Res
     Ok(())
 }
 
-fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<(), String> {
+fn verify_call_arguments<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) -> Result<(), String> {
     // 10. Verify Call Arguments
     for block in &t_ctx.func.blocks {
         let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
@@ -529,9 +623,10 @@ fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<
                         if let Some(ref_str) = sig.arg_refinements.get(&i) {
                             let arg_ty = t_ctx.func.get_type(*arg_val);
                             let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(arg_val) {
+                                let bv_int = t_ctx.backend.bv_to_int(z3_bv, arg_ty.is_signed());
                                 crate::refinement_parser::parse_refinement(
                                     ref_str,
-                                    &z3_bv.to_int(arg_ty.is_signed()),
+                                    &bv_int,
                                     Some(z3_bv),
                                 )
                             } else if let Some(z3_int) = t_ctx.z3_ints.get(arg_val) {
@@ -543,10 +638,11 @@ fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<
                             };
 
                             if let Ok(expr) = res {
-                                solver.push();
-                                solver.assert(path_cond);
-                                solver.assert(expr.not());
-                                if solver.check() != z3::SatResult::Unsat {
+                                t_ctx.backend.push();
+                                t_ctx.backend.assert(path_cond);
+                                let __tmp = t_ctx.backend.bool_not(&expr);
+                                t_ctx.backend.assert(&__tmp);
+                                if t_ctx.backend.check() != Ok(false) {
                                     let loc_info = inst
                                         .location
                                         .map(|l| format!(" at {}", l))
@@ -556,7 +652,7 @@ fn verify_call_arguments(t_ctx: &TranslationContext, solver: &Solver) -> Result<
                                         target_name, i, arg_val, ref_str, loc_info
                                     ));
                                 }
-                                solver.pop(1);
+                                t_ctx.backend.pop(1);
                             }
                         }
                     }

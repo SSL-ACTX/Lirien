@@ -36,6 +36,7 @@ The Python-side DSL must feel like native Python, hiding all low-level C-ABI det
 ### 3.1 Verification Workflow
 *   **Rust First:** Always run `cargo check` and `cargo test` **before** running `maturin develop`. Never attempt to build the Python module if the Rust core is in an inconsistent or failing state.
 *   **Maturin Reflection:** AFTER changes to the Rust core are verified, you MUST run `maturin develop` to reflect these changes in the Python environment. It won't magically reflect. Gemini AI is dumb as hell so it has to be taught like a damn kid—never forget this step.
+*   **Tool Usage:** Using Python scripts, `sed`, or `cat` to edit or update files is strictly banned. Use native tool functions like `replace` or `write_file` directly.
 
 ### 3.2 Centralized Diagnostics
 *   Do not use `println!` or `eprintln!`.
@@ -52,11 +53,15 @@ When adding a new capability to the DSL:
 6.  Update `src/ssa/optimization/dce.rs` and `type_propagation.rs` to ensure the instruction is handled.
 7.  Write a Python integration test verifying the full pipeline.
 
-### 3.4 Z3 0.20 API Usage
-The project uses `z3-rs` v0.20.0, which has been configured/modified for ergonomics using `thread_local` contexts.
-*   **No Explicit Context:** Most AST constructor methods (e.g., `BV::from_i64`, `Int::from_i64`, `Bool::from_bool`, `BV::new_const`) do **not** take a `&Context` argument. They use `Context::thread_local()` internally.
-*   **Comparison Methods:** Use standard `eq`, `lt`, `gt`, etc.
-*   **Verification Entry:** The Z3 context is initialized in `src/verification/mod.rs` via `Context::thread_local()`.
+### 3.4 Z3 0.20 API Usage (NO CONTEXT BULLSHIT)
+*   **NO EXPLICIT CONTEXT:** The project uses `z3-rs` v0.20.0, which is configured for ergonomics using `thread_local` contexts. You MUST NOT pass `&Context` to AST constructors (e.g., `BV::from_i64`, `Bool::new_const`). It uses `Context::thread_local()` internally.
+*   **STOP TRYING TO ADD CTX:** If you see a compiler error, it is NOT because you missing a context argument. It is because you are using the wrong method or a deprecated one. Do not ever re-introduce `ctx` arguments to the logic layers. This rule is absolute and permanent.
+
+### 3.5 Development Discipline
+*   **ZERO WARNINGS:** The project maintains a strict zero-warning policy. ALL compiler warnings and Clippy lints MUST be resolved before committing. Use `cargo clippy -- -D warnings` to verify.
+*   **FULL TEST SUITE:** Never assume a refactor is correct by running a single subfolder of tests. You MUST run the entire suite using `PYTHONPATH=./python python3 -m unittest discover tests/python`.
+*   **NO SHORTCUTS:** Validation is not "it compiled". Validation is "all 100+ integration tests passed".
+
 
 ## 4. Testing Standards
 
