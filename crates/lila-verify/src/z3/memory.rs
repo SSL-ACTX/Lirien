@@ -25,11 +25,7 @@ pub fn init_values(ctx: &mut TranslationContext) -> Result<(), String> {
                     inner_ty = *inner;
                     break;
                 }
-                Type::Struct(_)
-                | Type::Tuple(_)
-                | Type::Hand(_)
-                | Type::Peek(_)
-                | Type::Held(_) => {
+                Type::Struct(_) | Type::Tuple(_) => {
                     is_mem_obj = true;
                     // Composite types and pointers are modeled as Int -> BV.
                     inner_ty = Type::I64;
@@ -348,22 +344,6 @@ pub fn translate(
             if let Some(z3_dest) = ctx.z3_arrays.get(dest) {
                 ctx.solver
                     .assert(path_cond.implies(z3_dest.eq(z3_obj_payload)));
-            }
-        }
-        InstructionKind::Peek(dest, src) | InstructionKind::Hand(dest, src) => {
-            if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
-                ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
-            }
-            if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src))
-            {
-                ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
-            }
-            if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_arrays.get(dest), ctx.z3_arrays.get(src))
-            {
-                ctx.solver.assert(path_cond.implies(z3_dest.eq(z3_src)));
-            }
-            if let (Some(p_dest), Some(p_src)) = (ctx.z3_perms.get(dest), ctx.z3_perms.get(src)) {
-                ctx.solver.assert(path_cond.implies(p_dest.eq(p_src)));
             }
         }
         _ => {}

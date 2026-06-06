@@ -15,9 +15,6 @@ pub enum Type {
     F32,
     F64,
     Bool,
-    Held(Box<Type>),
-    Peek(Box<Type>),
-    Hand(Box<Type>),
     Array(Box<Type>, Option<usize>),
     Buffer(Box<Type>),
     Struct(String),
@@ -43,9 +40,6 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),
-            Type::Held(t) => write!(f, "Held<{}>", t),
-            Type::Peek(t) => write!(f, "Peek<{}>", t),
-            Type::Hand(t) => write!(f, "Hand<{}>", t),
             Type::Array(t, s) => match s {
                 Some(size) => write!(f, "Array<{}, {}>", t, size),
                 None => write!(f, "Array<{}>", t),
@@ -117,10 +111,7 @@ impl Type {
 
     pub fn is_pointer_like(&self) -> bool {
         match self {
-            Type::Peek(_)
-            | Type::Hand(_)
-            | Type::Held(_)
-            | Type::Buffer(_)
+            Type::Buffer(_)
             | Type::Array(_, _)
             | Type::FnPointer(_, _)
             | Type::Closure(_, _, _) => true,
@@ -144,11 +135,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Peek(_)
-            | Type::Hand(_)
-            | Type::Held(_)
-            | Type::FnPointer(_, _)
-            | Type::Closure(_, _, _) => 8,
+            Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
             Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
@@ -219,11 +206,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 => 8,
-            Type::Peek(_)
-            | Type::Hand(_)
-            | Type::Held(_)
-            | Type::FnPointer(_, _)
-            | Type::Closure(_, _, _) => 8,
+            Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
             Type::Struct(name) => {
@@ -420,8 +403,6 @@ pub enum InstructionKind {
     Return(Option<Value>),
     Phi(Value, HashMap<BlockId, Value>),
     Call(Value, String, Vec<Value>),
-    Peek(Value, Value),
-    Hand(Value, Value),
     ArrayLoad(Value, Value, Value),
     ArrayStore(Value, Value, Value, Value, Type),
     BufferLoad(Value, Value, Value),
@@ -444,7 +425,6 @@ pub enum InstructionKind {
     Lambda(Value, String, Vec<Value>), // dest, func_name, captured_vals
     IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
 
-    Release(Value), // Explicitly release a borrow/permission
     ParallelFor {
         index_var: Value,
         start: Value,
@@ -754,12 +734,6 @@ impl fmt::Display for Instruction {
                     constraints_str
                 )
             }
-            InstructionKind::Peek(d, s) => {
-                write!(f, "  {} = peek {}{}{}", d, s, loc_str, constraints_str)
-            }
-            InstructionKind::Hand(d, s) => {
-                write!(f, "  {} = hand {}{}{}", d, s, loc_str, constraints_str)
-            }
             InstructionKind::ArrayLoad(d, arr, idx) => {
                 write!(
                     f,
@@ -895,9 +869,6 @@ impl fmt::Display for Instruction {
                     constraints_str
                 )
             }
-            InstructionKind::Release(v) => {
-                write!(f, "  release {}{}{}", v, loc_str, constraints_str)
-            }
             InstructionKind::ParallelFor {
                 index_var,
                 start,
@@ -982,8 +953,6 @@ impl Instruction {
             | InstructionKind::ConstFloat(d, _)
             | InstructionKind::Phi(d, _)
             | InstructionKind::Call(d, _, _)
-            | InstructionKind::Peek(d, _)
-            | InstructionKind::Hand(d, _)
             | InstructionKind::ArrayLoad(d, _, _)
             | InstructionKind::ArrayStore(d, _, _, _, _)
             | InstructionKind::StructLoad(d, _, _)
@@ -1068,9 +1037,6 @@ impl Instruction {
                     operands.push(*v);
                 }
             }
-            InstructionKind::Peek(_, s) | InstructionKind::Hand(_, s) => {
-                operands.push(*s);
-            }
             InstructionKind::ArrayLoad(_, arr, idx) => {
                 operands.push(*arr);
                 operands.push(*idx);
@@ -1129,9 +1095,6 @@ impl Instruction {
                 for v in args {
                     operands.push(*v);
                 }
-            }
-            InstructionKind::Release(v) => {
-                operands.push(*v);
             }
             _ => {}
         }

@@ -138,85 +138,6 @@ class Buffer:
         return Annotated[cls, base_ty_str]
 
 
-class Hand:
-    """
-    Seamless mutable reference to a single value.
-    Usage: m = Hand(10) or m = Hand[i64](10)
-    """
-
-    def __class_getitem__(cls, base_type):
-        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
-        cty = ctypes.c_int64
-        for name, ct in TYPE_MAP.items():
-            if name in base_ty_str:
-                cty = ct
-                break
-
-        class HandInstance(cls):
-            _ctypes_type = cty
-
-            def __init__(self, val=0):
-                self._ctypes_obj = self._ctypes_type(val)
-
-            @property
-            def val(self):
-                return self._ctypes_obj.value
-
-            @val.setter
-            def val(self, new_val):
-                self._ctypes_obj.value = new_val
-
-            def __repr__(self):
-                return f"Hand[{base_ty_str}]({self.val})"
-
-        HandInstance.__name__ = f"Hand_{base_ty_str}"
-        return HandInstance
-
-    def __new__(cls, val=0):
-        # Handle Hand(10) -> defaults to i64
-        return cls[i64](val)
-
-
-class Peek:
-    """
-    Seamless immutable reference to a single value.
-    Usage: r = Peek(10)
-    """
-
-    def __class_getitem__(cls, base_type):
-        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
-        cty = ctypes.c_int64
-        for name, ct in TYPE_MAP.items():
-            if name in base_ty_str:
-                cty = ct
-                break
-
-        class PeekInstance(cls):
-            _ctypes_type = cty
-
-            def __init__(self, val=0):
-                self._ctypes_obj = self._ctypes_type(val)
-
-            @property
-            def val(self):
-                return self._ctypes_obj.value
-
-            def __repr__(self):
-                return f"Peek[{base_ty_str}]({self.val})"
-
-        PeekInstance.__name__ = f"Peek_{base_ty_str}"
-        return PeekInstance
-
-    def __new__(cls, val=0):
-        # Handle Peek(10) -> defaults to i64
-        return cls[i64](val)
-
-
-class Held:
-    def __class_getitem__(cls, base_type):
-        return cls
-
-
 class Array(Generic[T]):
     def __init__(self, size: int, initial_val: T = 0):
         self.data = [initial_val] * size
@@ -481,9 +402,6 @@ class Closure(FnPointer):
 
 
 __all__ = [
-    "Hand",
-    "Peek",
-    "Held",
     "struct",
     "enum",
     "i8",

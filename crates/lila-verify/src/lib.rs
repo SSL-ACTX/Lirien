@@ -1,10 +1,7 @@
-pub mod permissions;
 pub mod refinement_parser;
 pub mod z3;
 
 use self::z3::verify_with_context;
-use crate::permissions::tracker::OwnershipTracker;
-use crate::permissions::PermissionVerifier;
 use ::z3::{Context, Params, Solver};
 use lila_ir::analysis::{interval, liveness};
 use lila_ir::ir::Function;
@@ -18,7 +15,7 @@ pub fn verify(func: &Function) -> Result<(), String> {
 
     let uid = VERIFY_COUNT.fetch_add(1, Ordering::SeqCst);
 
-    // 1. Liveness Analysis for Fractional Permissions
+    // 1. Liveness Analysis
     tracing::info!(target: "lila::verify", "Running liveness analysis for '{}'...", func.name);
     let liveness = liveness::analyze_liveness(func);
 
@@ -26,16 +23,7 @@ pub fn verify(func: &Function) -> Result<(), String> {
     tracing::info!(target: "lila::verify", "Running interval analysis for '{}'...", func.name);
     let analysis_results = interval::analyze(func);
 
-    // 3. Setup Fractional Permission Verifier
-    let mut perm_verifier = PermissionVerifier::new(func);
-    perm_verifier.set_uid(uid);
-
-    // 3.5. Fast Rust-Native Ownership Check
-    tracing::info!(target: "lila::verify", "Running Ownership Tracker for '{}'...", func.name);
-    let ownership_tracker = OwnershipTracker::new(func, &perm_verifier.value_roots, &liveness);
-    ownership_tracker.verify()?;
-
-    // 4. Logic Verification with Z3
+    // 3. Logic Verification with Z3
     tracing::info!(target: "lila::verify", "Starting Z3 verification for '{}'...", func.name);
     let ctx = Context::thread_local();
     let solver = Solver::new();
@@ -45,13 +33,5 @@ pub fn verify(func: &Function) -> Result<(), String> {
     params.set_u32("timeout", 5000);
     solver.set_params(&params);
 
-    verify_with_context(
-        &ctx,
-        &solver,
-        func,
-        &analysis_results,
-        liveness,
-        perm_verifier,
-        uid,
-    )
+    verify_with_context(&ctx, &solver, func, &analysis_results, liveness, uid)
 }

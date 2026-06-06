@@ -2,7 +2,7 @@
 
 # Lila
 
-**A Formally Verified, Affine-Typed JIT Compiler for Python**
+**A Formally Verified JIT Compiler for Python**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org/)
@@ -13,19 +13,18 @@
 </div>
 
 > [!WARNING]
-> Lila is a proof-of-concept exploration into formal verification and affine types for Python. It is **not** a production-ready tool, is highly unstable, and should not be used in critical systems.
+> Lila is a proof-of-concept exploration into formal verification for Python. It is **not** a production-ready tool, is highly unstable, and should not be used in critical systems.
 
 ---
 
 Python is beloved for its developer experience, but its type-hinting system is purely cosmetic. This "trust-based" model forces a choice: accept the heavy overhead of runtime checks and the Global Interpreter Lock (GIL) for safety, or drop into C/Rust—losing Python's productivity and introducing manual memory management risks.
 
-Lila exists to break this dichotomy. It takes Python's "hints" and turns them into **mathematically enforced laws**. By using formal verification to prove code safety at compile-time, Lila bypasses the interpreter entirely, executing Python at bare-metal speeds without sacrificing the sound logic that prevents crashes, data races, and memory corruption.
+Lila exists to break this dichotomy. It takes Python's "hints" and turns them into **mathematically enforced laws**. By using formal verification to prove code safety at compile-time, Lila bypasses the interpreter entirely, executing Python at bare-metal speeds without sacrificing the sound logic that prevents crashes and data corruption.
 
 ## Table of Contents
 - [The Lila Pipeline](#the-lila-pipeline)
 - [Core Concepts & Examples](#core-concepts--examples)
   - [Mathematical Safety & Logic](#mathematical-safety--logic)
-  - [Compile-Time Memory Safety (Affine Types)](#compile-time-memory-safety-affine-types)
   - [High-Performance Execution](#high-performance-execution)
   - [Verified Data Structures](#verified-data-structures)
   - [Developer Experience](#developer-experience)
@@ -56,7 +55,6 @@ graph TD
     
     %% Middle-end (Verification)
     Z3["Z3 SMT Solver<br/>(Logic Engine)"]:::verify
-    Perms["Fractional Permissions<br/>(Alias/Move Checker)"]:::verify
     
     %% Backend
     CL["Cranelift JIT<br/>(Machine Code)"]:::backend
@@ -73,10 +71,8 @@ graph TD
     AST --> Builder
     Builder --> Opt
     Opt --> Z3
-    Opt --> Perms
     
     Z3 --> CacheWrite["Save to Cache"]
-    Perms --> CacheWrite
     CacheWrite -.-> Disk
     CacheWrite --> CL
     
@@ -96,9 +92,7 @@ graph TD
 2. **AOT Caching:** If a valid `.lir` (Lila IR) binary exists in `.lila_cache/` for this hash, the system skips directly to Backend Lowering (Stage 6), achieving near-zero latency startup.
 3. **AST Extraction (`lila-ir`):** On a cache miss, the Python AST is parsed and lowered into Lila's **Static Single Assignment (SSA)** Intermediate Representation, building the Control Flow Graph (CFG) and analyzing variable captures.
 4. **Optimization (`lila-ir`):** The IR undergoes multiple passes including **Constant Folding**, **Dead Code Elimination (DCE)**, and **Type Propagation**.
-5. **Formal Verification (`lila-verify`):**
-   - *Logic Engine:* Every branch condition and mathematical operation is mapped to SMT-LIB logic and rigorously proven by the **Z3 Solver**.
-   - *Permission Verifier:* A path-aware, flow-sensitive system evaluates **Fractional Permissions** to mathematically prove the absence of data races, aliasing violations, and use-after-moves.
+5. **Formal Verification (`lila-verify`):** Every branch condition, mathematical operation, and memory access is mapped to SMT-LIB logic and rigorously proven by the **Z3 Solver**. Refinement types are checked across all reachable paths.
 6. **Backend Lowering (`lila-backend`):** The verified SSA is compiled via **Cranelift IR** into raw machine code (executable memory buffers).
 7. **Hot-Swapping:** PyO3 generates a native C-ABI trampoline. Subsequent calls to the Python function bypass the interpreter entirely, executing the bare-metal code directly.
 
@@ -151,48 +145,10 @@ def make_adder(x: i64) -> Closure[[i64], i64]:
 
 ---
 
-### Compile-Time Memory Safety (Affine Types)
-
-#### Fractional & Structural Permissions
-Lila uses a path-aware, symbolic weight partitioning system to prevent data races and use-after-move errors. It tracks permissions down to individual struct fields, allowing disjoint mutations of the same object safely.
-```python
-from lila import verify, i64, Held, Hand, Peek, struct
-
-@struct
-class Data: val: i64
-
-@verify
-def illegal_use(x: Held[i64]) -> i64:
-    val = consume(x)  # x is moved here (1.0 permission consumed)
-    return x + 1      # COMPILE ERROR: Use-after-move (0.0 permission remaining)
-
-@verify
-def illegal_alias(d: Hand[Data]) -> i64:
-    r1 = Peek(d)      # Shared permission created
-    # d.val = 10      # ERROR: Cannot mutate 'd' while shared permissions are active
-    return r1.val
-```
-
-#### Lexical Borrow Checking with `with`
-You can explicitly scope shared permissions using Python's `with` context managers.
-```python
-@verify
-def safe_borrow(d: Hand[Data]) -> i64:
-    with Peek(d) as p:
-        read_val = p.val
-    
-    # Exiting the block returns the fractional permission to 'd'.
-    # Now it is safe to mutate 'd' again because we hold 1.0 permission.
-    d.val = 20 
-    return d.val + read_val
-```
-
----
-
 ### High-Performance Execution
 
-#### GIL-less Parallelism & Verified Data-Race Freedom
-Since Lila code operates on raw memory, it executes across multiple threads without the Global Interpreter Lock (GIL). The Z3 solver mathematically proves the absence of data races at compile-time by enforcing that required mutable permissions cannot be scaled safely across concurrent iterations.
+#### GIL-less Parallelism
+Since Lila code operates on raw memory, it executes across multiple threads without the Global Interpreter Lock (GIL).
 ```python
 from lila import verify, parallel_for, Buffer, f64, i64
 
@@ -200,7 +156,7 @@ from lila import verify, parallel_for, Buffer, f64, i64
 def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
     def body(i: i64):
         vec[i] *= factor
-    parallel_for(0, len(vec), 1, body)
+    parallel_for(range(len(vec)), body)
 ```
 
 #### Ahead-of-Time (AOT) IR Caching
@@ -297,7 +253,6 @@ configure_tracing({
 | **Functional Types**| `FnPointer`, `Closure`, `Callable` |
 | **Complex Types** | Structs, Tagged Unions (Enums), Tuples |
 | **Concurrency** | GIL-less multi-threading (`parallel_for`) |
-| **Memory Model** | Fractional & Structural Permissions (Data-race free, Affine semantics) |
 | **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **AOT Caching** | Binary IR Serialization (`bincode`, `seahash`) |
@@ -321,7 +276,7 @@ maturin develop --release
 
 # Run verification test suite
 cargo test
-python -m unittest tests/python/*.py
+python -m unittest discover tests/python
 ```
 
 ---

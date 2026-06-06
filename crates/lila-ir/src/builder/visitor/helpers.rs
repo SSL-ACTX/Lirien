@@ -29,15 +29,6 @@ impl CFGBuilder {
     }
 
     pub(super) fn auto_load(&mut self, val: Value) -> Value {
-        let ty = self.func.get_type(val);
-        if let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = ty {
-            if inner.is_int() || inner.is_float() || *inner == Type::Bool {
-                let dest = self.func.next_value();
-                self.add_instruction(InstructionKind::StructLoad(dest, val, 0));
-                self.func.set_type(dest, *inner);
-                return dest;
-            }
-        }
         val
     }
 

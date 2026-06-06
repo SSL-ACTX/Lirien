@@ -106,8 +106,6 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ConstFloat(d, _)
         | InstructionKind::Phi(d, _)
         | InstructionKind::Call(d, _, _)
-        | InstructionKind::Peek(d, _)
-        | InstructionKind::Hand(d, _)
         | InstructionKind::ArrayLoad(d, _, _)
         | InstructionKind::BufferLoad(d, _, _)
         | InstructionKind::BufferLen(d, _)
@@ -129,7 +127,6 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
-        | InstructionKind::Release(_)
         | InstructionKind::ParallelFor { .. }
         | InstructionKind::Nop => None,
     }
@@ -181,8 +178,6 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         | InstructionKind::FCos(_, s)
         | InstructionKind::IToF(_, s, _)
         | InstructionKind::FToI(_, s, _)
-        | InstructionKind::Peek(_, s)
-        | InstructionKind::Hand(_, s)
         | InstructionKind::BufferLen(_, s)
         | InstructionKind::StructLoad(_, s, _)
         | InstructionKind::StructOffset(_, s, _)
@@ -242,9 +237,6 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
                 operands.push(*v);
             }
         }
-        InstructionKind::Release(v) => {
-            operands.push(*v);
-        }
         InstructionKind::ParallelFor {
             start,
             stop,
@@ -280,12 +272,6 @@ fn has_side_effects(inst: &Instruction) -> bool {
         InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::StructSet(_, _, _, _, _) => true,
-
-        // Reference creation (prevents optimization of the referent)
-        InstructionKind::Peek(_, _) | InstructionKind::Hand(_, _) => true,
-
-        // Explicit permission release
-        InstructionKind::Release(_) => true,
 
         // Parallel loop
         InstructionKind::ParallelFor { .. } => true,

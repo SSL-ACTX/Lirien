@@ -76,7 +76,6 @@ pub struct TranslationContext<'a> {
     pub z3_floats: HashMap<Value, Float>,
     pub z3_bvs: HashMap<Value, BV>,
     pub z3_arrays: HashMap<Value, Array>,
-    pub z3_perms: HashMap<Value, z3::ast::Real>,
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
     pub block_conditions: HashMap<BlockId, Bool>,
     pub edge_conditions: HashMap<(BlockId, BlockId), Bool>,
@@ -88,8 +87,7 @@ pub fn verify_with_context(
     solver: &Solver,
     func: &Function,
     analysis: &IntervalAnalysisResults,
-    liveness: lila_ir::analysis::liveness::LivenessAnalysisResults,
-    perm_verifier: crate::permissions::PermissionVerifier,
+    _liveness: lila_ir::analysis::liveness::LivenessAnalysisResults,
     uid: usize,
 ) -> Result<(), String> {
     let mut t_ctx = TranslationContext {
@@ -102,7 +100,6 @@ pub fn verify_with_context(
         z3_floats: HashMap::new(),
         z3_bvs: HashMap::new(),
         z3_arrays: HashMap::new(),
-        z3_perms: HashMap::new(),
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
@@ -112,36 +109,23 @@ pub fn verify_with_context(
     // 1. Initialize Z3 values for all SSA values
     memory::init_values(&mut t_ctx)?;
 
-    init_permissions(&mut t_ctx);
-
     assert_cfg_constraints(&mut t_ctx, solver);
 
     translate_instructions(&mut t_ctx)?;
 
     assert_derived_intervals(&t_ctx, solver);
 
-    // 7. Generate Fractional Permission Assertions (Must be AFTER path constraints and instructions are translated)
-    perm_verifier.generate_assertions(
-        solver,
-        &liveness,
-        &t_ctx.z3_perms,
-        &t_ctx.block_conditions,
-    )?;
-
     verify_return_refinements(&t_ctx, solver)?;
 
     verify_call_arguments(&t_ctx, solver)?;
 
     // 11. Final Consistency Check
-    if !t_ctx.has_refinements && t_ctx.z3_perms.is_empty() {
-        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements or pointers).", func.name);
+    if !t_ctx.has_refinements {
+        tracing::info!(target: "lila::verify::z3", "Skipping final consistency check for '{}' (no refinements).", func.name);
     } else {
         tracing::info!(target: "lila::verify::z3", "Performing final consistency check for '{}'...", func.name);
         if solver.check() == z3::SatResult::Unsat {
-            return Err(
-                "Formal verification failed: Logical contradiction or permission conflict detected."
-                    .to_string(),
-            );
+            return Err("Formal verification failed: Logical contradiction detected.".to_string());
         }
     }
 
@@ -236,29 +220,6 @@ fn assert_derived_intervals(t_ctx: &TranslationContext, solver: &Solver) {
                     }
                 }
             }
-        }
-    }
-}
-
-fn init_permissions(t_ctx: &mut TranslationContext) {
-    let has_parallel = t_ctx.func.blocks.iter().any(|b| {
-        b.instructions
-            .iter()
-            .any(|i| matches!(i.kind, InstructionKind::ParallelFor { .. }))
-    });
-
-    if !has_parallel {
-        return;
-    }
-
-    // 2. Initialize Permission Variables for Fractional Permission Model
-    for i in 0..t_ctx.func.value_count {
-        let v = Value(i);
-        let ty = t_ctx.func.get_type(v);
-        if ty.is_pointer_like() {
-            let p_var =
-                z3::ast::Real::new_const(format!("{}_perm_v{}_{}", t_ctx.func.name, i, t_ctx.uid));
-            t_ctx.z3_perms.insert(v, p_var);
         }
     }
 }
@@ -402,9 +363,7 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                 | InstructionKind::StructSet(..)
                 | InstructionKind::EnumCreate(..)
                 | InstructionKind::EnumIsVariant(..)
-                | InstructionKind::EnumExtract(..)
-                | InstructionKind::Peek(..)
-                | InstructionKind::Hand(..) => {
+                | InstructionKind::EnumExtract(..) => {
                     memory::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
@@ -453,7 +412,7 @@ fn translate_instructions(t_ctx: &mut TranslationContext) -> Result<(), String> 
                             .assert(body_cond.implies(idx_int.lt(&stop_int)));
                     }
                 }
-                InstructionKind::Nop | InstructionKind::Release(_) => {}
+                InstructionKind::Nop => {}
             }
 
             // Translate logical constraints attached to the instruction

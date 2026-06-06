@@ -1,21 +1,6 @@
 import unittest
 import numpy as np
-from lila import verify, parallel_for, Buffer, f64, Hand, i64, struct, VerificationError
-
-
-@struct
-class Stats:
-    count: i64
-
-
-@verify
-def update_h(h: Hand[i64], v: i64) -> None:
-    h.val = v
-
-
-@verify
-def update_s(s: Hand[Stats], v: i64) -> None:
-    s.count = v
+from lila import verify, parallel_for, Buffer, f64, i64, struct, VerificationError
 
 
 @verify
@@ -47,26 +32,6 @@ class TestParallelFor(unittest.TestCase):
 
         b = np.array([1.0, 2.0, 3.0], dtype=np.float64)
         parallel_read_call(b)
-
-    def test_parallel_write_fail(self):
-        """Verify that parallel mutation of a captured Hand is blocked."""
-        with self.assertRaises(VerificationError) as cm:
-
-            @verify
-            def parallel_mut(h: Hand[i64]) -> None:
-                parallel_for(range(10), lambda i: update_h(h, 10))
-
-        self.assertIn("Possible data-race", str(cm.exception))
-
-    def test_parallel_shared_write_fail(self):
-        """Verify that parallel mutation of a shared struct field is blocked."""
-        with self.assertRaises(VerificationError) as cm:
-
-            @verify
-            def parallel_shared_mut(s: Hand[Stats]) -> None:
-                parallel_for(range(10), lambda i: update_s(s, 10))
-
-        self.assertIn("Possible data-race", str(cm.exception))
 
 
 if __name__ == "__main__":

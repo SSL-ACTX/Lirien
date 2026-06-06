@@ -141,8 +141,6 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::StructLoad(_, _, _)
         | InstructionKind::StructOffset(_, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
-        | InstructionKind::Peek(_, _)
-        | InstructionKind::Hand(_, _)
         | InstructionKind::EnumCreate(_, _, _, _)
         | InstructionKind::EnumIsVariant(_, _, _)
         | InstructionKind::EnumExtract(_, _, _) => memory::lower(ctx, &inst.kind),
@@ -165,7 +163,7 @@ pub fn lower_instruction<M: Module>(
             ctx.values.insert(*index_var, cl_start);
             Ok(())
         }
-        InstructionKind::Nop | InstructionKind::Release(_) => Ok(()),
+        InstructionKind::Nop => Ok(()),
     }
 }
 

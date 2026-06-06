@@ -114,24 +114,13 @@ impl CFGBuilder {
             }
             ast::Expr::Attribute(attr) => {
                 if attr.attr.as_str() == "val" {
-                    let (root_name, base_offset, parent_ty) =
-                        self.resolve_attribute_path(*attr.value.clone())?;
-                    let mut curr_ty = &parent_ty;
-                    while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
-                        curr_ty = inner;
-                    }
-                    if !matches!(curr_ty, Type::Struct(_)) {
-                        return Ok((root_name, base_offset, parent_ty));
-                    }
+                    return self.resolve_attribute_path(*attr.value.clone());
                 }
 
                 let (root_name, base_offset, parent_ty) =
                     self.resolve_attribute_path(*attr.value)?;
 
-                let mut curr_ty = &parent_ty;
-                while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
-                    curr_ty = inner;
-                }
+                let curr_ty = &parent_ty;
 
                 if let Type::Struct(struct_name) = curr_ty {
                     let field_offset = self

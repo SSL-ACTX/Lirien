@@ -195,23 +195,13 @@ impl CFGBuilder {
             ast::Expr::Attribute(s) => {
                 let obj = self.visit_expr(*s.value.clone())?;
                 let orig_ty = self.func.get_type(obj);
-                let mut curr_ty = orig_ty.clone();
+                let curr_ty = orig_ty.clone();
 
                 // Handle .val unwrap for Refined types (no-op in IR)
                 if s.attr.as_str() == "val" {
-                    let mut temp_ty = curr_ty.clone();
-                    while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = temp_ty {
-                        temp_ty = *inner;
-                    }
-                    if !matches!(temp_ty, Type::Struct(_)) {
+                    if !matches!(curr_ty, Type::Struct(_)) {
                         return Ok(obj);
                     }
-                }
-
-                let mut is_ptr = false;
-                while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) = curr_ty {
-                    curr_ty = *inner;
-                    is_ptr = true;
                 }
 
                 if let Type::Struct(struct_name) = curr_ty {
@@ -239,20 +229,7 @@ impl CFGBuilder {
                     let dest = self.func.next_value();
                     self.update_location(expr_offset);
 
-                    if is_ptr {
-                        // If parent is a pointer, field access returns a pointer to the field
-                        field_ty = match orig_ty {
-                            Type::Hand(_) => Type::Hand(Box::new(field_ty)),
-                            Type::Peek(_) => Type::Peek(Box::new(field_ty)),
-                            Type::Held(_) => Type::Held(Box::new(field_ty)),
-                            _ => field_ty, // Should not happen given is_ptr
-                        };
-                        self.add_instruction(InstructionKind::StructOffset(
-                            dest,
-                            obj,
-                            field_offset,
-                        ));
-                    } else if field_ty.is_composite() {
+                    if field_ty.is_composite() {
                         self.add_instruction(InstructionKind::StructOffset(
                             dest,
                             obj,
@@ -351,15 +328,7 @@ impl CFGBuilder {
                                 (format!("{}_{}", n.id.as_str(), attr.attr), None, false)
                             } else {
                                 let obj = self.visit_expr((*attr.value).clone())?;
-                                let mut curr_ty = self.func.get_type(obj);
-
-                                // Unwrap Hand/Peek/Held to get the base struct type
-                                while let Type::Hand(_inner)
-                                | Type::Peek(_inner)
-                                | Type::Held(_inner) = curr_ty
-                                {
-                                    curr_ty = (*_inner).clone();
-                                }
+                                let curr_ty = self.func.get_type(obj);
 
                                 if let Type::Struct(struct_name) = curr_ty {
                                     (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
@@ -375,14 +344,7 @@ impl CFGBuilder {
                             }
                         } else {
                             let obj = self.visit_expr((*attr.value).clone())?;
-                            let mut curr_ty = self.func.get_type(obj);
-
-                            // Unwrap Hand/Peek/Held to get the base struct type
-                            while let Type::Hand(inner) | Type::Peek(inner) | Type::Held(inner) =
-                                curr_ty
-                            {
-                                curr_ty = *inner;
-                            }
+                            let curr_ty = self.func.get_type(obj);
 
                             if let Type::Struct(struct_name) = curr_ty {
                                 (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
@@ -427,10 +389,7 @@ impl CFGBuilder {
                                 v = self.auto_load(v);
                             }
                         } else {
-                            let ty = self.func.get_type(v);
-                            if !matches!(ty, Type::Held(_)) {
-                                v = self.auto_load(v);
-                            }
+                            v = self.auto_load(v);
                         }
                         args.push(v);
                     }
@@ -540,27 +499,7 @@ impl CFGBuilder {
                     return Ok(dest);
                 }
 
-                if func_name == "Peek" {
-                    if s.args.len() != 1 {
-                        return Err("Peek expects 1 argument".to_string());
-                    }
-                    let arg = self.visit_expr(s.args[0].clone())?;
-                    let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::Peek(dest, arg));
-                    let ty = self.func.get_type(arg);
-                    self.func.set_type(dest, Type::Peek(Box::new(ty)));
-                    return Ok(dest);
-                } else if func_name == "Hand" {
-                    if s.args.len() != 1 {
-                        return Err("Hand expects 1 argument".to_string());
-                    }
-                    let arg = self.visit_expr(s.args[0].clone())?;
-                    let dest = self.func.next_value();
-                    self.add_instruction(InstructionKind::Hand(dest, arg));
-                    let ty = self.func.get_type(arg);
-                    self.func.set_type(dest, Type::Hand(Box::new(ty)));
-                    return Ok(dest);
-                } else if func_name == "f64" || func_name == "float" {
+                if func_name == "f64" || func_name == "float" {
                     if s.args.len() != 1 {
                         return Err("f64() expects 1 argument".to_string());
                     }
@@ -795,11 +734,7 @@ impl CFGBuilder {
                             v = self.auto_load(v);
                         }
                     } else {
-                        // If signature unknown, only auto-load if it's not Held (to preserve moves)
-                        let ty = self.func.get_type(v);
-                        if !matches!(ty, Type::Held(_)) {
-                            v = self.auto_load(v);
-                        }
+                        v = self.auto_load(v);
                     }
                     args.push(v);
                     arg_idx += 1;
@@ -848,7 +783,7 @@ impl CFGBuilder {
                 lambda_builder
                     .func
                     .value_types
-                    .insert(Value(0), Type::Peek(Box::new(Type::Unknown))); // ctx_ptr
+                    .insert(Value(0), Type::Struct("ClosureEnv".to_string())); // ctx_ptr
 
                 for (i, arg) in s.args.args.iter().enumerate() {
                     let arg_ty = if let Some(ann) = &arg.def.annotation {

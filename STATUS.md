@@ -5,14 +5,13 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 ## Ongoing Development & Plans
 
 ### 1. Advanced Verification Features
-- [ ] **Structural (Field-Level) Permissions**: Enable disjoint borrowing of composite types by tracking hierarchical Z3 path constraints.
 - [ ] **Liquid Type Inference (Predicate Abstraction)**: Implement a feedback loop where Z3-required invariants at $\phi$-nodes are automatically extracted and applied as inferred Liquid Types.
+- [ ] **Automated Loop Invariant Synthesis**: Researching Abstract Interpretation to automatically derive loop invariants for complex numerical algorithms.
 
 ### 2. Concurrency & Performance
-- [x] **Static Data-Race Freedom**: Introduce `lila.parallel_for` and use fractional permissions to statically prove that concurrent tasks do not cause data races.
+- [x] **GIL-less Parallelism**: Support for high-performance multi-threading via `parallel_for` on raw memory buffers.
 - [ ] **SIMD Auto-vectorization**: Leverage Cranelift's SIMD capabilities for verified buffer operations.
 
 ### 3. Developer Ergonomics
 - [x] **Centralized Granular Tracing**: Implemented a controllable tracing system (Rust & Python) allowing component-specific debug levels.
-- [ ] **Non-Lexical Lifetimes (NLL)**: Use SMT-guided liveness to automatically infer borrow lifetimes and eliminate redundant `Mut`/`Ref` annotations.
-- [x] **Python Context Managers**: Support `with` blocks for explicit, safe scoped borrowing.
+- [ ] **Refinement Diagnostics**: Improved source-mapping for verification failures to provide precise location info in Python code.

@@ -5,8 +5,8 @@ This document outlines the core architectural constraints, design patterns, and 
 ## 1. Architectural Constraints
 
 ### 1.1 Formal Verification First
-*   **Permission Verifier:** A flow-sensitive system using **Fractional Permissions** ($Exclusive=1.0, Shared \in (0, 1)$) to prove absence of aliasing violations and use-after-moves. Safety must be mathematically provable in Z3 using `Context::thread_local()`.
-*   **Symbolic Partitioning:** Shared weights are generated as symbolic constants; Z3 proves safety by confirming a valid partitioning exists where $\sum \text{weights} \le 1.0$.
+*   **Logic Verification:** A path-aware, flow-sensitive system using Z3 to prove the absence of logical errors, out-of-bounds accesses, and refinement type violations. Safety must be mathematically provable in Z3 using `Context::thread_local()`.
+*   **Refinement Types:** Lila uses refinement types (liquid types) to attach logical predicates to data. Z3 verifies that all assignments and function calls satisfy these predicates across all reachable paths.
 
 ### 1.2 Strict SSA (Static Single Assignment)
 The Intermediate Representation (IR) enforces strict SSA form.
@@ -24,7 +24,7 @@ Lila structs are compiled to flat, C-compatible memory layouts.
 ### 2.1 Zero-Boilerplate Experience
 The Python-side DSL must feel like native Python, hiding all low-level C-ABI details.
 *   **No explicit `ctypes` in user code:** Users should never have to manually call `ctypes.pointer` or `ctypes.addressof`.
-*   **Native Types:** Always use Lila-native types (`i64`, `u8`, `f32`, `Hand`, `Peek`, `Held`) in annotations. Do not expose `ctypes.c_int64` to the user.
+*   **Native Types:** Always use Lila-native types (`i64`, `u8`, `f32`, `bool`) in annotations. Do not expose `ctypes.c_int64` to the user.
 *   **Automatic Unwrapping:** The `@verify` decorator must automatically resolve Lila objects to their underlying memory buffers before calling the JIT function.
 
 ### 2.2 Struct Generation

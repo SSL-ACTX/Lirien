@@ -58,18 +58,6 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
             };
 
             match base.to_lowercase().as_str() {
-                "held" => {
-                    let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Held(Box::new(inner)))
-                }
-                "peek" => {
-                    let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Peek(Box::new(inner)))
-                }
-                "hand" => {
-                    let inner = parse_type(&s.slice, aliases)?;
-                    Ok(Type::Hand(Box::new(inner)))
-                }
                 "array" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Array(Box::new(inner), None))

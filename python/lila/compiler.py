@@ -5,7 +5,7 @@ import os
 import ctypes
 from typing import Callable, TypeVar, Any, Dict, List, Tuple
 from . import lila_bridge
-from .types import TYPE_MAP, Buffer, Hand, Peek, SizedArray, Closure, FnPointer
+from .types import TYPE_MAP, Buffer, SizedArray, Closure, FnPointer
 
 T = TypeVar("T", bound=Callable)
 
@@ -23,7 +23,6 @@ def configure_tracing(config: Dict[str, str]):
 def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
     """
     Statically verified parallel loop.
-    Lila proves data-race freedom using fractional permissions.
     """
     for i in range_obj:
         body_fn(i)
@@ -197,12 +196,11 @@ def _map_ctypes_arguments(
 
         is_ptr_wrapper = False
         if isinstance(origin, type) and issubclass(
-            origin, (Hand, Peek, SizedArray, Closure, FnPointer, Callable)
+            origin, (SizedArray, Closure, FnPointer, Callable)
         ):
             is_ptr_wrapper = True
         if not is_ptr_wrapper and any(
-            x in ann_str
-            for x in ["hand", "peek", "sizedarray", "closure", "fnpointer", "callable"]
+            x in ann_str for x in ["sizedarray", "closure", "fnpointer", "callable"]
         ):
             is_ptr_wrapper = True
 
@@ -291,8 +289,6 @@ def _create_jit_wrapper(
         elif any(
             x in arg_ty_str
             for x in [
-                "hand",
-                "peek",
                 "sizedarray",
                 "fnpointer",
                 "callable",
@@ -466,11 +462,10 @@ def _prepare_source_and_name(
 
         if func_def.args.args and func_def.args.args[0].arg == "self":
             if not func_def.args.args[0].annotation:
-                func_def.args.args[0].annotation = ast.Subscript(
-                    value=ast.Name(id="Hand", ctx=ast.Load()),
-                    slice=ast.Name(id=class_name, ctx=ast.Load()),
-                    ctx=ast.Load(),
+                func_def.args.args[0].annotation = ast.Name(
+                    id=class_name, ctx=ast.Load()
                 )
+
         source = ast.unparse(tree)
 
     return source, target_func_name
