@@ -54,6 +54,54 @@ impl CFGBuilder {
                 }
             }
             ast::Expr::Attribute(attr) => {
+                // Check if the base of the attribute chain is a subscript
+                // e.g., arr[i].x = val
+                let mut current = &*attr.value;
+                let mut is_subscript_base = false;
+                while let ast::Expr::Attribute(inner_attr) = current {
+                    current = &*inner_attr.value;
+                }
+
+                if let ast::Expr::Subscript(sub) = current {
+                    is_subscript_base = true;
+                }
+
+                if is_subscript_base {
+                    // Evaluate the full attribute path as an expression to load the struct.
+                    // Modify the struct locally, then recursively store it back.
+                    let base_val = self.visit_expr(*attr.value.clone())?;
+                    let base_ty = self.func.get_type(base_val);
+
+                    let mut offset = 0;
+                    let mut leaf_ty = base_ty.clone();
+                    if let Type::Struct(struct_name) = &base_ty {
+                        let field_offset = self
+                            .get_field_offset(struct_name, attr.attr.as_str())
+                            .unwrap();
+                        offset = field_offset;
+                        let fields = self.func.struct_layouts.get(struct_name).unwrap();
+                        leaf_ty = fields
+                            .iter()
+                            .find(|(f, _)| f == attr.attr.as_str())
+                            .unwrap()
+                            .1
+                            .clone();
+                    } else {
+                        return Err("Expected struct base".to_string());
+                    }
+
+                    let dest_obj = self.func.next_value();
+                    self.add_instruction(InstructionKind::StructSet(
+                        dest_obj, base_val, offset, value, leaf_ty,
+                    ));
+                    self.func.set_type(dest_obj, base_ty.clone());
+
+                    // Now we need to store `dest_obj` back into whatever `attr.value` was.
+                    // This means `handle_assignment_target` needs to be recursive!
+                    self.handle_assignment_target(&*attr.value, dest_obj)?;
+                    return Ok(());
+                }
+
                 let (root_name, offset, leaf_ty) =
                     self.resolve_attribute_path(ast::Expr::Attribute(attr.clone()))?;
                 let root_val = self.read_variable(root_name.clone(), self.current_block)?;

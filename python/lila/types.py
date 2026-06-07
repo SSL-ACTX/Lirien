@@ -265,9 +265,42 @@ class Buffer:
     Usage: arr: Buffer[i32]
     """
 
+    @classmethod
+    def alloc(cls, size: int) -> "memoryview":
+        """
+        Allocates a contiguous bytearray for a given number of elements.
+        Must be called on a specialized type hint (e.g., Buffer[Point3D].alloc(10)).
+        """
+        raise NotImplementedError("Use the specialized type hint's alloc method")
+
     def __class_getitem__(cls, base_type):
-        base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
-        return Annotated[cls, base_ty_str]
+        from typing import Annotated
+        import ctypes
+
+        class BufferAnnotated:
+            @classmethod
+            def alloc(cls_ann, count: int):
+                if getattr(base_type, "__lila_struct__", False):
+                    item_cty = base_type.__lila_ctypes__
+                else:
+                    item_ty_str = str(base_type).lower()
+                    item_cty = ctypes.c_int64
+                    for name, cty in TYPE_MAP.items():
+                        if name in item_ty_str:
+                            item_cty = cty
+                            break
+
+                # Return a ctypes array directly. It implements the buffer protocol
+                # and allows direct indexing/field access without exposing ctypes to the user.
+                ArrayType = item_cty * count
+                return ArrayType()
+
+        # We merge the base Buffer functionality into the Annotated object
+        # by making it a subclass or just injecting alloc.
+        anno = Annotated[cls, base_type]
+        # Attach alloc to the annotated type object directly
+        anno.alloc = BufferAnnotated.alloc
+        return anno
 
 
 class Box:
@@ -391,6 +424,9 @@ def struct(cls):
         setattr(cls, name, property(make_getter(name, ftype), make_setter(name)))
 
     return cls
+
+
+value = struct
 
 
 def enum(cls):

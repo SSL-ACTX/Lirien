@@ -1,5 +1,6 @@
 from .types import (
     struct,
+    value,
     enum,
     adt,
     i8,
@@ -41,6 +42,7 @@ from .compiler import (
 
 __all__ = [
     "struct",
+    "value",
     "enum",
     "adt",
     "verify",

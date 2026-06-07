@@ -233,7 +233,7 @@ def _discover_types(
                     )
                     # Extract the first metadata (the item type)
                     item_ty = base_ty.__metadata__[0]
-                    base_ty_name = f"{origin_name}[{item_ty}]"
+                    base_ty_name = f"{origin_name}[{_get_type_name(item_ty)}]"
                 else:
                     base_ty_name = getattr(base_ty, "__name__", str(base_ty))
 
@@ -310,10 +310,21 @@ def _map_ctypes_arguments(
 
             # Determine item size for length calculation
             item_size = 8
-            for name, cty in TYPE_MAP.items():
-                if name in ann_str:
-                    item_size = ctypes.sizeof(cty)
-                    break
+            if hasattr(actual_ann, "__metadata__"):
+                item_ty = actual_ann.__metadata__[0]
+                if getattr(item_ty, "__lila_struct__", False):
+                    item_size = ctypes.sizeof(item_ty.__lila_ctypes__)
+                else:
+                    item_ty_str = str(item_ty).lower()
+                    for name, cty in TYPE_MAP.items():
+                        if name in item_ty_str:
+                            item_size = ctypes.sizeof(cty)
+                            break
+            else:
+                for name, cty in TYPE_MAP.items():
+                    if name in ann_str:
+                        item_size = ctypes.sizeof(cty)
+                        break
             arg_map.append(("buffer", len(c_args) - 2, item_size))
         elif (
             is_ptr_wrapper
