@@ -82,7 +82,10 @@ pub fn translate<
                     ctx.backend.push();
                     ctx.backend.assert(&default_cond);
                     if ctx.backend.check() != Ok(false) {
-                        let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
                         return Err(format!(
                             "Non-exhaustive match detected: some ADT variants are not handled{}",
                             loc_info

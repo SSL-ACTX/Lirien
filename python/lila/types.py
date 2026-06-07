@@ -218,6 +218,7 @@ def struct(cls):
     cls.__lila_struct__ = True
     cls.__lila_fields__ = field_list
     cls.__lila_ctypes__ = LilaCtypesStruct
+    cls.__match_args__ = tuple(name for name, _ in field_list)
 
     # Add a constructor that accepts values for fields
     original_init = cls.__init__

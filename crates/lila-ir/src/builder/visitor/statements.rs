@@ -1,6 +1,6 @@
 use crate::builder::metadata::{extract_refinement, parse_type};
 use crate::builder::CFGBuilder;
-use crate::ir::{InstructionKind, Type};
+use crate::ir::{BlockId, InstructionKind, Type, Value};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
 use std::collections::HashMap;
@@ -488,7 +488,7 @@ impl CFGBuilder {
                                 self.start_block(body_block);
                                 self.link_blocks(start_block, body_block);
 
-                                // Handle destructuring
+                                // Handle destructuring recursively
                                 if !pattern_args.is_empty() {
                                     let payload = self.func.next_value();
                                     self.add_instruction(InstructionKind::EnumExtract(
@@ -500,57 +500,36 @@ impl CFGBuilder {
                                     self.func.set_type(payload, variant_ty.clone());
 
                                     if pattern_args.len() == 1 {
-                                        if let ast::Pattern::MatchAs(p) = &pattern_args[0] {
-                                            if let Some(name) = &p.name {
-                                                self.write_variable(
-                                                    name.to_string(),
-                                                    body_block,
-                                                    payload,
-                                                );
-                                            }
-                                        } else {
-                                            return Err("Only simple name patterns supported for enum payload destructuring".to_string());
-                                        }
+                                        self.handle_nested_pattern(
+                                            &pattern_args[0],
+                                            payload,
+                                            body_block,
+                                        )?;
                                     } else {
-                                        match variant_ty {
-                                            Type::Tuple(ref types) => {
-                                                if types.len() != pattern_args.len() {
-                                                    return Err(format!(
-                                                        "Variant '{}' has {} fields, but pattern has {}",
-                                                        variant_name,
-                                                        types.len(),
-                                                        pattern_args.len()
-                                                    ));
-                                                }
-                                                for (i, p_arg) in pattern_args.iter().enumerate() {
-                                                    let elt = self.func.next_value();
-                                                    self.add_instruction(
-                                                        InstructionKind::TupleExtract(
-                                                            elt, payload, i,
-                                                        ),
-                                                    );
-                                                    self.func.set_type(elt, types[i].clone());
-
-                                                    if let ast::Pattern::MatchAs(p) = p_arg {
-                                                        if let Some(name) = &p.name {
-                                                            self.write_variable(
-                                                                name.to_string(),
-                                                                body_block,
-                                                                elt,
-                                                            );
-                                                        }
-                                                    } else {
-                                                        return Err("Only simple name patterns supported for enum payload destructuring".to_string());
-                                                    }
-                                                }
-                                            }
-                                            _ => {
+                                        // Multi-element payload (tuple)
+                                        if let Type::Tuple(ref types) = variant_ty {
+                                            if types.len() != pattern_args.len() {
                                                 return Err(format!(
-                                                    "Variant '{}' has a non-tuple payload, but pattern has {} fields",
+                                                    "Variant '{}' has {} fields, but pattern has {}",
                                                     variant_name,
+                                                    types.len(),
                                                     pattern_args.len()
                                                 ));
                                             }
+                                            for (i, p_arg) in pattern_args.iter().enumerate() {
+                                                let elt = self.func.next_value();
+                                                self.add_instruction(
+                                                    InstructionKind::TupleExtract(elt, payload, i),
+                                                );
+                                                self.func.set_type(elt, types[i].clone());
+                                                self.handle_nested_pattern(p_arg, elt, body_block)?;
+                                            }
+                                        } else {
+                                            return Err(format!(
+                                                "Variant '{}' has a non-tuple payload, but pattern has {} fields",
+                                                variant_name,
+                                                pattern_args.len()
+                                            ));
                                         }
                                     }
                                 }
@@ -633,6 +612,131 @@ impl CFGBuilder {
                 Ok(())
             }
             _ => Err(format!("Statement type {:?} not yet supported", stmt)),
+        }
+    }
+
+    fn handle_nested_pattern(
+        &mut self,
+        pattern: &ast::Pattern,
+        val: Value,
+        block: BlockId,
+    ) -> Result<(), String> {
+        match pattern {
+            ast::Pattern::MatchAs(p) => {
+                if p.pattern.is_some() {
+                    return Err("Nested patterns in MatchAs not yet supported".to_string());
+                }
+                if let Some(name) = &p.name {
+                    self.write_variable(name.to_string(), block, val);
+                }
+                Ok(())
+            }
+            ast::Pattern::MatchClass(p) => {
+                // Nested struct or enum destructuring
+                let ty = self.func.get_type(val);
+                match ty {
+                    Type::Struct(ref name) => {
+                        let fields = self
+                            .func
+                            .struct_layouts
+                            .get(name)
+                            .cloned()
+                            .ok_or_else(|| format!("Unknown struct layout for '{}'", name))?;
+                        if p.patterns.len() > fields.len() {
+                            return Err(format!(
+                                "Struct '{}' has {} fields, but pattern has {}",
+                                name,
+                                fields.len(),
+                                p.patterns.len()
+                            ));
+                        }
+                        let mut current_offset = 0;
+                        for (i, sub_pattern) in p.patterns.iter().enumerate() {
+                            let field_ty = &fields[i].1;
+                            let align = field_ty.align(&self.func.struct_layouts);
+                            current_offset = (current_offset + align - 1) & !(align - 1);
+
+                            let field_val = self.func.next_value();
+                            if field_ty.is_composite() {
+                                self.add_instruction(InstructionKind::StructOffset(
+                                    field_val,
+                                    val,
+                                    current_offset,
+                                ));
+                            } else {
+                                self.add_instruction(InstructionKind::StructLoad(
+                                    field_val,
+                                    val,
+                                    current_offset,
+                                ));
+                            }
+                            self.func.set_type(field_val, field_ty.clone());
+                            self.handle_nested_pattern(sub_pattern, field_val, block)?;
+
+                            current_offset += field_ty.size(&self.func.struct_layouts);
+                        }
+                        Ok(())
+                    }
+                    Type::Enum(ref name) => {
+                        let variant_name = match &*p.cls {
+                            ast::Expr::Attribute(a) => a.attr.to_string(),
+                            _ => return Err("Expected Enum.Variant pattern".to_string()),
+                        };
+                        let variants = self
+                            .func
+                            .enum_layouts
+                            .get(name)
+                            .cloned() // Clone to avoid borrowing self.func
+                            .ok_or_else(|| format!("Unknown enum layout for '{}'", name))?;
+                        let tag_idx = variants
+                            .iter()
+                            .position(|(n, _)| *n == variant_name)
+                            .ok_or_else(|| {
+                                format!("Unknown variant '{}' for enum '{}'", variant_name, name)
+                            })?;
+
+                        let payload = self.func.next_value();
+                        self.add_instruction(InstructionKind::EnumExtract(payload, val, tag_idx));
+                        let variant_ty = variants[tag_idx].1.clone();
+                        self.func.set_type(payload, variant_ty.clone()); // Clone to avoid move
+
+                        if p.patterns.len() == 1 {
+                            self.handle_nested_pattern(&p.patterns[0], payload, block)?;
+                        } else if !p.patterns.is_empty() {
+                            if let Type::Tuple(ref types) = variant_ty {
+                                if types.len() != p.patterns.len() {
+                                    return Err(format!(
+                                        "Variant '{}' has {} fields, but pattern has {}",
+                                        variant_name,
+                                        types.len(),
+                                        p.patterns.len()
+                                    ));
+                                }
+                                for (i, sub_p) in p.patterns.iter().enumerate() {
+                                    let elt = self.func.next_value();
+                                    self.add_instruction(InstructionKind::TupleExtract(
+                                        elt, payload, i,
+                                    ));
+                                    self.func.set_type(elt, types[i].clone());
+                                    self.handle_nested_pattern(sub_p, elt, block)?;
+                                }
+                            } else {
+                                return Err(format!(
+                                    "Variant '{}' has a non-tuple payload, but pattern has {} fields",
+                                    variant_name,
+                                    p.patterns.len()
+                                ));
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(format!("Cannot destructure type {:?}", ty)),
+                }
+            }
+            ast::Pattern::MatchValue(_) => {
+                Err("Literal matching not yet supported in nested patterns".to_string())
+            }
+            _ => Err(format!("Unsupported nested pattern type: {:?}", pattern)),
         }
     }
 }

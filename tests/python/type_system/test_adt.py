@@ -84,6 +84,43 @@ class TestADT(unittest.TestCase):
 
         self.assertIn("Non-exhaustive match detected", str(cm.exception))
 
+    def test_adt_nested_pattern(self):
+        @struct
+        class Rect:
+            p1: Point2D
+            p2: Point2D
+
+        @adt
+        class Geometry:
+            Item: Rect
+            Other: i64
+
+        @verify
+        def get_p1_x(g: Geometry) -> i64:
+            match g:
+                case Geometry.Item(Rect(Point2D(x, y), p2)):
+                    return x
+                case Geometry.Other(v):
+                    return v
+                case _:
+                    return -1
+
+        @verify
+        def get_p2_y(g: Geometry) -> i64:
+            match g:
+                case Geometry.Item(Rect(p1, Point2D(x, y))):
+                    return y
+                case _:
+                    return -1
+
+        r = Rect(Point2D(10, 20), Point2D(30, 40))
+        g1 = Geometry.Item(r)
+        self.assertEqual(get_p1_x(g1), 10)
+        self.assertEqual(get_p2_y(g1), 40)
+
+        g2 = Geometry.Other(42)
+        self.assertEqual(get_p1_x(g2), 42)
+
 
 if __name__ == "__main__":
     unittest.main()
