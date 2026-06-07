@@ -407,10 +407,6 @@ impl CFGBuilder {
                 self.add_instruction(InstructionKind::EnumGetTag(tag_val, subject_val));
                 self.func.set_type(tag_val, Type::U8);
 
-                let mut cases_map = HashMap::new();
-                let mut default_block = self.create_block();
-                let mut catch_all_found = false;
-
                 let variants = self
                     .func
                     .enum_layouts
@@ -418,155 +414,189 @@ impl CFGBuilder {
                     .cloned()
                     .ok_or_else(|| format!("Unknown enum layout for '{}'", enum_name))?;
 
+                // Group cases by tag
+                let mut tag_to_cases: HashMap<usize, Vec<ast::MatchCase>> = HashMap::new();
+                let mut global_default_case: Option<ast::MatchCase> = None;
+
                 for case in s.cases {
-                    if catch_all_found {
-                        break;
-                    }
-
                     match case.pattern {
-                        ast::Pattern::MatchAs(p) => {
-                            if p.pattern.is_some() {
-                                return Err("Nested patterns not yet supported".to_string());
+                        ast::Pattern::MatchAs(ref p) if p.pattern.is_none() && case.guard.is_none() => {
+                            // Catch-all pattern without guard
+                            if global_default_case.is_none() {
+                                global_default_case = Some(case);
                             }
-                            catch_all_found = true;
-                            let body_block = self.create_block();
-                            default_block = body_block;
-
-                            self.start_block(body_block);
-                            self.link_blocks(start_block, body_block);
-                            if let Some(name) = p.name {
-                                self.write_variable(name.to_string(), body_block, subject_val);
-                            }
-                            for stmt in case.body {
-                                self.visit_stmt(stmt)?;
-                            }
-                            if !self.is_terminated(self.current_block) {
-                                self.add_instruction(InstructionKind::Jump(exit_block));
-                                self.link_blocks(self.current_block, exit_block);
-                            }
-                            self.seal_block(body_block)?;
+                            // Subsequent catch-alls are unreachable
+                            break;
                         }
                         _ => {
-                            let (variant_name, pattern_args) = match case.pattern {
-                                ast::Pattern::MatchClass(p) => {
-                                    let attr = match *p.cls {
+                            let variant_res = match case.pattern {
+                                ast::Pattern::MatchClass(ref p) => {
+                                    let attr = match &*p.cls {
                                         ast::Expr::Attribute(a) => a,
-                                        _ => {
-                                            return Err("Expected Enum.Variant pattern".to_string())
-                                        }
+                                        _ => return Err("Expected Enum.Variant pattern".to_string()),
                                     };
-                                    (attr.attr.to_string(), p.patterns)
+                                    Some(attr.attr.to_string())
                                 }
-                                ast::Pattern::MatchValue(p) => {
-                                    let attr = match *p.value {
+                                ast::Pattern::MatchValue(ref p) => {
+                                    let attr = match &*p.value {
                                         ast::Expr::Attribute(a) => a,
-                                        _ => {
-                                            return Err("Expected Enum.Variant pattern".to_string())
-                                        }
+                                        _ => return Err("Expected Enum.Variant pattern".to_string()),
                                     };
-                                    (attr.attr.to_string(), Vec::new())
+                                    Some(attr.attr.to_string())
                                 }
-                                _ => {
-                                    return Err(format!(
-                                        "Unsupported pattern type: {:?}",
-                                        case.pattern
-                                    ))
-                                }
+                                _ => None, // Might be MatchAs with a guard
                             };
 
-                            let tag_idx =
-                                variants.iter().position(|(name, _)| *name == variant_name);
-                            if let Some(tag_idx) = tag_idx {
-                                if cases_map.contains_key(&tag_idx) {
-                                    // Already handled by previous case
-                                    continue;
-                                }
-
-                                let body_block = self.create_block();
-                                cases_map.insert(tag_idx, body_block);
-
-                                self.start_block(body_block);
-                                self.link_blocks(start_block, body_block);
-
-                                // Handle destructuring recursively
-                                if !pattern_args.is_empty() {
-                                    let payload = self.func.next_value();
-                                    self.add_instruction(InstructionKind::EnumExtract(
-                                        payload,
-                                        subject_val,
-                                        tag_idx,
+                            if let Some(variant_name) = variant_res {
+                                let tag_idx = variants.iter().position(|(name, _)| *name == variant_name);
+                                if let Some(tag_idx) = tag_idx {
+                                    tag_to_cases.entry(tag_idx).or_default().push(case);
+                                } else {
+                                    return Err(format!(
+                                        "Unknown variant '{}' for enum '{}'",
+                                        variant_name, enum_name
                                     ));
-                                    let variant_ty = variants[tag_idx].1.clone();
-                                    self.func.set_type(payload, variant_ty.clone());
-
-                                    if pattern_args.len() == 1 {
-                                        self.handle_nested_pattern(
-                                            &pattern_args[0],
-                                            payload,
-                                            body_block,
-                                        )?;
-                                    } else {
-                                        // Multi-element payload (tuple)
-                                        if let Type::Tuple(ref types) = variant_ty {
-                                            if types.len() != pattern_args.len() {
-                                                return Err(format!(
-                                                    "Variant '{}' has {} fields, but pattern has {}",
-                                                    variant_name,
-                                                    types.len(),
-                                                    pattern_args.len()
-                                                ));
-                                            }
-                                            for (i, p_arg) in pattern_args.iter().enumerate() {
-                                                let elt = self.func.next_value();
-                                                self.add_instruction(
-                                                    InstructionKind::TupleExtract(elt, payload, i),
-                                                );
-                                                self.func.set_type(elt, types[i].clone());
-                                                self.handle_nested_pattern(p_arg, elt, body_block)?;
-                                            }
-                                        } else {
-                                            return Err(format!(
-                                                "Variant '{}' has a non-tuple payload, but pattern has {} fields",
-                                                variant_name,
-                                                pattern_args.len()
-                                            ));
-                                        }
-                                    }
                                 }
-
-                                for stmt in case.body {
-                                    self.visit_stmt(stmt)?;
-                                }
-                                if !self.is_terminated(self.current_block) {
-                                    self.add_instruction(InstructionKind::Jump(exit_block));
-                                    self.link_blocks(self.current_block, exit_block);
-                                }
-                                self.seal_block(body_block)?;
                             } else {
-                                return Err(format!(
-                                    "Unknown variant '{}' for enum '{}'",
-                                    variant_name, enum_name
-                                ));
+                                // This is a MatchAs with a guard or something else.
+                                // Python's `match` is strictly sequential. If we have:
+                                // case Shape.Circle: ...
+                                // case x if cond: ...
+                                // case Shape.Rectangle: ...
+                                // We cannot easily use a jump table if we want to respect this order.
+                                // For now, let's assume all cases are either variants or a final catch-all.
+                                return Err("Currently only Enum variants or simple catch-all supported in match".to_string());
                             }
                         }
                     }
                 }
 
-                if !catch_all_found {
-                    self.start_block(default_block);
-                    self.link_blocks(start_block, default_block);
-                    self.add_instruction(InstructionKind::Jump(exit_block));
-                    self.link_blocks(default_block, exit_block);
-                    self.seal_block(default_block)?;
+                let mut cases_map = HashMap::new();
+                let default_block = self.create_block();
+
+                // 1. Handle explicit variant cases
+                for (tag_idx, tag_cases) in tag_to_cases {
+                    let dispatch_block = self.create_block();
+                    cases_map.insert(tag_idx, dispatch_block);
+
+                    self.start_block(dispatch_block);
+                    self.link_blocks(start_block, dispatch_block);
+
+                    let mut current_chain_block = dispatch_block;
+
+                    for (i, case) in tag_cases.iter().enumerate() {
+                        let next_in_chain = if i < tag_cases.len() - 1 {
+                            self.create_block()
+                        } else {
+                            default_block
+                        };
+
+                        let body_block = self.create_block();
+
+                        // 1.1. Pattern destructuring (bindings)
+                        let pattern_args = match &case.pattern {
+                            ast::Pattern::MatchClass(p) => &p.patterns,
+                            ast::Pattern::MatchValue(_) => &Vec::new(),
+                            _ => unreachable!(),
+                        };
+
+                        if !pattern_args.is_empty() {
+                            let payload = self.func.next_value();
+                            self.add_instruction(InstructionKind::EnumExtract(
+                                payload,
+                                subject_val,
+                                tag_idx,
+                            ));
+                            let variant_ty = variants[tag_idx].1.clone();
+                            self.func.set_type(payload, variant_ty.clone());
+
+                            if pattern_args.len() == 1 {
+                                self.handle_nested_pattern(
+                                    &pattern_args[0],
+                                    payload,
+                                    current_chain_block,
+                                )?;
+                            } else {
+                                if let Type::Tuple(ref types) = variant_ty {
+                                    for (j, p_arg) in pattern_args.iter().enumerate() {
+                                        let elt = self.func.next_value();
+                                        self.add_instruction(InstructionKind::TupleExtract(
+                                            elt, payload, j,
+                                        ));
+                                        self.func.set_type(elt, types[j].clone());
+                                        self.handle_nested_pattern(
+                                            p_arg,
+                                            elt,
+                                            current_chain_block,
+                                        )?;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 1.2. Guard check
+                        if let Some(guard_expr) = &case.guard {
+                            let cond = self.visit_expr(*guard_expr.clone())?;
+                            self.add_instruction(InstructionKind::Branch(
+                                cond,
+                                body_block,
+                                next_in_chain,
+                            ));
+                            self.link_blocks(current_chain_block, body_block);
+                            self.link_blocks(current_chain_block, next_in_chain);
+                        } else {
+                            self.add_instruction(InstructionKind::Jump(body_block));
+                            self.link_blocks(current_chain_block, body_block);
+                        }
+                        self.seal_block(current_chain_block)?;
+
+                        // 1.3. Body
+                        self.start_block(body_block);
+                        for stmt in &case.body {
+                            self.visit_stmt(stmt.clone())?;
+                        }
+                        if !self.is_terminated(self.current_block) {
+                            self.add_instruction(InstructionKind::Jump(exit_block));
+                            self.link_blocks(self.current_block, exit_block);
+                        }
+                        self.seal_block(body_block)?;
+
+                        if i < tag_cases.len() - 1 {
+                            self.start_block(next_in_chain);
+                            current_chain_block = next_in_chain;
+                        }
+                    }
                 }
 
-                // Finalize the Match instruction in the start block
+                // 2. Handle global default (catch-all)
+                self.start_block(default_block);
+                self.link_blocks(start_block, default_block);
+                if let Some(ref case) = global_default_case {
+                    if let ast::Pattern::MatchAs(ref p) = case.pattern {
+                        if let Some(name) = &p.name {
+                            self.write_variable(name.to_string(), default_block, subject_val);
+                        }
+                    }
+                    for stmt in &case.body {
+                        self.visit_stmt(stmt.clone())?;
+                    }
+                    if !self.is_terminated(self.current_block) {
+                        self.add_instruction(InstructionKind::Jump(exit_block));
+                        self.link_blocks(self.current_block, exit_block);
+                    }
+                } else {
+                    self.add_instruction(InstructionKind::Jump(exit_block));
+                    self.link_blocks(default_block, exit_block);
+                }
+                self.seal_block(default_block)?;
+
+                // Finalize start block
                 self.start_block(start_block);
                 self.add_instruction(InstructionKind::Match(
                     tag_val,
                     cases_map,
                     default_block,
-                    !catch_all_found,
+                    global_default_case.is_none(),
                 ));
 
                 self.start_block(exit_block);
