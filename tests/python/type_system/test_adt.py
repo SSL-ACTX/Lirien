@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, adt, i64, f64, struct
+from lila import verify, adt, i64, f64, struct, VerificationError
 
 
 @adt
@@ -56,6 +56,33 @@ class TestADT(unittest.TestCase):
 
         m2 = MyAdt.B(42)
         self.assertEqual(get_x(m2), 42)
+
+    def test_adt_non_exhaustive(self):
+        # Explicit catch-all should be fine
+        @verify
+        def get_area_safe(s: Shape) -> f64:
+            match s:
+                case Shape.Circle(r):
+                    return 3.14159 * r * r
+                case _:
+                    return 0.0
+
+        c = Shape.Circle(10.0)
+        self.assertAlmostEqual(get_area_safe(c), 314.159)
+
+        p = Shape.Point()
+        self.assertEqual(get_area_safe(p), 0.0)
+
+        # Missing variant without catch-all should fail verification
+        with self.assertRaises(VerificationError) as cm:
+
+            @verify
+            def fail_match(s: Shape) -> f64:
+                match s:
+                    case Shape.Circle(r):
+                        return 1.0
+
+        self.assertIn("Non-exhaustive match detected", str(cm.exception))
 
 
 if __name__ == "__main__":

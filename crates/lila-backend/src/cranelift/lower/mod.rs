@@ -130,6 +130,7 @@ pub fn lower_instruction<M: Module>(
 
         InstructionKind::Jump(_)
         | InstructionKind::Branch(_, _, _)
+        | InstructionKind::Match(_, _, _, _)
         | InstructionKind::Return(_) => control_flow::lower(ctx, &inst.kind, current_ssa_block),
 
         InstructionKind::ArrayLoad(_, _, _)
@@ -143,6 +144,7 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::StructSet(_, _, _, _, _)
         | InstructionKind::EnumCreate(_, _, _, _)
         | InstructionKind::EnumIsVariant(_, _, _)
+        | InstructionKind::EnumGetTag(_, _)
         | InstructionKind::EnumExtract(_, _, _) => memory::lower(ctx, &inst.kind),
 
         InstructionKind::TupleCreate(_, _) | InstructionKind::TupleExtract(_, _, _) => {

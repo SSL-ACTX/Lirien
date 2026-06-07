@@ -3,6 +3,7 @@ use crate::builder::CFGBuilder;
 use crate::ir::{InstructionKind, Type};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
+use std::collections::HashMap;
 
 impl CFGBuilder {
     pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> Result<(), String> {
@@ -400,51 +401,42 @@ impl CFGBuilder {
                 };
 
                 let exit_block = self.create_block();
-                let mut current_case_block = self.current_block;
+                let start_block = self.current_block;
+
+                let tag_val = self.func.next_value();
+                self.add_instruction(InstructionKind::EnumGetTag(tag_val, subject_val));
+                self.func.set_type(tag_val, Type::U8);
+
+                let mut cases_map = HashMap::new();
+                let mut default_block = self.create_block();
+                let mut catch_all_found = false;
+
+                let variants = self
+                    .func
+                    .enum_layouts
+                    .get(&enum_name)
+                    .cloned()
+                    .ok_or_else(|| format!("Unknown enum layout for '{}'", enum_name))?;
 
                 for case in s.cases {
-                    let next_case_block = self.create_block();
-                    let body_block = self.create_block();
+                    if catch_all_found {
+                        break;
+                    }
 
-                    self.start_block(current_case_block);
-
-                    // 1. Identify the variant from the pattern
-                    let (variant_name, pattern_args) = match case.pattern {
-                        ast::Pattern::MatchClass(p) => {
-                            // Option.Some(val)
-                            let attr = match *p.cls {
-                                ast::Expr::Attribute(a) => a,
-                                _ => return Err("Expected Enum.Variant pattern".to_string()),
-                            };
-                            (attr.attr.to_string(), p.patterns)
-                        }
-                        ast::Pattern::MatchValue(p) => {
-                            // Option.Empty
-                            let attr = match *p.value {
-                                ast::Expr::Attribute(a) => a,
-                                _ => return Err("Expected Enum.Variant pattern".to_string()),
-                            };
-                            (attr.attr.to_string(), Vec::new())
-                        }
+                    match case.pattern {
                         ast::Pattern::MatchAs(p) => {
-                            // match-all pattern: case x:
                             if p.pattern.is_some() {
                                 return Err("Nested patterns not yet supported".to_string());
                             }
-                            // This is a catch-all
-                            if let Some(name) = p.name {
-                                self.write_variable(
-                                    name.to_string(),
-                                    current_case_block,
-                                    subject_val,
-                                );
-                            }
-                            self.add_instruction(InstructionKind::Jump(body_block));
-                            self.link_blocks(current_case_block, body_block);
+                            catch_all_found = true;
+                            let body_block = self.create_block();
+                            default_block = body_block;
 
-                            // Body
-                            self.seal_block(body_block)?;
                             self.start_block(body_block);
+                            self.link_blocks(start_block, body_block);
+                            if let Some(name) = p.name {
+                                self.write_variable(name.to_string(), body_block, subject_val);
+                            }
                             for stmt in case.body {
                                 self.visit_stmt(stmt)?;
                             }
@@ -452,134 +444,154 @@ impl CFGBuilder {
                                 self.add_instruction(InstructionKind::Jump(exit_block));
                                 self.link_blocks(self.current_block, exit_block);
                             }
-
-                            current_case_block = next_case_block;
-                            continue;
+                            self.seal_block(body_block)?;
                         }
-                        _ => return Err(format!("Unsupported pattern type: {:?}", case.pattern)),
-                    };
-
-                    // 2. Resolve variant tag index
-                    let variants = self
-                        .func
-                        .enum_layouts
-                        .get(&enum_name)
-                        .cloned()
-                        .ok_or_else(|| format!("Unknown enum layout for '{}'", enum_name))?;
-                    let tag_idx = variants
-                        .iter()
-                        .position(|(name, _)| *name == variant_name)
-                        .ok_or_else(|| {
-                            format!(
-                                "Unknown variant '{}' for enum '{}'",
-                                variant_name, enum_name
-                            )
-                        })?;
-
-                    // 3. Emit check: is_variant
-                    let is_var = self.func.next_value();
-                    self.add_instruction(InstructionKind::EnumIsVariant(
-                        is_var,
-                        subject_val,
-                        tag_idx,
-                    ));
-                    self.func.set_type(is_var, Type::Bool);
-
-                    self.add_instruction(InstructionKind::Branch(
-                        is_var,
-                        body_block,
-                        next_case_block,
-                    ));
-                    self.link_blocks(current_case_block, body_block);
-                    self.link_blocks(current_case_block, next_case_block);
-
-                    // 4. Case Body
-                    self.seal_block(body_block)?;
-                    self.start_block(body_block);
-
-                    // Handle pattern arguments (destructuring)
-                    if !pattern_args.is_empty() {
-                        let payload = self.func.next_value();
-                        self.add_instruction(InstructionKind::EnumExtract(
-                            payload,
-                            subject_val,
-                            tag_idx,
-                        ));
-                        let variant_ty = variants[tag_idx].1.clone();
-                        self.func.set_type(payload, variant_ty.clone());
-
-                        if pattern_args.len() == 1 {
-                            if let ast::Pattern::MatchAs(p) = &pattern_args[0] {
-                                if let Some(name) = &p.name {
-                                    self.write_variable(name.to_string(), body_block, payload);
+                        _ => {
+                            let (variant_name, pattern_args) = match case.pattern {
+                                ast::Pattern::MatchClass(p) => {
+                                    let attr = match *p.cls {
+                                        ast::Expr::Attribute(a) => a,
+                                        _ => {
+                                            return Err("Expected Enum.Variant pattern".to_string())
+                                        }
+                                    };
+                                    (attr.attr.to_string(), p.patterns)
                                 }
-                            } else {
-                                return Err("Only simple name patterns supported for enum payload destructuring".to_string());
-                            }
-                        } else {
-                            // Multi-element payload: assume it's a tuple
-                            match variant_ty {
-                                Type::Tuple(ref types) => {
-                                    if types.len() != pattern_args.len() {
-                                        return Err(format!(
-                                            "Variant '{}' has {} fields, but pattern has {}",
-                                            variant_name,
-                                            types.len(),
-                                            pattern_args.len()
-                                        ));
-                                    }
-                                    for (i, p_arg) in pattern_args.iter().enumerate() {
-                                        let elt = self.func.next_value();
-                                        self.add_instruction(InstructionKind::TupleExtract(
-                                            elt, payload, i,
-                                        ));
-                                        self.func.set_type(elt, types[i].clone());
+                                ast::Pattern::MatchValue(p) => {
+                                    let attr = match *p.value {
+                                        ast::Expr::Attribute(a) => a,
+                                        _ => {
+                                            return Err("Expected Enum.Variant pattern".to_string())
+                                        }
+                                    };
+                                    (attr.attr.to_string(), Vec::new())
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "Unsupported pattern type: {:?}",
+                                        case.pattern
+                                    ))
+                                }
+                            };
 
-                                        if let ast::Pattern::MatchAs(p) = p_arg {
+                            let tag_idx =
+                                variants.iter().position(|(name, _)| *name == variant_name);
+                            if let Some(tag_idx) = tag_idx {
+                                if cases_map.contains_key(&tag_idx) {
+                                    // Already handled by previous case
+                                    continue;
+                                }
+
+                                let body_block = self.create_block();
+                                cases_map.insert(tag_idx, body_block);
+
+                                self.start_block(body_block);
+                                self.link_blocks(start_block, body_block);
+
+                                // Handle destructuring
+                                if !pattern_args.is_empty() {
+                                    let payload = self.func.next_value();
+                                    self.add_instruction(InstructionKind::EnumExtract(
+                                        payload,
+                                        subject_val,
+                                        tag_idx,
+                                    ));
+                                    let variant_ty = variants[tag_idx].1.clone();
+                                    self.func.set_type(payload, variant_ty.clone());
+
+                                    if pattern_args.len() == 1 {
+                                        if let ast::Pattern::MatchAs(p) = &pattern_args[0] {
                                             if let Some(name) = &p.name {
                                                 self.write_variable(
                                                     name.to_string(),
                                                     body_block,
-                                                    elt,
+                                                    payload,
                                                 );
                                             }
                                         } else {
                                             return Err("Only simple name patterns supported for enum payload destructuring".to_string());
                                         }
+                                    } else {
+                                        match variant_ty {
+                                            Type::Tuple(ref types) => {
+                                                if types.len() != pattern_args.len() {
+                                                    return Err(format!(
+                                                        "Variant '{}' has {} fields, but pattern has {}",
+                                                        variant_name,
+                                                        types.len(),
+                                                        pattern_args.len()
+                                                    ));
+                                                }
+                                                for (i, p_arg) in pattern_args.iter().enumerate() {
+                                                    let elt = self.func.next_value();
+                                                    self.add_instruction(
+                                                        InstructionKind::TupleExtract(
+                                                            elt, payload, i,
+                                                        ),
+                                                    );
+                                                    self.func.set_type(elt, types[i].clone());
+
+                                                    if let ast::Pattern::MatchAs(p) = p_arg {
+                                                        if let Some(name) = &p.name {
+                                                            self.write_variable(
+                                                                name.to_string(),
+                                                                body_block,
+                                                                elt,
+                                                            );
+                                                        }
+                                                    } else {
+                                                        return Err("Only simple name patterns supported for enum payload destructuring".to_string());
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                return Err(format!(
+                                                    "Variant '{}' has a non-tuple payload, but pattern has {} fields",
+                                                    variant_name,
+                                                    pattern_args.len()
+                                                ));
+                                            }
+                                        }
                                     }
                                 }
-                                _ => {
-                                    return Err(format!(
-                                        "Variant '{}' has a non-tuple payload, but pattern has {} fields",
-                                        variant_name,
-                                        pattern_args.len()
-                                    ));
+
+                                for stmt in case.body {
+                                    self.visit_stmt(stmt)?;
                                 }
+                                if !self.is_terminated(self.current_block) {
+                                    self.add_instruction(InstructionKind::Jump(exit_block));
+                                    self.link_blocks(self.current_block, exit_block);
+                                }
+                                self.seal_block(body_block)?;
+                            } else {
+                                return Err(format!(
+                                    "Unknown variant '{}' for enum '{}'",
+                                    variant_name, enum_name
+                                ));
                             }
                         }
                     }
-
-                    for stmt in case.body {
-                        self.visit_stmt(stmt)?;
-                    }
-                    if !self.is_terminated(self.current_block) {
-                        self.add_instruction(InstructionKind::Jump(exit_block));
-                        self.link_blocks(self.current_block, exit_block);
-                    }
-
-                    current_case_block = next_case_block;
                 }
 
-                // Default fallthrough for unhandled cases
-                self.start_block(current_case_block);
-                // Lila falls back to Python for non-exhaustive matches.
-                // OR we can make it a runtime error.
-                // Jump to exit block as default fallthrough.
-                self.add_instruction(InstructionKind::Jump(exit_block));
-                self.link_blocks(current_case_block, exit_block);
+                if !catch_all_found {
+                    self.start_block(default_block);
+                    self.link_blocks(start_block, default_block);
+                    self.add_instruction(InstructionKind::Jump(exit_block));
+                    self.link_blocks(default_block, exit_block);
+                    self.seal_block(default_block)?;
+                }
 
-                self.seal_block(exit_block)?;
+                // Finalize the Match instruction in the start block
+                self.start_block(start_block);
+                self.add_instruction(InstructionKind::Match(
+                    tag_val,
+                    cases_map,
+                    default_block,
+                    !catch_all_found,
+                ));
+
                 self.start_block(exit_block);
+                self.seal_block(exit_block)?;
                 Ok(())
             }
             ast::Stmt::With(s) => {

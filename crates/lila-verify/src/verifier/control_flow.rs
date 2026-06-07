@@ -52,6 +52,54 @@ pub fn translate<
             let __tmp = ctx.backend.bool_eq(&edge_j, path_cond);
             ctx.backend.assert(&__tmp);
         }
+        InstructionKind::Match(selector, cases, default, is_strict) => {
+            if let Some(z3_selector) = ctx.z3_bvs.get(selector).cloned() {
+                let mut handled_conds = Vec::new();
+
+                for (tag, target) in cases {
+                    let expected_tag = ctx.backend.bv_from_i64(*tag as i64, 8);
+                    let is_match = ctx.backend.bv_eq(&z3_selector, &expected_tag);
+                    handled_conds.push(is_match.clone());
+
+                    let true_cond = ctx.backend.bool_and(&[path_cond, &is_match]);
+                    let edge_t = ctx
+                        .edge_conditions
+                        .get(&(current_block_id, *target))
+                        .unwrap()
+                        .clone();
+                    let __tmp = ctx.backend.bool_eq(&edge_t, &true_cond);
+                    ctx.backend.assert(&__tmp);
+                }
+
+                let any_matched = ctx
+                    .backend
+                    .bool_or(&handled_conds.iter().collect::<Vec<_>>());
+                let none_matched = ctx.backend.bool_not(&any_matched);
+                let default_cond = ctx.backend.bool_and(&[path_cond, &none_matched]);
+
+                if *is_strict {
+                    // Prove that none_matched is impossible under path_cond
+                    ctx.backend.push();
+                    ctx.backend.assert(&default_cond);
+                    if ctx.backend.check() != Ok(false) {
+                        let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                        return Err(format!(
+                            "Non-exhaustive match detected: some ADT variants are not handled{}",
+                            loc_info
+                        ));
+                    }
+                    ctx.backend.pop(1);
+                }
+
+                let edge_d = ctx
+                    .edge_conditions
+                    .get(&(current_block_id, *default))
+                    .unwrap()
+                    .clone();
+                let __tmp = ctx.backend.bool_eq(&edge_d, &default_cond);
+                ctx.backend.assert(&__tmp);
+            }
+        }
         InstructionKind::Phi(dest, incoming) => {
             for (incoming_block, incoming_val) in incoming {
                 if !is_reachable(ctx, *incoming_block, current_block_id) {

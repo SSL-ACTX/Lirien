@@ -61,11 +61,20 @@ pub fn init_values<
             }
 
             ctx.z3_arrays.insert(val, z3_val);
-        } else if let Type::Enum(_) = inner_ty {
+        } else if let Type::Enum(ref name) = inner_ty {
             // Model Enums as a tag (BV) and a payload (Array)
             let tag_val = ctx
                 .backend
                 .bv_const(&format!("{}_v{}_tag_{}", ctx.func.name, i, ctx.uid), 8);
+
+            // Assert valid tag range
+            if let Some(variants) = ctx.func.enum_layouts.get(name) {
+                let num_variants = variants.len();
+                let max_tag = ctx.backend.bv_from_i64(num_variants as i64, 8);
+                let __inner = ctx.backend.bv_ult(&tag_val, &max_tag);
+                ctx.backend.assert(&__inner);
+            }
+
             ctx.z3_bvs.insert(val, tag_val);
 
             let payload_val = ctx.backend.array_const(
@@ -376,6 +385,14 @@ pub fn translate<
 
                 let __both = ctx.backend.bool_and(&[&__implies1, &__implies2]);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__both);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::EnumGetTag(dest, obj) => {
+            if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
+                let z3_obj_tag = ctx.z3_bvs.get(obj).cloned().unwrap();
+                let __inner = ctx.backend.bv_eq(&z3_dest, &z3_obj_tag);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             }
         }

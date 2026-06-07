@@ -416,7 +416,10 @@ pub enum InstructionKind {
     // Enums
     EnumCreate(Value, String, usize, Option<Value>), // dest, name, tag_idx, payload
     EnumIsVariant(Value, Value, usize),              // dest, enum_val, tag_idx
+    EnumGetTag(Value, Value),                        // dest, enum_val
     EnumExtract(Value, Value, usize),                // dest, enum_val, tag_idx
+
+    Match(Value, HashMap<usize, BlockId>, BlockId, bool), // selector, cases, default, is_strict
 
     // Tuples
     TupleCreate(Value, Vec<Value>),
@@ -820,15 +823,35 @@ impl fmt::Display for Instruction {
                     d, e, tag_idx, loc_str, constraints_str
                 )
             }
-            InstructionKind::EnumExtract(d, e, tag_idx) => {
+            InstructionKind::EnumGetTag(d, o) => {
+                write!(f, "  {} = get_tag {}{}{}", d, o, loc_str, constraints_str)
+            }
+            InstructionKind::EnumExtract(d, o, i) => {
                 write!(
                     f,
                     "  {} = extract_variant {} as {}{}{}",
-                    d, e, tag_idx, loc_str, constraints_str
+                    d, o, i, loc_str, constraints_str
                 )
             }
-            InstructionKind::TupleCreate(d, elts) => {
-                let args_str: Vec<String> = elts.iter().map(|v| v.to_string()).collect();
+            InstructionKind::Match(s, cases, default, is_strict) => {
+                let mut case_strings: Vec<String> = cases
+                    .iter()
+                    .map(|(tag, block)| format!("{}: {}", tag, block))
+                    .collect();
+                case_strings.sort();
+                write!(
+                    f,
+                    "  match {}, default {} [ {} ]{}{}{}",
+                    s,
+                    default,
+                    case_strings.join(", "),
+                    if *is_strict { " (strict)" } else { "" },
+                    loc_str,
+                    constraints_str
+                )
+            }
+            InstructionKind::TupleCreate(d, e) => {
+                let args_str: Vec<String> = e.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
                     "  {} = tuple({}){}{}",

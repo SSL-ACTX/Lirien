@@ -221,6 +221,31 @@ pub fn propagate_types(func: &mut Function) {
                             changed = true;
                         }
                     }
+                    InstructionKind::EnumIsVariant(d, _, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Bool);
+                        }
+                    }
+                    InstructionKind::EnumGetTag(d, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::U8);
+                        }
+                    }
+                    InstructionKind::EnumExtract(d, obj, tag_idx) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let obj_ty = func.get_type(*obj);
+                            if let Type::Enum(name) = obj_ty {
+                                if let Some(variants) = func.enum_layouts.get(&name) {
+                                    if let Some((_, ty)) = variants.get(*tag_idx) {
+                                        new_types.insert(*d, ty.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }

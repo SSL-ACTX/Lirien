@@ -306,6 +306,22 @@ fn assert_cfg_constraints<
                     ));
                     t_ctx.edge_conditions.insert((block.id, *f_block), ef_cond);
                 }
+                InstructionKind::Match(_, cases, default, _) => {
+                    for target in cases.values() {
+                        let e_cond = t_ctx.backend.bool_const(&format!(
+                            "{}_edge_{}_{}_{}",
+                            t_ctx.func.name, block.id.0, target.0, t_ctx.uid
+                        ));
+                        t_ctx.edge_conditions.insert((block.id, *target), e_cond);
+                    }
+                    let e_cond_default = t_ctx.backend.bool_const(&format!(
+                        "{}_edge_{}_{}_{}",
+                        t_ctx.func.name, block.id.0, default.0, t_ctx.uid
+                    ));
+                    t_ctx
+                        .edge_conditions
+                        .insert((block.id, *default), e_cond_default);
+                }
                 _ => {}
             }
         }
@@ -414,6 +430,7 @@ fn translate_instructions<
                 }
                 InstructionKind::Jump(_)
                 | InstructionKind::Branch(..)
+                | InstructionKind::Match(..)
                 | InstructionKind::Phi(..) => {
                     control_flow::translate(t_ctx, inst, &path_cond, block.id)?;
                 }
@@ -428,6 +445,7 @@ fn translate_instructions<
                 | InstructionKind::StructSet(..)
                 | InstructionKind::EnumCreate(..)
                 | InstructionKind::EnumIsVariant(..)
+                | InstructionKind::EnumGetTag(..)
                 | InstructionKind::EnumExtract(..) => {
                     memory::translate(t_ctx, inst, &path_cond)?;
                 }

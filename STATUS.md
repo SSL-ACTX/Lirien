@@ -2,16 +2,17 @@
 
 Lila is an experimental formal verification and JIT compiler for a safe subset of Python.
 
-## Ongoing Development & Plans
+## ADT Expansion Roadmap
 
-### 1. Advanced Verification Features
-- [ ] **Liquid Type Inference (Predicate Abstraction)**: Implement a feedback loop where Z3-required invariants at $\phi$-nodes are automatically extracted and applied as inferred Liquid Types.
-- [ ] **Automated Loop Invariant Synthesis**: Researching Abstract Interpretation to automatically derive loop invariants for complex numerical algorithms.
+1. [ ] **Jump Table Optimization ($O(1)$ dispatch)**: Use Cranelift's `switch` instruction to emit a native assembly jump table for `match` statements, bypassing the current branch chain.
+2. [ ] **Z3-Backed Exhaustiveness Checking**: Prove via Z3 that all possible ADT variants are handled in a `match` block.
+3. [ ] **Nested Pattern Matching**: Support recursive destructuring of nested ADTs and structs within `match` cases.
+4. [ ] **Pattern Guards (`if` clauses)**: Integrate Liquid Type refinements into `match` cases via `if` conditions.
+5. [ ] **Recursive ADTs (Boxed Variants)**: Support heap-allocated recursive data structures like linked lists and trees.
 
-### 2. Concurrency & Performance
-- [x] **GIL-less Parallelism**: Support for high-performance multi-threading via `parallel_for` on raw memory buffers.
-- [ ] **SIMD Auto-vectorization**: Leverage Cranelift's SIMD capabilities for verified buffer operations.
-
-### 3. Developer Ergonomics
-- [x] **Centralized Granular Tracing**: Implemented a controllable tracing system (Rust & Python) allowing component-specific debug levels.
-- [ ] **Refinement Diagnostics**: Improved source-mapping for verification failures to provide precise location info in Python code.
+## Completed Features
+- [x] **Zero-Cost ADTs**: Support for variants with primitive, tuple, and None payloads.
+- [x] **Basic Pattern Matching**: Destructuring support for single-level ADT payloads.
+- [x] **GIL-less Parallelism**: `parallel_for` on raw memory buffers.
+- [x] **Liquid Types**: Base support for formal verification with Z3.
+- [x] **Centralized Granular Tracing**: Rust & Python tracing system.

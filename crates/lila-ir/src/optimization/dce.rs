@@ -114,6 +114,7 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::StructOffset(d, _, _)
         | InstructionKind::EnumCreate(d, _, _, _)
         | InstructionKind::EnumIsVariant(d, _, _)
+        | InstructionKind::EnumGetTag(d, _)
         | InstructionKind::EnumExtract(d, _, _)
         | InstructionKind::TupleCreate(d, _)
         | InstructionKind::TupleExtract(d, _, _)
@@ -123,6 +124,7 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         // Instructions that NEVER define a value
         InstructionKind::Jump(_)
         | InstructionKind::Branch(_, _, _)
+        | InstructionKind::Match(_, _, _, _)
         | InstructionKind::Return(_)
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
@@ -182,12 +184,16 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         | InstructionKind::StructLoad(_, s, _)
         | InstructionKind::StructOffset(_, s, _)
         | InstructionKind::EnumIsVariant(_, s, _)
+        | InstructionKind::EnumGetTag(_, s)
         | InstructionKind::EnumExtract(_, s, _)
         | InstructionKind::TupleExtract(_, s, _) => {
             operands.push(*s);
         }
         InstructionKind::Branch(c, _, _) => {
             operands.push(*c);
+        }
+        InstructionKind::Match(s, _, _, _) => {
+            operands.push(*s);
         }
         InstructionKind::Return(Some(v)) => {
             operands.push(*v);
@@ -263,6 +269,7 @@ fn has_side_effects(inst: &Instruction) -> bool {
         // Control flow ALWAYS has side effects
         InstructionKind::Return(_)
         | InstructionKind::Branch(_, _, _)
+        | InstructionKind::Match(_, _, _, _)
         | InstructionKind::Jump(_) => true,
 
         // External calls and indirect calls (could be anything)
@@ -329,6 +336,7 @@ fn has_side_effects(inst: &Instruction) -> bool {
         | InstructionKind::StructOffset(_, _, _)
         | InstructionKind::EnumCreate(_, _, _, _)
         | InstructionKind::EnumIsVariant(_, _, _)
+        | InstructionKind::EnumGetTag(_, _)
         | InstructionKind::EnumExtract(_, _, _)
         | InstructionKind::TupleCreate(_, _)
         | InstructionKind::TupleExtract(_, _, _)

@@ -253,6 +253,14 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().bmask(cl_ty, is_match);
             ctx.values.insert(*dest, res);
         }
+        InstructionKind::EnumGetTag(dest, obj) => {
+            let obj_ptr = get_val(&ctx.values, obj);
+            let tag_val = ctx
+                .builder
+                .ins()
+                .load(types::I8, MemFlags::new(), obj_ptr, 0);
+            ctx.values.insert(*dest, tag_val);
+        }
         InstructionKind::EnumExtract(dest, obj, tag_idx) => {
             let obj_ptr = get_val(&ctx.values, obj);
             let enum_name = match ctx.ssa_func.get_type(*obj) {
