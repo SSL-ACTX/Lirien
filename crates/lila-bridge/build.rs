@@ -12,7 +12,7 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
 
     println!("cargo:rustc-env=LILA_BUILD_HASH={}", git_hash);
-    
+
     // Also re-run if any of the source files change
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=../lila-ir/src");

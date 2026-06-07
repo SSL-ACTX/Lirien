@@ -50,6 +50,132 @@ class f64(float, LilaType):
     pass
 
 
+class f32x4(ctypes.Structure):
+    _align_ = 16
+    _fields_ = [
+        ("f0", ctypes.c_float),
+        ("f1", ctypes.c_float),
+        ("f2", ctypes.c_float),
+        ("f3", ctypes.c_float),
+    ]
+
+    def __init__(self, *args):
+        if len(args) == 4:
+            self.f0, self.f1, self.f2, self.f3 = args
+        elif len(args) == 1:
+            self.f0 = self.f1 = self.f2 = self.f3 = args[0]
+
+    def __getitem__(self, idx):
+        return [self.f0, self.f1, self.f2, self.f3][idx]
+
+    def __add__(self, other):
+        return f32x4(*(self[i] + other[i] for i in range(4)))
+
+    def __sub__(self, other):
+        return f32x4(*(self[i] - other[i] for i in range(4)))
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return f32x4(*(self[i] * other for i in range(4)))
+        return f32x4(*(self[i] * other[i] for i in range(4)))
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        if isinstance(other, (int, float)):
+            return f32x4(*(self[i] / other for i in range(4)))
+        return f32x4(*(self[i] / other[i] for i in range(4)))
+
+
+class i32x4(ctypes.Structure):
+    _align_ = 16
+    _fields_ = [
+        ("f0", ctypes.c_int32),
+        ("f1", ctypes.c_int32),
+        ("f2", ctypes.c_int32),
+        ("f3", ctypes.c_int32),
+    ]
+
+    def __init__(self, *args):
+        if len(args) == 4:
+            self.f0, self.f1, self.f2, self.f3 = args
+        elif len(args) == 1:
+            self.f0 = self.f1 = self.f2 = self.f3 = args[0]
+
+    def __getitem__(self, idx):
+        return [self.f0, self.f1, self.f2, self.f3][idx]
+
+    def __add__(self, other):
+        return i32x4(*(self[i] + other[i] for i in range(4)))
+
+    def __sub__(self, other):
+        return i32x4(*(self[i] - other[i] for i in range(4)))
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return i32x4(*(self[i] * other for i in range(4)))
+        return i32x4(*(self[i] * other[i] for i in range(4)))
+
+
+class f64x2(ctypes.Structure):
+    _align_ = 16
+    _fields_ = [("f0", ctypes.c_double), ("f1", ctypes.c_double)]
+
+    def __init__(self, *args):
+        if len(args) == 2:
+            self.f0, self.f1 = args
+        elif len(args) == 1:
+            self.f0 = self.f1 = args[0]
+
+    def __getitem__(self, idx):
+        return [self.f0, self.f1][idx]
+
+    def __add__(self, other):
+        return f64x2(*(self[i] + other[i] for i in range(2)))
+
+    def __sub__(self, other):
+        return f64x2(*(self[i] - other[i] for i in range(2)))
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return f64x2(*(self[i] * other for i in range(2)))
+        return f64x2(*(self[i] * other[i] for i in range(2)))
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        if isinstance(other, (int, float)):
+            return f64x2(*(self[i] / other for i in range(2)))
+        return f64x2(*(self[i] / other[i] for i in range(2)))
+
+
+class i64x2(ctypes.Structure):
+    _align_ = 16
+    _fields_ = [("f0", ctypes.c_int64), ("f1", ctypes.c_int64)]
+
+    def __init__(self, *args):
+        if len(args) == 2:
+            self.f0, self.f1 = args
+        elif len(args) == 1:
+            self.f0 = self.f1 = args[0]
+
+    def __getitem__(self, idx):
+        return [self.f0, self.f1][idx]
+
+    def __add__(self, other):
+        return i64x2(*(self[i] + other[i] for i in range(2)))
+
+    def __sub__(self, other):
+        return i64x2(*(self[i] - other[i] for i in range(2)))
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return i64x2(*(self[i] * other for i in range(2)))
+        return i64x2(*(self[i] * other[i] for i in range(2)))
+
+
 # Type Mapping to ctypes
 TYPE_MAP = {
     "i8": ctypes.c_int8,
@@ -65,6 +191,10 @@ TYPE_MAP = {
     "f64": ctypes.c_double,
     "float": ctypes.c_double,
     "bool": ctypes.c_bool,
+    "f32x4": f32x4,
+    "i32x4": i32x4,
+    "f64x2": f64x2,
+    "i64x2": i64x2,
 }
 
 
@@ -84,11 +214,15 @@ class Refined:
         return cls(params[0], params[1])
 
 
-class SizedArray:
+class SizedArray(Generic[T]):
     """
-    Seamless memory-backed array.
-    Usage: arr = SizedArray[i64, 5]([1, 2, 3, 4, 5])
+    Statically sized array.
+    Usage: arr: SizedArray[i32, 10]
     """
+
+    def __init__(self, base_type, size):
+        self.base_type = base_type
+        self.size = size
 
     def __class_getitem__(cls, params):
         if not isinstance(params, tuple) or len(params) != 2:
@@ -104,28 +238,25 @@ class SizedArray:
                 cty = ct
                 break
 
-        # Create a specific class for this array type
-        class SizedArrayInstance:
-            _ctypes_type = cty * size
+        class SizedCtypesArray(ctypes.Structure):
+            _fields_ = [("data", cty * size)]
 
-            def __init__(self, initial_data=None):
-                self._ctypes_obj = self._ctypes_type()
-                if initial_data:
-                    for i, val in enumerate(initial_data):
-                        if i < size:
-                            self._ctypes_obj[i] = val
+            def __init__(self, *args):
+                if len(args) == 1 and isinstance(args[0], (list, tuple)):
+                    for i, val in enumerate(args[0]):
+                        self.data[i] = val
+                else:
+                    for i, val in enumerate(args):
+                        self.data[i] = val
 
             def __getitem__(self, idx):
-                return self._ctypes_obj[idx]
+                return self.data[idx]
 
             def __setitem__(self, idx, val):
-                self._ctypes_obj[idx] = val
+                self.data[idx] = val
 
-            def __len__(self):
-                return size
-
-        SizedArrayInstance.__name__ = f"SizedArray_{base_ty_str}_{size}"
-        return SizedArrayInstance
+        SizedCtypesArray.__name__ = f"SizedArray_{base_ty_str}_{size}"
+        return Annotated[SizedCtypesArray, (base_type, size)]
 
 
 class Buffer:
@@ -165,67 +296,39 @@ class Array(Generic[T]):
 
 def struct(cls):
     """
-    Decorator to mark a class as a Memory Struct for Lila.
-    Automatically generates a ctypes structure for interop.
+    Decorator to mark a class as a flat Lila Struct.
+    Generates a ctypes Structure behind the scenes.
     """
     fields = getattr(cls, "__annotations__", {})
-
     field_list = []
     ctypes_fields = []
 
-    # Store field types to handle wrap/unwrap
-    field_types = {}
-
     for name, ty in fields.items():
-        ty_str = str(ty).lower()
+        actual_ty = getattr(ty, "base_type", ty)
+        ty_str = str(actual_ty).lower()
 
-        # Check if it's a known Lila struct class
-        is_lila_struct = False
-        if hasattr(ty, "__lila_struct__"):
-            is_lila_struct = True
-            lila_ty = ty.__name__
-        elif "tuple" in ty_str:
-            lila_ty = ty_str
-        elif "i8" in ty_str:
-            lila_ty = "i8"
-        elif "u8" in ty_str:
-            lila_ty = "u8"
-        elif "i16" in ty_str:
-            lila_ty = "i16"
-        elif "u16" in ty_str:
-            lila_ty = "u16"
-        elif "i32" in ty_str:
-            lila_ty = "i32"
-        elif "u32" in ty_str:
-            lila_ty = "u32"
-        elif "i64" in ty_str or "int" in ty_str:
-            lila_ty = "i64"
-        elif "u64" in ty_str:
-            lila_ty = "u64"
-        elif "f32" in ty_str:
-            lila_ty = "f32"
-        elif "f64" in ty_str or "float" in ty_str:
-            lila_ty = "f64"
-        elif "bool" in ty_str:
-            lila_ty = "bool"
-        elif "tuple" in ty_str:
-            lila_ty = ty_str
-        else:
-            lila_ty = "unknown"
+        # Handle nested structs
+        if hasattr(actual_ty, "__lila_struct__"):
+            field_list.append((name, actual_ty))
+            ctypes_fields.append((name, actual_ty.__lila_ctypes__))
+            continue
 
-        field_list.append((name, lila_ty))
-        field_types[name] = ty
+        # Map to ctypes
+        c_ty = ctypes.c_int64
+        found = False
+        for type_name, ct in TYPE_MAP.items():
+            if type_name in ty_str:
+                c_ty = ct
+                found = True
+                break
 
-        # Build ctypes field
-        if lila_ty in TYPE_MAP:
-            ctypes_fields.append((name, TYPE_MAP[lila_ty]))
-        elif is_lila_struct:
-            # Inline struct!
-            ctypes_fields.append((name, ty.__lila_ctypes__))
-        else:
-            ctypes_fields.append((name, ctypes.c_void_p))
+        if not found:
+            # Fallback for complex types or strings
+            c_ty = ctypes.c_void_p
 
-    # Generate the ctypes Structure class dynamically
+        field_list.append((name, actual_ty))
+        ctypes_fields.append((name, c_ty))
+
     class LilaCtypesStruct(ctypes.Structure):
         _fields_ = ctypes_fields
 
@@ -238,20 +341,22 @@ def struct(cls):
     original_init = cls.__init__
 
     def new_init(self, *args, **kwargs):
-        # Resolve all arguments to their ctypes representation
         processed_args = []
-        for arg in args:
+        processed_kwargs = {}
+
+        # Handle positional args
+        for i, arg in enumerate(args):
             if hasattr(arg, "_ctypes_obj"):
                 processed_args.append(arg._ctypes_obj)
             else:
                 processed_args.append(arg)
 
-        processed_kwargs = {}
-        for k, v in kwargs.items():
-            if hasattr(v, "_ctypes_obj"):
-                processed_kwargs[k] = v._ctypes_obj
+        # Handle keyword args
+        for key, value in kwargs.items():
+            if hasattr(value, "_ctypes_obj"):
+                processed_kwargs[key] = value._ctypes_obj
             else:
-                processed_kwargs[k] = v
+                processed_kwargs[key] = value
 
         self._ctypes_obj = LilaCtypesStruct(*processed_args, **processed_kwargs)
         if original_init is not object.__init__:
@@ -259,46 +364,31 @@ def struct(cls):
 
     cls.__init__ = new_init
 
-    # Wrap properties to access ctypes fields
-    for field_name, _ in ctypes_fields:
-        field_type = field_types[field_name]
+    # Add property accessors that wrap nested structs
+    for name, ftype in field_list:
 
-        def make_accessors(fname, ftype):
-            def getter(self):
-                val = getattr(self._ctypes_obj, fname)
-                # If it's a nested struct, wrap the raw ctypes buffer in its Lila class
-                if hasattr(ftype, "__lila_struct__"):
-                    wrapper = ftype.__new__(ftype)
+        def make_getter(fname, fty):
+            def getter(self_ref):
+                val = getattr(self_ref._ctypes_obj, fname)
+                # If the field is a struct, we need to wrap the raw ctypes buffer in its Lila class
+                if hasattr(fty, "__lila_struct__"):
+                    wrapper = fty.__new__(fty)
                     wrapper._ctypes_obj = val
                     return wrapper
                 return val
 
-            def setter(self, val):
-                # If setting an Lila object, extract its underlying ctypes object
+            return getter
+
+        def make_setter(fname):
+            def setter(self_ref, val):
                 if hasattr(val, "_ctypes_obj"):
-                    setattr(self._ctypes_obj, fname, val._ctypes_obj)
+                    setattr(self_ref._ctypes_obj, fname, val._ctypes_obj)
                 else:
-                    setattr(self._ctypes_obj, fname, val)
+                    setattr(self_ref._ctypes_obj, fname, val)
 
-            return getter, setter
+            return setter
 
-        get, set = make_accessors(field_name, field_type)
-        setattr(cls, field_name, property(get, set))
-
-    # Decorate all custom methods with @verify automatically
-    from .compiler import verify
-
-    for attr_name, attr_value in list(vars(cls).items()):
-        if callable(attr_value) and not attr_name.startswith("__"):
-            # It's a regular method, let's verify and JIT compile it!
-            # Use ClassName_MethodName to avoid collisions in the global registry
-            prefixed_name = f"{cls.__name__}_{attr_name}"
-            jitted = verify(
-                _struct_layouts={cls.__name__: cls.__lila_fields__},
-                _class_name=cls.__name__,
-                _method_name=prefixed_name,
-            )(attr_value)
-            setattr(cls, attr_name, jitted)
+        setattr(cls, name, property(make_getter(name, ftype), make_setter(name)))
 
     return cls
 
@@ -327,6 +417,10 @@ def enum(cls):
         variant_names.append(name)
         variant_types[name] = ty
 
+        actual_ty = getattr(ty, "base_type", ty)
+        origin = getattr(actual_ty, "__origin__", None)
+        typing_tuple = getattr(sys.modules.get("typing"), "Tuple", None)
+
         if ty is None:
             # Empty variant
             union_fields.append(
@@ -334,17 +428,23 @@ def enum(cls):
             )
         elif hasattr(ty, "__metadata__") and "Box" in str(ty.__origin__):
             # Boxed variant
-            inner_ty = ty.__metadata__[0]
-            # Since this might be recursive, we might need a lazy pointer or a late-bound type.
-            # ctypes.POINTER(None) can work as a raw pointer.
             union_fields.append((name, ctypes.c_void_p))
         elif hasattr(ty, "__lila_ctypes__"):
             union_fields.append((name, ty.__lila_ctypes__))
-        elif isinstance(ty, tuple):
+        elif (
+            origin is tuple
+            or (typing_tuple and origin is typing_tuple)
+            or isinstance(actual_ty, tuple)
+        ):
             # Tuple payload
+            tuple_elts = getattr(
+                actual_ty, "__args__", actual_ty if isinstance(actual_ty, tuple) else []
+            )
             tuple_fields = []
-            for i, t in enumerate(ty):
-                if hasattr(t, "__metadata__") and "Box" in str(t.__origin__):
+            for i, t in enumerate(tuple_elts):
+                if hasattr(t, "__metadata__") and "Box" in str(
+                    getattr(t, "__origin__", None)
+                ):
                     tuple_fields.append((f"f{i}", ctypes.c_void_p))
                 else:
                     t_str = str(t).lower()
@@ -514,11 +614,7 @@ def enum(cls):
                         ):
                             inner_ty = v_ty.__metadata__[0]
                             if isinstance(inner_ty, str):
-                                # Try to resolve from the class's module
-                                module = sys.modules.get(cls.__module__)
-                                if module and hasattr(module, inner_ty):
-                                    inner_ty = getattr(module, inner_ty)
-                                elif inner_ty == cls.__name__:
+                                if inner_ty == cls.__name__:
                                     inner_ty = cls
 
                             if hasattr(inner_ty, "__lila_ctypes__"):
@@ -561,29 +657,32 @@ class FnPointer:
 
     def __class_getitem__(cls, params):
         if not isinstance(params, tuple) or len(params) != 2:
-            return cls(params, None)
-        return cls(params[0], params[1])
+            raise TypeError("FnPointer requires [[arg_types], ret_type]")
+        return Annotated[cls, params]
 
 
 class Callable:
-    """Alias for FnPointer for better Python compatibility."""
+    """
+    Represents a generic callable (function or closure).
+    """
 
     def __class_getitem__(cls, params):
-        return FnPointer.__class_getitem__(params)
+        return Annotated[cls, params]
 
 
-class Closure(FnPointer):
+class Closure:
     """
-    Represents a closure (function pointer + environment).
-    Usage: f: Closure[[i64], i64]
+    Represents a function with captured state.
     """
 
-    pass
+    def __class_getitem__(cls, params):
+        return Annotated[cls, params]
 
 
 __all__ = [
     "struct",
     "enum",
+    "adt",
     "i8",
     "u8",
     "i16",
@@ -594,9 +693,14 @@ __all__ = [
     "u64",
     "f32",
     "f64",
+    "f32x4",
+    "i32x4",
+    "f64x2",
+    "i64x2",
     "Refined",
     "SizedArray",
     "Buffer",
+    "Box",
     "FnPointer",
     "Callable",
     "Closure",

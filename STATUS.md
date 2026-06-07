@@ -2,17 +2,22 @@
 
 Lila is an experimental formal verification and JIT compiler for a safe subset of Python.
 
-## ADT Expansion Roadmap
+## Roadmap & Future Directions
 
-1. [ ] **Jump Table Optimization ($O(1)$ dispatch)**: Use Cranelift's `switch` instruction to emit a native assembly jump table for `match` statements, bypassing the current branch chain.
-2. [ ] **Z3-Backed Exhaustiveness Checking**: Prove via Z3 that all possible ADT variants are handled in a `match` block.
-3. [ ] **Nested Pattern Matching**: Support recursive destructuring of nested ADTs and structs within `match` cases.
-4. [ ] **Pattern Guards (`if` clauses)**: Integrate Liquid Type refinements into `match` cases via `if` conditions.
-5. [ ] **Recursive ADTs (Boxed Variants)**: Support heap-allocated recursive data structures like linked lists and trees.
+1. [ ] **Automated Loop Invariant Synthesis**: Researching Abstract Interpretation to automatically derive loop invariants.
+2. [ ] **Flat Value Types (`@value`)**: Support for stack-allocated, non-boxed structs to reduce heap pressure.
+3. [ ] **Transition to Aeneas and F***: Moving from Z3 to Aeneas and F* for absolute formal proof.
 
 ## Completed Features
-- [x] **Zero-Cost ADTs**: Support for variants with primitive, tuple, and None payloads.
-- [x] **Basic Pattern Matching**: Destructuring support for single-level ADT payloads.
+- [x] **Zero-Cost ADTs**: Full support for variants with primitive, tuple, and None payloads.
+- [x] **Optimized Match Dispatch**: Cranelift `switch` based jump tables for $O(1)$ variant dispatch.
+- [x] **Z3-Backed Exhaustiveness Checking**: Formal proof that all ADT variants are handled in `match` blocks.
+- [x] **Pattern Guards (`if` clauses)**: Integration of Liquid Type refinements into `match` cases.
+- [x] **Recursive ADTs (Boxed Variants)**: Support for heap-allocated recursive data structures (e.g., Linked Lists).
+- [x] **Nested Pattern Matching**: Recursive destructuring of nested ADTs and structs.
+- [x] **Interval Analysis**: Optimized range tracking to skip redundant Z3 solver calls for simple proofs.
+- [x] **Native SIMD Support**: High-performance vector types (`f32x4`, `i32x4`, etc.) with native CPU lowering.
+- [x] **IEEE 754 Floating-Point Verification**: Formal proofs for float operations, including div-by-zero and domain checks.
 - [x] **GIL-less Parallelism**: `parallel_for` on raw memory buffers.
 - [x] **Liquid Types**: Base support for formal verification with Z3.
 - [x] **Centralized Granular Tracing**: Rust & Python tracing system.

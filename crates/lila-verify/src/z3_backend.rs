@@ -285,6 +285,24 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         }
     }
 
+    fn float_to_float(&mut self, a: &Self::Float, is_f32: bool) -> Self::Float {
+        let rm = RoundingMode::round_nearest_ties_to_even();
+        let sort = if is_f32 {
+            z3::Sort::float32()
+        } else {
+            z3::Sort::double()
+        };
+        unsafe {
+            let conv = z3_sys::Z3_mk_fpa_to_fp_float(
+                self.ctx.get_z3_context(),
+                rm.get_z3_ast(),
+                a.get_z3_ast(),
+                sort.get_z3_sort(),
+            );
+            Float::wrap(self.ctx, conv.unwrap())
+        }
+    }
+
     fn bv_to_float(&mut self, a: &Self::BV, is_signed: bool, is_f32: bool) -> Self::Float {
         let rm = RoundingMode::round_nearest_ties_to_even();
         let sort = if is_f32 {

@@ -403,6 +403,7 @@ fn translate_instructions<
                 | InstructionKind::FPow(..)
                 | InstructionKind::ConstInt(..)
                 | InstructionKind::ConstFloat(..)
+                | InstructionKind::Assign(..)
                 | InstructionKind::Eq(..)
                 | InstructionKind::Ne(..)
                 | InstructionKind::SLt(..)
@@ -425,7 +426,11 @@ fn translate_instructions<
                 | InstructionKind::AShr(..)
                 | InstructionKind::IToF(..)
                 | InstructionKind::FToI(..)
-                | InstructionKind::Not(..) => {
+                | InstructionKind::FConv(..)
+                | InstructionKind::Not(..)
+                | InstructionKind::SIMDSplat(..)
+                | InstructionKind::SIMDExtractLane(..)
+                | InstructionKind::SIMDInsertLane(..) => {
                     arithmetic::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::Jump(_)

@@ -292,9 +292,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 .module
                 .declare_function("malloc", Linkage::Import, &sig)
                 .unwrap();
-            let local_callee = ctx
-                .module
-                .declare_func_in_func(callee, ctx.builder.func);
+            let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
             let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
             let call = ctx.builder.ins().call(local_callee, &[size_val]);
             let res = ctx.builder.inst_results(call)[0];
@@ -331,16 +329,16 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                     .module
                     .declare_function("memcpy", Linkage::Import, &sig)
                     .unwrap();
-                let local_callee = ctx
-                    .module
-                    .declare_func_in_func(callee, ctx.builder.func);
+                let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
 
                 let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
                 ctx.builder
                     .ins()
                     .call(local_callee, &[ptr_val, val_val, size_val]);
             } else {
-                ctx.builder.ins().store(MemFlags::new(), val_val, ptr_val, 0);
+                ctx.builder
+                    .ins()
+                    .store(MemFlags::new(), val_val, ptr_val, 0);
             }
         }
         _ => return Err(format!("Not a memory instruction: {:?}", kind)),

@@ -21,80 +21,23 @@ Python is beloved for its developer experience, but its type-hinting system is p
 
 Lila exists to break this dichotomy. It takes Python's "hints" and turns them into **mathematically enforced laws**. By using formal verification to prove code safety at compile-time, Lila bypasses the interpreter entirely, executing Python at bare-metal speeds without sacrificing the sound logic that prevents crashes and data corruption.
 
+### Key Features
+*   **Mathematical Soundness:** Liquid Types and Z3-backed formal verification prove the absence of crashes, out-of-bounds, and logic errors.
+*   **Bare-Metal Performance:** Bypasses the CPython interpreter and GIL entirely using the Cranelift JIT.
+*   **Native SIMD:** Direct access to CPU vector registers (`f32x4`, `i32x4`, etc.) from within Python.
+*   **Zero-Cost Abstractions:** Recursive ADTs, optimized pattern matching, and memory-mapped structs with C-ABI compatibility.
+*   **AOT Caching:** Near-zero latency startup by caching verified IR to disk.
+
 ## Table of Contents
-- [The Lila Pipeline](#the-lila-pipeline)
 - [Core Concepts & Examples](#core-concepts--examples)
   - [Mathematical Safety & Logic](#mathematical-safety--logic)
   - [High-Performance Execution](#high-performance-execution)
   - [Verified Data Structures](#verified-data-structures)
   - [Developer Experience](#developer-experience)
+- [The Lila Architecture & Pipeline](#the-lila-architecture--pipeline)
 - [Technical Specifications](#technical-specifications)
 - [Getting Started](#getting-started)
 - [Limitations & Roadmap](#limitations--roadmap)
-
----
-
-## The Lila Architecture & Pipeline
-
-Lila's architecture is built as a multi-crate Rust workspace, orchestrated by a Python frontend. The transformation from dynamic Python to verified machine code follows a strict pipeline, completely bypassing the CPython interpreter for the compiled functions.
-
-```mermaid
-graph TD
-    %% Python Side
-    PySource["@verify<br/>def my_func(...)"]:::python
-    
-    %% Bridge / Caching
-    Hash["Cache Manager<br/>(seahash)"]:::bridge
-    Cache{{"Cache Hit?"}}:::bridge
-    Disk[(".lila_cache/*.lir<br/>(bincode)")];
-    
-    %% Frontend (AST -> IR)
-    AST["AST Parser<br/>(rustpython)"]:::frontend
-    Builder["SSA Builder<br/>(CFG, Env Capture)"]:::frontend
-    Opt["Optimization<br/>(DCE, Fold, Prop)"]:::frontend
-    
-    %% Middle-end (Verification)
-    Z3["Z3 SMT Solver<br/>(Logic Engine)"]:::verify
-    
-    %% Backend
-    CL["Cranelift JIT<br/>(Machine Code)"]:::backend
-    Trampoline["C-ABI Trampoline<br/>(PyO3)"]:::backend
-
-    %% Flow
-    PySource --> Hash
-    Hash -.-> Disk
-    Hash --> Cache
-    
-    Cache -- Yes --> CL
-    Cache -- No --> AST
-    
-    AST --> Builder
-    Builder --> Opt
-    Opt --> Z3
-    
-    Z3 --> CacheWrite["Save to Cache"]
-    CacheWrite -.-> Disk
-    CacheWrite --> CL
-    
-    CL --> Trampoline
-    Trampoline -->|Native Execution| PySource
-
-    classDef python fill:#306998,stroke:#FFD43B,stroke-width:2px,color:#fff;
-    classDef bridge fill:#6e5494,stroke:#fff,stroke-width:1px,color:#fff;
-    classDef frontend fill:#b7410e,stroke:#fff,stroke-width:1px,color:#fff;
-    classDef verify fill:#0052cc,stroke:#fff,stroke-width:1px,color:#fff;
-    classDef backend fill:#2c3e50,stroke:#fff,stroke-width:1px,color:#fff;
-```
-
-### The Compilation Stages
-
-1. **Interception & Hashing (`lila-bridge`):** The `@verify` decorator intercepts the Python function. The source code, structural memory layouts, and the current compiler version are hashed.
-2. **AOT Caching:** If a valid `.lir` (Lila IR) binary exists in `.lila_cache/` for this hash, the system skips directly to Backend Lowering (Stage 6), achieving near-zero latency startup.
-3. **AST Extraction (`lila-ir`):** On a cache miss, the Python AST is parsed and lowered into Lila's **Static Single Assignment (SSA)** Intermediate Representation, building the Control Flow Graph (CFG) and analyzing variable captures.
-4. **Optimization (`lila-ir`):** The IR undergoes multiple passes including **Constant Folding**, **Dead Code Elimination (DCE)**, and **Type Propagation**.
-5. **Formal Verification (`lila-verify`):** Every branch condition, mathematical operation, and memory access is mapped to SMT-LIB logic and rigorously proven by the **Z3 Solver**. Refinement types are checked across all reachable paths.
-6. **Backend Lowering (`lila-backend`):** The verified SSA is compiled via **Cranelift IR** into raw machine code (executable memory buffers).
-7. **Hot-Swapping:** PyO3 generates a native C-ABI trampoline. Subsequent calls to the Python function bypass the interpreter entirely, executing the bare-metal code directly.
 
 ---
 
@@ -162,6 +105,17 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
 #### Ahead-of-Time (AOT) IR Caching
 Lila caches its proven Intermediate Representation (IR) to disk in a fast binary format. If the Python source code, memory layouts, and compiler version remain unchanged, subsequent executions completely bypass AST parsing and the computationally expensive Z3 formal verification phase. The pre-verified IR is fed directly to Cranelift for near-instant execution startup times.
 
+#### Native SIMD (Vectorized) Execution
+Lila exposes native CPU vector registers directly to Python, allowing for high-performance math that bypasses NumPy's calling overhead.
+```python
+from lila import verify, f32x4
+
+@verify
+def add_vectors(a: f32x4, b: f32x4) -> f32x4:
+    # Compiles to a single native SIMD instruction (e.g., ADDPS)
+    return (a + b) * 2.0
+```
+
 ---
 
 ### Verified Data Structures
@@ -182,25 +136,23 @@ class Point:
         self.y += dy
 ```
 
-#### Tagged Unions: Formally Verified Enums
-Lila supports type-safe tagged unions with Z3-proven variant access.
+#### Recursive ADTs: Formally Verified Linked Lists
+Lila supports heap-allocated recursive data structures with full formal verification of their variant access.
 ```python
-from lila import verify, i64, struct, enum
+from lila import verify, i64, adt, Box
 
-@struct
-class SomePayload: val: i64
-
-@enum
-class Option:
-    Some: SomePayload
-    NoneVariant: None
+@adt
+class Node:
+    Cons: (i64, Box["Node"])
+    Nil: None
 
 @verify
-def get_val(opt: Option) -> i64:
-    if opt.is_Some():
-        # Z3 proves this extraction is safe because of the branch above
-        return opt.as_Some().val
-    return -1
+def sum_list(n: Node) -> i64:
+    match n:
+        case Node.Cons(val, next):
+            return val + sum_list(next)
+        case Node.Nil:
+            return 0
 ```
 
 #### Verified Buffer and NumPy Interop
@@ -244,21 +196,85 @@ configure_tracing({
 
 ---
 
+## The Lila Architecture & Pipeline
+
+Lila's architecture is built as a multi-crate Rust workspace, orchestrated by a Python frontend. The transformation from dynamic Python to verified machine code follows a strict pipeline, completely bypassing the CPython interpreter for the compiled functions.
+
+```mermaid
+graph TD
+    %% Python Side
+    PySource["@verify<br/>def my_func(...)"]:::python
+    
+    %% Bridge / Caching
+    Hash["Cache Manager<br/>(seahash)"]:::bridge
+    Cache{{"Cache Hit?"}}:::bridge
+    Disk[(".lila_cache/*.lir<br/>(bincode)")];
+    
+    %% Frontend (AST -> IR)
+    AST["AST Parser<br/>(rustpython)"]:::frontend
+    Builder["SSA Builder<br/>(CFG, Env Capture)"]:::frontend
+    Opt["Optimization<br/>(DCE, Fold, Prop)"]:::frontend
+    
+    %% Middle-end (Verification)
+    Z3["Z3 SMT Solver<br/>(Logic Engine)"]:::verify
+    
+    %% Backend
+    CL["Cranelift JIT<br/>(Machine Code)"]:::backend
+    Trampoline["C-ABI Trampoline<br/>(PyO3)"]:::backend
+
+    %% Flow
+    PySource --> Hash
+    Hash -.-> Disk
+    Hash --> Cache
+    
+    Cache -- Yes --> CL
+    Cache -- No --> AST
+    
+    AST --> Builder
+    Builder --> Opt
+    Opt --> Z3
+    
+    Z3 --> CacheWrite["Save to Cache"]
+    CacheWrite -.-> Disk
+    CacheWrite --> CL
+    
+    CL --> Trampoline
+    Trampoline -->|Native Execution| PySource
+
+    classDef python fill:#306998,stroke:#FFD43B,stroke-width:2px,color:#fff;
+    classDef bridge fill:#6e5494,stroke:#fff,stroke-width:1px,color:#fff;
+    classDef frontend fill:#b7410e,stroke:#fff,stroke-width:1px,color:#fff;
+    classDef verify fill:#0052cc,stroke:#fff,stroke-width:1px,color:#fff;
+    classDef backend fill:#2c3e50,stroke:#fff,stroke-width:1px,color:#fff;
+```
+
+### The Compilation Stages
+
+1. **Interception & Hashing (`lila-bridge`):** The `@verify` decorator intercepts the Python function. The source code, structural memory layouts, and the current compiler version are hashed.
+2. **AOT Caching:** If a valid `.lir` (Lila IR) binary exists in `.lila_cache/` for this hash, the system skips directly to Backend Lowering (Stage 6), achieving near-zero latency startup.
+3. **AST Extraction (`lila-ir`):** On a cache miss, the Python AST is parsed and lowered into Lila's **Static Single Assignment (SSA)** Intermediate Representation, building the Control Flow Graph (CFG) and analyzing variable captures.
+4. **Optimization (`lila-ir`):** The IR undergoes multiple passes including **Constant Folding**, **Dead Code Elimination (DCE)**, and **Type Propagation**.
+5. **Formal Verification (`lila-verify`):** Every branch condition, mathematical operation, and memory access is mapped to SMT-LIB logic and rigorously proven by the **Z3 Solver**. Refinement types are checked across all reachable paths.
+6. **Backend Lowering (`lila-backend`):** The verified SSA is compiled via **Cranelift IR** into raw machine code (executable memory buffers).
+7. **Hot-Swapping:** PyO3 generates a native C-ABI trampoline. Subsequent calls to the Python function bypass the interpreter entirely, executing the bare-metal code directly.
+
+---
+
 ## Technical Specifications
 
 | Feature | Support / Technology |
 | :--- | :--- |
 | **Core Architecture** | Multi-crate Rust Workspace (`lila-core`, `lila-ir`, `lila-verify`, `lila-backend`, `lila-bridge`) |
-| **Numeric Types** | `i8` through `u64`, `f32`, `f64` |
+| **Numeric Types** | `i8` through `u64`, `f32`, `f64`, `SIMD (f32x4, etc.)` |
 | **Functional Types**| `FnPointer`, `Closure`, `Callable` |
-| **Complex Types** | Structs, Tagged Unions (Enums), Tuples |
+| **Complex Types** | Structs, Tagged Unions (ADTs), Tuples, Boxed Types |
 | **Concurrency** | GIL-less multi-threading (`parallel_for`) |
 | **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **AOT Caching** | Binary IR Serialization (`bincode`, `seahash`) |
 | **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |
 | **Diagnostics** | Source-level visual highlights, Centralized Granular Tracing |
-| **Optimization Passes**| SSA-DCE (Self-Protecting), Constant Folding, Type Propagation |
+| **Optimization Passes**| SSA-DCE, Constant Folding, Type Propagation, Jump Table Opt |
 
 ---
 
@@ -276,7 +292,7 @@ maturin develop --release
 
 # Run verification test suite
 cargo test
-python -m unittest discover tests/python
+PYTHONPATH=./python python -m unittest discover tests/python
 ```
 
 ---
@@ -292,7 +308,7 @@ To maintain mathematical soundness, Lila imposes strict constraints:
 ### Future Research
 1. **Transition to Aeneas and F*:** Moving from Z3 to Aeneas and F* would allow for **Absolute Formal Proof**, shifting the project from "highly likely safe" to "mathematically certain".
 2. **Automated Loop Invariant Synthesis:** Researching Abstract Interpretation to automatically derive loop invariants.
-3. **IEEE 754 Floating-Point Proofs:** Extending the bit-accurate model to prove stability and bound precision loss in complex numerical algorithms.
+3. **Flat Value Types (`@value`):** Researching stack-allocated, non-boxed structs to reduce heap pressure and pointer chasing.
 
 ---
 

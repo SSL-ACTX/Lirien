@@ -31,6 +31,10 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         }
         SsaType::F32 => types::F32,
         SsaType::F64 => types::F64,
+        SsaType::F32X4 => types::F32X4,
+        SsaType::I32X4 => types::I32X4,
+        SsaType::F64X2 => types::F64X2,
+        SsaType::I64X2 => types::I64X2,
         SsaType::Array(_, _)
         | SsaType::Buffer(_)
         | SsaType::Struct(_)
@@ -55,7 +59,8 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         .finish(settings::Flags::new(flag_builder))
         .map_err(|e| e.to_string())?;
 
-    let mut jit_builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jit_builder =
+        JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
 
     // Register all previously compiled Lila functions
     {
@@ -91,11 +96,15 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
     let mut sig = module.make_signature();
     let mut is_buffer = Vec::new();
-    let mut is_tuple_return = false;
+    let mut is_simd_arg = Vec::new();
+    let mut is_ptr_return = false;
 
     if let SsaType::Tuple(_) = ssa_func.return_type {
         sig.params.push(AbiParam::new(types::I64));
-        is_tuple_return = true;
+        is_ptr_return = true;
+    } else if ssa_func.return_type.is_simd() {
+        sig.params.push(AbiParam::new(types::I64));
+        is_ptr_return = true;
     }
 
     for i in 0..ssa_func.arg_count {
@@ -104,13 +113,19 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             sig.params.push(AbiParam::new(types::I64)); // Ptr
             sig.params.push(AbiParam::new(types::I64)); // Len
             is_buffer.push(true);
+            is_simd_arg.push(false);
+        } else if ty.is_simd() {
+            sig.params.push(AbiParam::new(types::I64)); // Pass by pointer for interop
+            is_buffer.push(false);
+            is_simd_arg.push(true);
         } else {
             sig.params.push(AbiParam::new(translate_type(&ty)));
             is_buffer.push(false);
+            is_simd_arg.push(false);
         }
     }
 
-    if ssa_func.return_type != SsaType::Unknown && !is_tuple_return {
+    if ssa_func.return_type != SsaType::Unknown && !is_ptr_return {
         sig.returns
             .push(AbiParam::new(translate_type(&ssa_func.return_type)));
     }
@@ -120,6 +135,52 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         .map_err(|e| e.to_string())?;
 
     ctx.func.signature = sig;
+
+    // One-time CPU feature logging
+    static CPU_LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !CPU_LOGGED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        let mut combined_flags = isa.flags().to_string();
+        for val in isa.isa_flags() {
+            combined_flags.push(' ');
+            combined_flags.push_str(val.name);
+        }
+
+        let mut features: Vec<String> = [
+            "has_neon",
+            "has_asimd",
+            "has_simd",
+            "has_avx",
+            "has_sse",
+            "has_sse2",
+            "has_sse3",
+            "has_ssse3",
+            "has_sse41",
+            "has_sse42",
+        ]
+        .iter()
+        .filter(|&&f| combined_flags.contains(f))
+        .map(|&f| f.trim_start_matches("has_").to_string())
+        .collect();
+
+        // Handle baselines for major architectures
+        let arch = isa.triple().architecture.to_string().to_lowercase();
+        if arch.contains("aarch64")
+            && !features.contains(&"neon".to_string())
+            && !features.contains(&"asimd".to_string())
+        {
+            features.insert(0, "Neon".to_string());
+        } else if arch.contains("x86_64") && !features.contains(&"sse2".to_string()) {
+            features.insert(0, "SSE2".to_string());
+        }
+
+        let simd_info = if features.is_empty() {
+            "Software"
+        } else {
+            &features.join("+")
+        };
+
+        info!(target: "lila::jit", "JIT initialized for {} ({}) [SIMD: {}]", isa.name(), isa.triple().architecture, simd_info);
+    }
 
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
@@ -131,37 +192,9 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
         let entry_block = blocks[&ssa_func.entry_block];
         builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
 
-        let mut values = HashMap::new();
-        let mut buffer_lengths = HashMap::new();
-
-        // 1. Pre-declare all values to handle forward references within blocks
-        // and cross-block references that aren't Phis (though valid SSA should handle this via dominance).
-        // Since we are lowering to Cranelift which doesn't like forward refs for non-Phis,
-        // we'll rely on RPO to visit definitions before uses.
-        // However, we still need to pre-declare Phis.
-
-        let mut param_idx = 0;
-        let sret_ptr = if is_tuple_return {
-            let ptr = builder.block_params(entry_block)[param_idx];
-            param_idx += 1;
-            Some(ptr)
-        } else {
-            None
-        };
-
-        for (i, &is_buf) in is_buffer.iter().enumerate() {
-            let val = SsaValue(i);
-            if is_buf {
-                values.insert(val, builder.block_params(entry_block)[param_idx]);
-                buffer_lengths.insert(val, builder.block_params(entry_block)[param_idx + 1]);
-                param_idx += 2;
-            } else {
-                values.insert(val, builder.block_params(entry_block)[param_idx]);
-                param_idx += 1;
-            }
-        }
+        let values = HashMap::new();
+        let buffer_lengths = HashMap::new();
 
         let mut cg_ctx = CodegenContext {
             builder,
@@ -170,14 +203,23 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             blocks,
             values,
             buffer_lengths,
-            is_tuple_return,
-            sret_ptr,
+            is_tuple_return: matches!(ssa_func.return_type, SsaType::Tuple(_)),
+            sret_ptr: None,
         };
+
+        let mut param_idx = 0;
+        let sret_ptr = if is_ptr_return {
+            let ptr = cg_ctx.builder.block_params(entry_block)[param_idx];
+            param_idx += 1;
+            Some(ptr)
+        } else {
+            None
+        };
+        cg_ctx.sret_ptr = sret_ptr;
 
         // 2. Pre-declare all Phis across all blocks
         for ssa_block in &ssa_func.blocks {
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
-            cg_ctx.builder.switch_to_block(current_cl_block);
 
             for inst in &ssa_block.instructions {
                 if let InstructionKind::Phi(dest, _) = &inst.kind {
@@ -227,6 +269,37 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                 .expect("Block not found");
             let current_cl_block = cg_ctx.blocks[&ssa_block.id];
             cg_ctx.builder.switch_to_block(current_cl_block);
+
+            if block_id == ssa_func.entry_block {
+                // 4.1. Initialize arguments in the entry block
+                let mut p_idx = param_idx; // SRet already handled
+                for (i, (&is_buf, &is_simd)) in is_buffer.iter().zip(is_simd_arg.iter()).enumerate()
+                {
+                    let val = SsaValue(i);
+                    let ty = ssa_func.get_type(val);
+                    if is_buf {
+                        cg_ctx
+                            .values
+                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                        cg_ctx
+                            .buffer_lengths
+                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx + 1]);
+                        p_idx += 2;
+                    } else if is_simd {
+                        let ptr = cg_ctx.builder.block_params(entry_block)[p_idx];
+                        p_idx += 1;
+                        let cl_ty = translate_type(&ty);
+                        let vec_val = cg_ctx.builder.ins().load(cl_ty, MemFlags::new(), ptr, 0);
+                        cg_ctx.values.insert(val, vec_val);
+                    } else {
+                        cg_ctx
+                            .values
+                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                        p_idx += 1;
+                    }
+                }
+            }
+
             for inst in &ssa_block.instructions {
                 lower::lower_instruction(&mut cg_ctx, inst, ssa_block.id)?;
             }

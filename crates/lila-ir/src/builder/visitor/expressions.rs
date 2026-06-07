@@ -903,14 +903,103 @@ impl CFGBuilder {
     pub fn build_binop(
         &mut self,
         op: ast::Operator,
-        lhs: Value,
-        rhs: Value,
+        mut lhs: Value,
+        mut rhs: Value,
         dest: Value,
     ) -> Result<InstructionKind, String> {
-        let l_ty = self.func.get_type(lhs);
-        let r_ty = self.func.get_type(rhs);
-        let is_float =
-            matches!(l_ty, Type::F32 | Type::F64) || matches!(r_ty, Type::F32 | Type::F64);
+        let mut l_ty = self.func.get_type(lhs);
+        let mut r_ty = self.func.get_type(rhs);
+
+        // Handle mixed scalar-SIMD operations by automatic splatting
+        if l_ty.is_simd() && !r_ty.is_simd() {
+            let mut scalar_val = rhs;
+            let scalar_ty = r_ty.clone();
+            let target_elt_ty = match l_ty {
+                Type::F32X4 => Type::F32,
+                Type::I32X4 => Type::I32,
+                Type::F64X2 => Type::F64,
+                Type::I64X2 => Type::I64,
+                _ => unreachable!(),
+            };
+
+            if scalar_ty != target_elt_ty {
+                let converted = self.func.next_value();
+                if target_elt_ty.is_float() && !scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::IToF(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else if !target_elt_ty.is_float() && scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::FToI(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else if target_elt_ty.is_float() && scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::FConv(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else {
+                    self.add_instruction(InstructionKind::Assign(converted, scalar_val));
+                }
+                self.func.set_type(converted, target_elt_ty.clone());
+                scalar_val = converted;
+            }
+
+            let splat_val = self.func.next_value();
+            self.add_instruction(InstructionKind::SIMDSplat(splat_val, scalar_val));
+            self.func.set_type(splat_val, l_ty.clone());
+            rhs = splat_val;
+            r_ty = l_ty.clone();
+        } else if !l_ty.is_simd() && r_ty.is_simd() {
+            let mut scalar_val = lhs;
+            let scalar_ty = l_ty.clone();
+            let target_elt_ty = match r_ty {
+                Type::F32X4 => Type::F32,
+                Type::I32X4 => Type::I32,
+                Type::F64X2 => Type::F64,
+                Type::I64X2 => Type::I64,
+                _ => unreachable!(),
+            };
+
+            if scalar_ty != target_elt_ty {
+                let converted = self.func.next_value();
+                if target_elt_ty.is_float() && !scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::IToF(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else if !target_elt_ty.is_float() && scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::FToI(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else if target_elt_ty.is_float() && scalar_ty.is_float() {
+                    self.add_instruction(InstructionKind::FConv(
+                        converted,
+                        scalar_val,
+                        target_elt_ty.clone(),
+                    ));
+                } else {
+                    self.add_instruction(InstructionKind::Assign(converted, scalar_val));
+                }
+                self.func.set_type(converted, target_elt_ty.clone());
+                scalar_val = converted;
+            }
+
+            let splat_val = self.func.next_value();
+            self.add_instruction(InstructionKind::SIMDSplat(splat_val, scalar_val));
+            self.func.set_type(splat_val, r_ty.clone());
+            lhs = splat_val;
+            l_ty = r_ty.clone();
+        }
+
+        let is_float = l_ty.is_float() || r_ty.is_float();
 
         let kind = match op {
             ast::Operator::Add => {
@@ -945,7 +1034,9 @@ impl CFGBuilder {
             _ => return Err(format!("Operator {:?} not yet supported", op)),
         };
 
-        if is_float {
+        if l_ty.is_simd() {
+            self.func.set_type(dest, l_ty);
+        } else if is_float {
             self.func.set_type(
                 dest,
                 if matches!(l_ty, Type::F64) || matches!(r_ty, Type::F64) {

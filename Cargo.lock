@@ -379,6 +379,8 @@ name = "lila-bridge"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "cranelift-codegen",
+ "cranelift-native",
  "lila-backend",
  "lila-core",
  "lila-ir",

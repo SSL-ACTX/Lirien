@@ -22,7 +22,7 @@ pub fn compute_hash(
 ) -> u64 {
     let mut hasher = SeaHasher::new();
 
-    // Incorporate the compiler version and build hash to automatically invalidate 
+    // Incorporate the compiler version and build hash to automatically invalidate
     // caches on Rust updates or development rebuilds.
     let pkg_version = env!("CARGO_PKG_VERSION");
     pkg_version.hash(&mut hasher);

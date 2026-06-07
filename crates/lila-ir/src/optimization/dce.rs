@@ -83,6 +83,9 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::FMul(d, _, _)
         | InstructionKind::FDiv(d, _, _)
         | InstructionKind::FSqrt(d, _)
+        | InstructionKind::SIMDSplat(d, _)
+        | InstructionKind::SIMDExtractLane(d, _, _)
+        | InstructionKind::SIMDInsertLane(d, _, _, _)
         | InstructionKind::FSin(d, _)
         | InstructionKind::FCos(d, _)
         | InstructionKind::FPow(d, _, _)
@@ -102,16 +105,21 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::FGe(d, _, _)
         | InstructionKind::IToF(d, _, _)
         | InstructionKind::FToI(d, _, _)
+        | InstructionKind::FConv(d, _, _)
         | InstructionKind::ConstInt(d, _)
         | InstructionKind::ConstFloat(d, _)
+        | InstructionKind::Assign(d, _)
         | InstructionKind::Phi(d, _)
         | InstructionKind::Call(d, _, _)
         | InstructionKind::ArrayLoad(d, _, _)
+        | InstructionKind::ArrayStore(d, _, _, _, _)
         | InstructionKind::BufferLoad(d, _, _)
+        | InstructionKind::BufferStore(d, _, _, _, _)
         | InstructionKind::BufferLen(d, _)
         | InstructionKind::StructCreate(d, _, _)
         | InstructionKind::StructLoad(d, _, _)
         | InstructionKind::StructOffset(d, _, _)
+        | InstructionKind::StructSet(d, _, _, _, _)
         | InstructionKind::EnumCreate(d, _, _, _)
         | InstructionKind::EnumIsVariant(d, _, _)
         | InstructionKind::EnumGetTag(d, _)
@@ -128,9 +136,6 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::Branch(_, _, _)
         | InstructionKind::Match(_, _, _, _)
         | InstructionKind::Return(_)
-        | InstructionKind::ArrayStore(_, _, _, _, _)
-        | InstructionKind::BufferStore(_, _, _, _, _)
-        | InstructionKind::StructSet(_, _, _, _, _)
         | InstructionKind::PointerStore(_, _)
         | InstructionKind::ParallelFor { .. }
         | InstructionKind::Nop => None,
@@ -178,11 +183,15 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
             operands.push(*r);
         }
         InstructionKind::Not(_, s)
+        | InstructionKind::Assign(_, s)
         | InstructionKind::FSqrt(_, s)
+        | InstructionKind::SIMDSplat(_, s)
+        | InstructionKind::SIMDExtractLane(_, s, _)
         | InstructionKind::FSin(_, s)
         | InstructionKind::FCos(_, s)
         | InstructionKind::IToF(_, s, _)
         | InstructionKind::FToI(_, s, _)
+        | InstructionKind::FConv(_, s, _)
         | InstructionKind::BufferLen(_, s)
         | InstructionKind::StructLoad(_, s, _)
         | InstructionKind::StructOffset(_, s, _)
@@ -197,6 +206,10 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
             operands.push(*p);
             operands.push(*v);
         }
+        InstructionKind::SIMDInsertLane(_, v, s, _) => {
+            operands.push(*v);
+            operands.push(*s);
+        }
         InstructionKind::Branch(c, _, _) => {
             operands.push(*c);
         }
@@ -209,7 +222,9 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         InstructionKind::Return(None)
         | InstructionKind::Alloc(_, _)
         | InstructionKind::Jump(_)
-        | InstructionKind::Nop => {}
+        | InstructionKind::Nop
+        | InstructionKind::ConstInt(_, _)
+        | InstructionKind::ConstFloat(_, _) => {}
 
         InstructionKind::Phi(_, mappings) => {
             for v in mappings.values() {
@@ -268,7 +283,6 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
                 operands.push(*v);
             }
         }
-        InstructionKind::ConstInt(_, _) | InstructionKind::ConstFloat(_, _) => {}
     }
     operands
 }
@@ -319,6 +333,9 @@ fn has_side_effects(inst: &Instruction) -> bool {
         | InstructionKind::FMul(_, _, _)
         | InstructionKind::FDiv(_, _, _)
         | InstructionKind::FSqrt(_, _)
+        | InstructionKind::SIMDSplat(_, _)
+        | InstructionKind::SIMDExtractLane(_, _, _)
+        | InstructionKind::SIMDInsertLane(_, _, _, _)
         | InstructionKind::FSin(_, _)
         | InstructionKind::FCos(_, _)
         | InstructionKind::FPow(_, _, _)
@@ -338,8 +355,10 @@ fn has_side_effects(inst: &Instruction) -> bool {
         | InstructionKind::FGe(_, _, _)
         | InstructionKind::IToF(_, _, _)
         | InstructionKind::FToI(_, _, _)
+        | InstructionKind::FConv(_, _, _)
         | InstructionKind::ConstInt(_, _)
         | InstructionKind::ConstFloat(_, _)
+        | InstructionKind::Assign(_, _)
         | InstructionKind::Phi(_, _)
         | InstructionKind::ArrayLoad(_, _, _)
         | InstructionKind::BufferLoad(_, _, _)

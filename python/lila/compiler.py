@@ -20,6 +20,13 @@ def configure_tracing(config: Dict[str, str]):
     lila_bridge.configure_tracing(config)
 
 
+def get_cpu_info() -> Dict[str, str]:
+    """
+    Get information about the host CPU architecture and enabled SIMD features.
+    """
+    return lila_bridge.get_cpu_info()
+
+
 def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
     """
     Statically verified parallel loop.
@@ -90,20 +97,73 @@ def _get_type_name(ty: Any) -> str:
     """Consistently convert a Python-side type to its Lila IR string representation."""
     if ty is None or ty is type(None):
         return "None"
+
+    if isinstance(ty, (list, tuple)):
+        return "(" + ", ".join(_get_type_name(t) for t in ty) + ")"
+
+    # Handle Refined types
+    if hasattr(ty, "base_type") and hasattr(ty, "predicate"):
+        base_name = _get_type_name(ty.base_type)
+        try:
+            pred_src = inspect.getsource(ty.predicate).strip()
+            if "lambda" in pred_src:
+                start = pred_src.find("lambda")
+                pred_src = pred_src[start:]
+                if pred_src.endswith(","):
+                    pred_src = pred_src[:-1]
+                if pred_src.endswith("]"):
+                    pred_src = pred_src[:-1]
+            return f"Refined[{base_name}, {pred_src}]"
+        except:
+            return base_name
+
+    # Handle Annotated types (Buffer, Box, etc.)
     if hasattr(ty, "__metadata__"):
-        # Annotated type (Buffer or Box)
-        origin = ty.__origin__
+        origin = getattr(ty, "__origin__", ty)
+        origin_str = str(origin).lower()
         inner = ty.__metadata__[0]
-        if "Buffer" in str(origin):
-            return f"Buffer[{inner}]"
-        if "Box" in str(origin):
-            return f"Box[{inner}]"
-        return str(inner)
+
+        # Check for Tuple in Annotated
+        if "tuple" in origin_str:
+            if isinstance(inner, (list, tuple)):
+                return "(" + ", ".join(_get_type_name(t) for t in inner) + ")"
+            return f"({_get_type_name(inner)})"
+
+        inner_name = _get_type_name(inner)
+        if "buffer" in origin_str:
+            return f"Buffer[{inner_name}]"
+        if "box" in origin_str:
+            return f"Box[{inner_name}]"
+        if "sizedarray" in origin_str:
+            # SizedArray metadata usually has (base_type, size)
+            if isinstance(inner, tuple) and len(inner) == 2:
+                return f"SizedArray[{_get_type_name(inner[0])}, {inner[1]}]"
+        return inner_name
+
+    # Handle standard Tuples
+    origin = getattr(ty, "__origin__", None)
+    if origin is tuple or origin is Tuple or "tuple" in str(ty).lower():
+        args = getattr(ty, "__args__", [])
+        if args:
+            return "(" + ", ".join(_get_type_name(t) for t in args) + ")"
+        return "(i64, i64)"  # Default
+
+    # Handle Higher-Order types
+    if (
+        "fnpointer" in str(ty).lower()
+        or "closure" in str(ty).lower()
+        or "callable" in str(ty).lower()
+    ):
+        args = getattr(ty, "__args__", [])
+        if len(args) == 2:
+            arg_tys, ret_ty = args
+            arg_str = "[" + ", ".join(_get_type_name(t) for t in arg_tys) + "]"
+            return f"{'Closure' if 'closure' in str(ty).lower() else 'FnPointer'}[{arg_str}, {_get_type_name(ret_ty)}]"
+
     if hasattr(ty, "__name__"):
         return ty.__name__
-    if isinstance(ty, tuple):
-        return "(" + ", ".join(_get_type_name(t) for t in ty) + ")"
-    return str(ty)
+
+    return str(ty).split(".")[-1].replace("'>", "").lower()
 
 
 def _discover_types(
@@ -133,7 +193,9 @@ def _discover_types(
 
     for name, obj in scope.items():
         if getattr(obj, "__lila_struct__", False) and name not in struct_layouts:
-            struct_layouts[name] = obj.__lila_fields__
+            struct_layouts[name] = [
+                (f_name, _get_type_name(f_ty)) for f_name, f_ty in obj.__lila_fields__
+            ]
         elif getattr(obj, "__lila_enum__", False) and name not in enum_layouts:
             layout = []
             for v_name in getattr(obj, "__lila_variants__", []):
@@ -145,7 +207,10 @@ def _discover_types(
                     and hasattr(v_ty, "__lila_fields__")
                     and v_ty_name not in struct_layouts
                 ):
-                    struct_layouts[v_ty_name] = getattr(v_ty, "__lila_fields__", [])
+                    struct_layouts[v_ty_name] = [
+                        (f_name, _get_type_name(f_ty))
+                        for f_name, f_ty in v_ty.__lila_fields__
+                    ]
             enum_layouts[name] = layout
         elif hasattr(obj, "base_type") and hasattr(obj, "predicate"):
             # It's likely a Refined type instance
@@ -180,11 +245,11 @@ def _discover_types(
 
 def _get_ctypes_type(ann_str: str) -> Any:
     """Map a type name string to a ctypes type."""
-    c_ty = ctypes.c_int64
-    for name, cty in TYPE_MAP.items():
+    # Sort keys by length descending to match 'f32x4' before 'f32'
+    for name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
         if name in ann_str:
-            return cty
-    return c_ty
+            return TYPE_MAP[name]
+    return ctypes.c_int64
 
 
 def _map_ctypes_arguments(
@@ -224,7 +289,17 @@ def _map_ctypes_arguments(
         ):
             is_ptr_wrapper = True
         if not is_ptr_wrapper and any(
-            x in ann_str for x in ["sizedarray", "closure", "fnpointer", "callable"]
+            x in ann_str
+            for x in [
+                "sizedarray",
+                "closure",
+                "fnpointer",
+                "callable",
+                "f32x4",
+                "i32x4",
+                "f64x2",
+                "i64x2",
+            ]
         ):
             is_ptr_wrapper = True
 
@@ -253,45 +328,64 @@ def _map_ctypes_arguments(
     return c_args, arg_map
 
 
-def _handle_tuple_return(
+def _handle_pointer_return(
     ret_ann: Any, c_args: List[Any], arg_map: List[Any]
 ) -> Tuple[Any, Any, List[Any], List[Any]]:
-    """Generate a dynamic ctypes Structure for tuple returns and adjust argument mapping."""
+    """Handle return-by-pointer for tuples and SIMD types, adjusting argument mapping."""
     ret_ann_str = str(ret_ann).lower()
-    if "tuple" not in ret_ann_str:
+
+    # Detect if we need return-by-pointer (SRet style)
+    is_tuple = "tuple" in ret_ann_str
+    is_simd = any(x in ret_ann_str for x in ["f32x4", "i32x4", "f64x2", "i64x2"])
+
+    if not (is_tuple or is_simd):
         return False, None, c_args, arg_map
 
     try:
         from .types import i64
 
-        # Try to extract inner types
-        if hasattr(ret_ann, "__args__"):
-            tuple_types = ret_ann.__args__
+        ResultStruct = None
+        if is_tuple:
+            # Try to extract inner types for Tuple
+            if hasattr(ret_ann, "__args__"):
+                tuple_types = ret_ann.__args__
+            else:
+                tuple_types = [i64, i64]  # Default
+
+            tuple_fields = []
+            for i, t in enumerate(tuple_types):
+                t_str = str(t).lower()
+                c_ty = ctypes.c_int64
+                for name, cty in TYPE_MAP.items():
+                    if name in t_str:
+                        c_ty = cty
+                        break
+                tuple_fields.append((f"f{i}", c_ty))
+
+            class TupleReturn(ctypes.Structure):
+                _fields_ = tuple_fields
+
+            ResultStruct = TupleReturn
         else:
-            tuple_types = [i64, i64]  # Default
-
-        tuple_fields = []
-        for i, t in enumerate(tuple_types):
-            t_str = str(t).lower()
-            c_ty = ctypes.c_int64
-            for name, cty in TYPE_MAP.items():
-                if name in t_str:
-                    c_ty = cty
+            # SIMD Return - Match the specific vector type exactly if possible
+            # Sort keys by length descending to match 'f32x4' before 'f32'
+            for name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
+                if name in ret_ann_str:
+                    ResultStruct = TYPE_MAP[name]
                     break
-            tuple_fields.append((f"f{i}", c_ty))
 
-        class TupleReturn(ctypes.Structure):
-            _fields_ = tuple_fields
+        if ResultStruct is None:
+            return False, None, c_args, arg_map
 
-        new_c_args = [ctypes.POINTER(TupleReturn)] + c_args
+        new_c_args = [ctypes.POINTER(ResultStruct)] + c_args
         new_arg_map = []
         for info in arg_map:
             # Adjust arg_map indices because we inserted a pointer at index 0
             new_arg_map.append((info[0], info[1] + 1) + info[2:])
 
-        return True, TupleReturn, new_c_args, new_arg_map
+        return True, ResultStruct, new_c_args, new_arg_map
     except Exception as e:
-        print(f"[Lila Warning] Failed to parse Tuple return: {e}")
+        print(f"[Lila Warning] Failed to handle pointer return for {ret_ann}: {e}")
         return False, None, c_args, arg_map
 
 
@@ -317,6 +411,10 @@ def _create_jit_wrapper(
                 "fnpointer",
                 "callable",
                 "closure",
+                "f32x4",
+                "i32x4",
+                "f64x2",
+                "i64x2",
             ]
         ):
             c_args.append(ctypes.c_void_p)
@@ -325,18 +423,19 @@ def _create_jit_wrapper(
             c_args.append(_get_ctypes_type(arg_ty_str))
             arg_map.append(("value", len(c_args) - 1))
 
-    is_tuple_return, TupleReturn, c_args, arg_map = _handle_tuple_return(
+    is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
         ret_type, c_args, arg_map
     )
 
-    if is_tuple_return:
+    if is_ptr_return:
         c_ret = None
-        if hasattr(ret_type, "__args__"):
-            tuple_types = ret_type.__args__
-        else:
-            from .types import i64
+        if "tuple" in str(ret_type).lower():
+            if hasattr(ret_type, "__args__"):
+                tuple_types = ret_type.__args__
+            else:
+                from .types import i64
 
-            tuple_types = [i64, i64]
+                tuple_types = [i64, i64]
     else:
         ret_ty_str = str(ret_type).lower()
         if "none" in ret_ty_str or ret_type is None:
@@ -352,37 +451,59 @@ def _create_jit_wrapper(
 
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(actual_fn_ptr)
 
+    from .types import FnPointer, Closure, i64
+
     def jit_call(*args):
         processed_args, ret_struct = _prepare_runtime_args(
-            args, arg_map, c_args, is_tuple_return, TupleReturn
+            args, arg_map, c_args, is_ptr_return, TupleReturn
         )
         if is_closure:
-            # If it's a tuple return, TupleReturn* is at index 0, so ctx_ptr is at index 1.
+            # If it's a pointer return, TupleReturn* is at index 0, so ctx_ptr is at index 1.
             # Otherwise, ctx_ptr is at index 0.
-            insert_idx = 1 if is_tuple_return else 0
+            insert_idx = 1 if is_ptr_return else 0
             processed_args.insert(insert_idx, code_ptr)
 
         res = c_func(*processed_args)
 
-        if is_tuple_return:
-            # Convert ctypes structure back to Python tuple
-            return tuple(getattr(ret_struct, f"f{i}") for i in range(len(tuple_types)))
+        if is_ptr_return:
+            if "tuple" in str(ret_type).lower():
+                # Convert ctypes structure back to Python tuple
+                return tuple(
+                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                )
+            else:
+                # SIMD Return
+                return ret_struct
 
         # Recursively wrap if the return type is another function
-        from .types import FnPointer, Closure
-
         ret_ty_str = str(ret_type).lower()
         if (
             "fnpointer" in ret_ty_str
-            or "callable" in ret_ty_str
             or "closure" in ret_ty_str
+            or "callable" in ret_ty_str
             or isinstance(ret_type, FnPointer)
         ):
             is_cls = "closure" in ret_ty_str or isinstance(ret_type, Closure)
+
+            # Extract arg_types and ret_type
+            inner_arg_types = [i64, i64]
+            inner_ret_type = i64
+            if isinstance(ret_type, FnPointer):
+                inner_arg_types = ret_type.arg_types
+                inner_ret_type = ret_type.ret_type
+            elif hasattr(ret_type, "__metadata__"):
+                params = ret_type.__metadata__[0]
+                if isinstance(params, tuple) and len(params) == 2:
+                    inner_arg_types, inner_ret_type = params
+            elif hasattr(ret_type, "__args__"):
+                params = ret_type.__args__
+                if len(params) == 2:
+                    inner_arg_types, inner_ret_type = params
+
             return _create_jit_wrapper(
                 res,
-                ret_type.arg_types,
-                ret_type.ret_type,
+                inner_arg_types,
+                inner_ret_type,
                 is_closure=is_cls,
             )
 
@@ -451,7 +572,16 @@ def _prepare_runtime_args(
                 processed_args.append(arg)
         else:
             target_cty = c_args[c_idx]
-            processed_args.append(target_cty(arg))
+            # Check if it's already a ctypes object (Structure, Array, or Pointer)
+            if (
+                isinstance(arg, target_cty)
+                or hasattr(arg, "_type_")
+                or hasattr(arg, "_fields_")
+                or hasattr(arg, "_obj_")
+            ):
+                processed_args.append(arg)
+            else:
+                processed_args.append(target_cty(arg))
     return processed_args, ret_struct
 
 
@@ -510,7 +640,7 @@ def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
 
 def _wrap_return_value(res: Any, ret_ann: Any) -> Any:
     """Wrap the JIT return value if it represents a higher-order function."""
-    from .types import FnPointer, Closure
+    from .types import FnPointer, Closure, i64
 
     ret_ann_str = str(ret_ann).lower()
     if (
@@ -520,9 +650,25 @@ def _wrap_return_value(res: Any, ret_ann: Any) -> Any:
         or isinstance(ret_ann, FnPointer)
     ):
         is_cls = "closure" in ret_ann_str or isinstance(ret_ann, Closure)
-        return _create_jit_wrapper(
-            res, ret_ann.arg_types, ret_ann.ret_type, is_closure=is_cls
-        )
+
+        # Extract arg_types and ret_type
+        arg_types = [i64, i64]
+        ret_type = i64
+
+        if isinstance(ret_ann, FnPointer):
+            arg_types = ret_ann.arg_types
+            ret_type = ret_ann.ret_type
+        elif hasattr(ret_ann, "__metadata__"):
+            params = ret_ann.__metadata__[0]
+            if isinstance(params, tuple) and len(params) == 2:
+                arg_types, ret_type = params
+        elif hasattr(ret_ann, "__args__"):
+            # Fallback for some typing constructs
+            params = ret_ann.__args__
+            if len(params) == 2:
+                arg_types, ret_type = params
+
+        return _create_jit_wrapper(res, arg_types, ret_type, is_closure=is_cls)
     return res
 
 
@@ -547,25 +693,31 @@ def _create_wrapper(
     c_args: List[Any],
     arg_map: List[Any],
     sig: inspect.Signature,
-    is_tuple_return: bool,
+    is_ptr_return: bool,
     TupleReturn: Any,
     tuple_types: List[Any],
 ):
     """Generate the final Python wrapper that handles runtime checks and interop."""
-    c_ret = None if is_tuple_return else _get_ctypes_return_type(sig.return_annotation)
+    c_ret = None if is_ptr_return else _get_ctypes_return_type(sig.return_annotation)
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
     def wrapper(*args):
         _check_runtime_refinements(sig, args)
 
         processed_args, ret_struct = _prepare_runtime_args(
-            args, arg_map, c_args, is_tuple_return, TupleReturn
+            args, arg_map, c_args, is_ptr_return, TupleReturn
         )
 
         res = c_func(*processed_args)
 
-        if is_tuple_return:
-            return tuple(getattr(ret_struct, f"f{i}") for i in range(len(tuple_types)))
+        if is_ptr_return:
+            if "tuple" in str(sig.return_annotation).lower():
+                return tuple(
+                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                )
+            else:
+                # SIMD Return
+                return ret_struct
 
         return _wrap_return_value(res, sig.return_annotation)
 
@@ -615,18 +767,19 @@ def verify(
 
             sig = inspect.signature(func)
             c_args, arg_map = _map_ctypes_arguments(sig, _class_name)
-            is_tuple_return, TupleReturn, c_args, arg_map = _handle_tuple_return(
+            is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
                 sig.return_annotation, c_args, arg_map
             )
 
             tuple_types = []
-            if is_tuple_return:
-                if hasattr(sig.return_annotation, "__args__"):
-                    tuple_types = sig.return_annotation.__args__
-                else:
-                    from .types import i64
+            if is_ptr_return:
+                if "tuple" in str(sig.return_annotation).lower():
+                    if hasattr(sig.return_annotation, "__args__"):
+                        tuple_types = sig.return_annotation.__args__
+                    else:
+                        from .types import i64
 
-                    tuple_types = [i64, i64]
+                        tuple_types = [i64, i64]
 
             return _create_wrapper(
                 func,
@@ -634,7 +787,7 @@ def verify(
                 c_args,
                 arg_map,
                 sig,
-                is_tuple_return,
+                is_ptr_return,
                 TupleReturn,
                 tuple_types,
             )

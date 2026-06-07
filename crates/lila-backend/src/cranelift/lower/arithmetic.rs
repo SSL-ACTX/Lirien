@@ -1,7 +1,7 @@
 use super::{get_val, CodegenContext};
 use cranelift::prelude::*;
 use cranelift_module::Module;
-use lila_ir::ir::InstructionKind;
+use lila_ir::ir::{InstructionKind, Type};
 
 pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), String> {
     match kind {
@@ -74,6 +74,25 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::FSqrt(dest, src) => {
             let s = get_val(&ctx.values, src);
             let res = ctx.builder.ins().sqrt(s);
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::SIMDSplat(dest, scalar) => {
+            let s = get_val(&ctx.values, scalar);
+            let ty = ctx.ssa_func.get_type(*dest);
+            let cl_ty = super::translate_type(&ty);
+            let res = ctx.builder.ins().splat(cl_ty, s);
+            ctx.values.insert(*dest, res);
+        }
+
+        InstructionKind::SIMDExtractLane(dest, vec, lane) => {
+            let v = get_val(&ctx.values, vec);
+            let res = ctx.builder.ins().extractlane(v, *lane as u8);
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::SIMDInsertLane(dest, vec, src, lane) => {
+            let v = get_val(&ctx.values, vec);
+            let s = get_val(&ctx.values, src);
+            let res = ctx.builder.ins().insertlane(v, s, *lane as u8);
             ctx.values.insert(*dest, res);
         }
         InstructionKind::And(dest, lhs, rhs) => {
@@ -255,6 +274,17 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let s = get_val(&ctx.values, src);
             let target_ty = super::translate_type(ty);
             let res = ctx.builder.ins().fcvt_to_sint(target_ty, s);
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::FConv(dest, src, target_ty) => {
+            let s = get_val(&ctx.values, src);
+            let src_ty = ctx.ssa_func.get_type(*src);
+            let target_cl_ty = super::translate_type(target_ty);
+            let res = match (src_ty, target_ty) {
+                (Type::F32, Type::F64) => ctx.builder.ins().fpromote(target_cl_ty, s),
+                (Type::F64, Type::F32) => ctx.builder.ins().fdemote(target_cl_ty, s),
+                _ => s, // Same precision or incompatible types (let Cranelift verify)
+            };
             ctx.values.insert(*dest, res);
         }
         _ => return Err(format!("Not an arithmetic instruction: {:?}", kind)),

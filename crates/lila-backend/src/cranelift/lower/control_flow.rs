@@ -78,6 +78,7 @@ pub fn lower<M: Module>(
             targets.push(default_ssa_id);
 
             let mut target_to_cl_block = HashMap::new();
+            let mut trampolines = Vec::new();
 
             for &target_ssa_id in &targets {
                 let mut phi_args = Vec::new();
@@ -99,16 +100,9 @@ pub fn lower<M: Module>(
                 if phi_args.is_empty() {
                     target_to_cl_block.insert(target_ssa_id, ctx.blocks[target_ssa_id]);
                 } else {
-                    // Create a trampoline block to pass Phi arguments
                     let trampoline = ctx.builder.create_block();
-                    let target_cl_block = ctx.blocks[target_ssa_id];
                     target_to_cl_block.insert(target_ssa_id, trampoline);
-
-                    // Switch to trampoline to emit the jump with arguments
-                    let prev_block = ctx.builder.current_block().unwrap();
-                    ctx.builder.switch_to_block(trampoline);
-                    ctx.builder.ins().jump(target_cl_block, &phi_args);
-                    ctx.builder.switch_to_block(prev_block);
+                    trampolines.push((trampoline, ctx.blocks[target_ssa_id], phi_args));
                 }
             }
 
@@ -118,9 +112,24 @@ pub fn lower<M: Module>(
             }
             let cl_default_block = target_to_cl_block[default_ssa_id];
             switch_obj.emit(&mut ctx.builder, s_val, cl_default_block);
+
+            // Now fill trampolines
+            for (trampoline, target_cl_block, phi_args) in trampolines {
+                ctx.builder.switch_to_block(trampoline);
+                ctx.builder.ins().jump(target_cl_block, &phi_args);
+            }
         }
         InstructionKind::Return(val) => {
-            if ctx.is_tuple_return {
+            if ctx.ssa_func.return_type.is_simd() {
+                if let Some(v) = val {
+                    let vec_val = get_val(&ctx.values, v);
+                    let dest_ptr = ctx.sret_ptr.expect("Missing SRet pointer for SIMD");
+                    ctx.builder
+                        .ins()
+                        .store(MemFlags::new(), vec_val, dest_ptr, 0);
+                }
+                ctx.builder.ins().return_(&[]);
+            } else if ctx.is_tuple_return {
                 if let Some(v) = val {
                     let tuple_ptr = get_val(&ctx.values, v);
                     let dest_ptr = ctx.sret_ptr.expect("Missing SRet pointer");

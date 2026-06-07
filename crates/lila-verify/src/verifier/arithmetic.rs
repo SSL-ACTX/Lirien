@@ -37,6 +37,21 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::Assign(dest, src) => {
+            if let (Some(d), Some(s)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
+                let __inner = ctx.backend.bv_eq(d, s);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(d), Some(s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+                let __inner = ctx.backend.float_eq(d, s);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(d), Some(s)) = (ctx.z3_arrays.get(dest), ctx.z3_arrays.get(src)) {
+                let __inner = ctx.backend.array_eq(d, s);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
         InstructionKind::Add(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
                 ctx.z3_bvs.get(dest),
@@ -598,8 +613,20 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::FConv(dest, src, target_ty) => {
+            if let (Some(d), Some(s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+                let is_f32 = matches!(target_ty, Type::F32);
+                let res = ctx.backend.float_to_float(s, is_f32);
+                let __inner = ctx.backend.float_eq(d, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
 
-        _ => {}
+        InstructionKind::SIMDSplat(..)
+        | InstructionKind::SIMDExtractLane(..)
+        | InstructionKind::SIMDInsertLane(..)
+        | _ => {}
     }
     Ok(())
 }

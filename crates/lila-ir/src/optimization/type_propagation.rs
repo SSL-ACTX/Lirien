@@ -12,6 +12,15 @@ pub fn propagate_types(func: &mut Function) {
         for block in &func.blocks {
             for inst in &block.instructions {
                 match &inst.kind {
+                    InstructionKind::Assign(d, s) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let s_ty = func.get_type(*s);
+                            if s_ty != Type::Unknown {
+                                new_types.insert(*d, s_ty);
+                            }
+                        }
+                    }
                     InstructionKind::Add(d, l, r)
                     | InstructionKind::Sub(d, l, r)
                     | InstructionKind::Mul(d, l, r)
@@ -208,10 +217,12 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, func.get_type(*buf));
                         }
                     }
-                    InstructionKind::BufferLen(d, _buf) => {
+                    InstructionKind::IToF(d, _, ty)
+                    | InstructionKind::FToI(d, _, ty)
+                    | InstructionKind::FConv(d, _, ty) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
-                            new_types.insert(*d, Type::I64);
+                            new_types.insert(*d, ty.clone());
                         }
                     }
                     InstructionKind::Return(Some(v)) => {
@@ -246,6 +257,55 @@ pub fn propagate_types(func: &mut Function) {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
                             new_types.insert(*d, Type::U8);
+                        }
+                    }
+                    InstructionKind::SIMDSplat(d, s) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let s_ty = func.get_type(*s);
+                            match s_ty {
+                                Type::F32 => {
+                                    new_types.insert(*d, Type::F32X4);
+                                }
+                                Type::I32 => {
+                                    new_types.insert(*d, Type::I32X4);
+                                }
+                                Type::F64 => {
+                                    new_types.insert(*d, Type::F64X2);
+                                }
+                                Type::I64 => {
+                                    new_types.insert(*d, Type::I64X2);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    InstructionKind::SIMDExtractLane(d, v, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let v_ty = func.get_type(*v);
+                            match v_ty {
+                                Type::F32X4 => {
+                                    new_types.insert(*d, Type::F32);
+                                }
+                                Type::I32X4 => {
+                                    new_types.insert(*d, Type::I32);
+                                }
+                                Type::F64X2 => {
+                                    new_types.insert(*d, Type::F64);
+                                }
+                                Type::I64X2 => {
+                                    new_types.insert(*d, Type::I64);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    InstructionKind::SIMDInsertLane(d, v, _, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let v_ty = func.get_type(*v);
+                            new_types.insert(*d, v_ty);
                         }
                     }
                     InstructionKind::EnumExtract(d, obj, tag_idx) => {

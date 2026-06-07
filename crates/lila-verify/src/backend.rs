@@ -66,6 +66,7 @@ pub trait SolverBackend {
     fn float_gt(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Bool;
     fn float_ge(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Bool;
     fn float_to_bv(&mut self, a: &Self::Float, is_signed: bool, bit_width: u32) -> Self::BV;
+    fn float_to_float(&mut self, a: &Self::Float, is_f32: bool) -> Self::Float;
     fn bv_to_float(&mut self, a: &Self::BV, is_signed: bool, is_f32: bool) -> Self::Float;
 
     fn array_const(&mut self, name: &str, is_float: bool, bit_width: u32) -> Self::Array;

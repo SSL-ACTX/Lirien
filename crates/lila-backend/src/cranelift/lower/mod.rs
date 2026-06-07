@@ -85,6 +85,11 @@ pub fn lower_instruction<M: Module>(
             ctx.values.insert(*dest, res);
             Ok(())
         }
+        InstructionKind::Assign(dest, src) => {
+            let s = get_val(&ctx.values, src);
+            ctx.values.insert(*dest, s);
+            Ok(())
+        }
 
         InstructionKind::Add(_, _, _)
         | InstructionKind::Sub(_, _, _)
@@ -105,6 +110,9 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::FMul(_, _, _)
         | InstructionKind::FDiv(_, _, _)
         | InstructionKind::FSqrt(_, _)
+        | InstructionKind::SIMDSplat(_, _)
+        | InstructionKind::SIMDExtractLane(_, _, _)
+        | InstructionKind::SIMDInsertLane(_, _, _, _)
         | InstructionKind::Eq(_, _, _)
         | InstructionKind::Ne(_, _, _)
         | InstructionKind::SLt(_, _, _)
@@ -120,7 +128,8 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::FGt(_, _, _)
         | InstructionKind::FGe(_, _, _)
         | InstructionKind::IToF(_, _, _)
-        | InstructionKind::FToI(_, _, _) => arithmetic::lower(ctx, &inst.kind),
+        | InstructionKind::FToI(_, _, _)
+        | InstructionKind::FConv(_, _, _) => arithmetic::lower(ctx, &inst.kind),
 
         InstructionKind::FSin(dest, src) => intrinsics::lower(ctx, *dest, "sin", &[*src]),
         InstructionKind::FCos(dest, src) => intrinsics::lower(ctx, *dest, "cos", &[*src]),

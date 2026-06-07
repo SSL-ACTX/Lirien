@@ -15,6 +15,11 @@ pub enum Type {
     F32,
     F64,
     Bool,
+    // SIMD 128-bit vectors
+    F32X4,
+    I32X4,
+    F64X2,
+    I64X2,
     Array(Box<Type>, Option<usize>),
     Buffer(Box<Type>),
     Struct(String),
@@ -41,6 +46,10 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),
+            Type::F32X4 => write!(f, "f32x4"),
+            Type::I32X4 => write!(f, "i32x4"),
+            Type::F64X2 => write!(f, "f64x2"),
+            Type::I64X2 => write!(f, "i64x2"),
             Type::Array(t, s) => match s {
                 Some(size) => write!(f, "Array<{}, {}>", t, size),
                 None => write!(f, "Array<{}>", t),
@@ -70,7 +79,7 @@ impl fmt::Display for Type {
 impl Type {
     pub fn is_float(&self) -> bool {
         match self {
-            Type::F32 | Type::F64 => true,
+            Type::F32 | Type::F64 | Type::F32X4 | Type::F64X2 => true,
             Type::Refined(inner, _) => inner.is_float(),
             _ => false,
         }
@@ -85,7 +94,9 @@ impl Type {
             | Type::I32
             | Type::U32
             | Type::I64
-            | Type::U64 => true,
+            | Type::U64
+            | Type::I32X4
+            | Type::I64X2 => true,
             Type::Refined(inner, _) => inner.is_int(),
             _ => false,
         }
@@ -123,10 +134,21 @@ impl Type {
         }
     }
 
+    pub fn is_simd(&self) -> bool {
+        match self {
+            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => true,
+            Type::Refined(inner, _) => inner.is_simd(),
+            _ => false,
+        }
+    }
+
     pub fn is_composite(&self) -> bool {
         match self {
             Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
-            Type::Array(_, Some(_)) => true,
+            Type::Array(inner, Some(_)) => {
+                // If the inner type is not a primitive, we treat fixed arrays as composite for offsets
+                !inner.is_int() && !inner.is_float()
+            }
             Type::Refined(inner, _) => inner.is_composite(),
             _ => false,
         }
@@ -138,6 +160,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
+            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => 16,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
@@ -209,6 +232,7 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
+            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => 16,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
@@ -376,6 +400,11 @@ pub enum InstructionKind {
     FMul(Value, Value, Value),
     FDiv(Value, Value, Value),
     FSqrt(Value, Value),
+
+    // SIMD
+    SIMDSplat(Value, Value),                    // dest, scalar
+    SIMDExtractLane(Value, Value, usize),       // dest, vector, lane
+    SIMDInsertLane(Value, Value, Value, usize), // dest, vector, scalar, lane
     FSin(Value, Value),
     FCos(Value, Value),
     FPow(Value, Value, Value),
@@ -398,9 +427,11 @@ pub enum InstructionKind {
 
     IToF(Value, Value, Type),
     FToI(Value, Value, Type),
+    FConv(Value, Value, Type), // dest, src, target_type (f32 <-> f64)
 
     ConstInt(Value, i64),
     ConstFloat(Value, f64),
+    Assign(Value, Value), // dest, src
     Jump(BlockId),
     Branch(Value, BlockId, BlockId),
     Return(Option<Value>),
@@ -583,6 +614,23 @@ impl fmt::Display for Instruction {
             InstructionKind::FSqrt(d, s) => {
                 write!(f, "  {} = sqrt {}{}{}", d, s, loc_str, constraints_str)
             }
+            InstructionKind::SIMDSplat(d, s) => {
+                write!(f, "  {} = splat {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::SIMDExtractLane(d, v, l) => {
+                write!(
+                    f,
+                    "  {} = extract_lane {}[{}] {}{}",
+                    d, v, l, loc_str, constraints_str
+                )
+            }
+            InstructionKind::SIMDInsertLane(d, v, s, l) => {
+                write!(
+                    f,
+                    "  {} = insert_lane {}[{}] <- {} {}{}",
+                    d, v, l, s, loc_str, constraints_str
+                )
+            }
             InstructionKind::FSin(d, s) => {
                 write!(f, "  {} = sin {}{}{}", d, s, loc_str, constraints_str)
             }
@@ -702,6 +750,13 @@ impl fmt::Display for Instruction {
                     d, s, t, loc_str, constraints_str
                 )
             }
+            InstructionKind::FConv(d, s, t) => {
+                write!(
+                    f,
+                    "  {} = fconv {} to {}{}{}",
+                    d, s, t, loc_str, constraints_str
+                )
+            }
 
             InstructionKind::ConstInt(d, v) => {
                 write!(f, "  {} = const_int {}{}{}", d, v, loc_str, constraints_str)
@@ -713,6 +768,10 @@ impl fmt::Display for Instruction {
                     d, v, loc_str, constraints_str
                 )
             }
+            InstructionKind::Assign(d, s) => {
+                write!(f, "  {} = assign {}{}{}", d, s, loc_str, constraints_str)
+            }
+
             InstructionKind::Jump(b) => write!(f, "  jump {}{}{}", b, loc_str, constraints_str),
             InstructionKind::Branch(c, t, e) => {
                 write!(f, "  br {}, {}, {}{}{}", c, t, e, loc_str, constraints_str)
@@ -975,6 +1034,13 @@ impl Instruction {
             | InstructionKind::FSub(d, _, _)
             | InstructionKind::FMul(d, _, _)
             | InstructionKind::FDiv(d, _, _)
+            | InstructionKind::FSqrt(d, _)
+            | InstructionKind::SIMDSplat(d, _)
+            | InstructionKind::SIMDExtractLane(d, _, _)
+            | InstructionKind::SIMDInsertLane(d, _, _, _)
+            | InstructionKind::FSin(d, _)
+            | InstructionKind::FCos(d, _)
+            | InstructionKind::FPow(d, _, _)
             | InstructionKind::Eq(d, _, _)
             | InstructionKind::Ne(d, _, _)
             | InstructionKind::SLt(d, _, _)
@@ -989,27 +1055,41 @@ impl Instruction {
             | InstructionKind::FLe(d, _, _)
             | InstructionKind::FGt(d, _, _)
             | InstructionKind::FGe(d, _, _)
+            | InstructionKind::IToF(d, _, _)
+            | InstructionKind::FToI(d, _, _)
+            | InstructionKind::FConv(d, _, _)
             | InstructionKind::ConstInt(d, _)
             | InstructionKind::ConstFloat(d, _)
+            | InstructionKind::Assign(d, _)
             | InstructionKind::Phi(d, _)
             | InstructionKind::Call(d, _, _)
             | InstructionKind::ArrayLoad(d, _, _)
             | InstructionKind::ArrayStore(d, _, _, _, _)
+            | InstructionKind::BufferLoad(d, _, _)
+            | InstructionKind::BufferStore(d, _, _, _, _)
+            | InstructionKind::BufferLen(d, _)
+            | InstructionKind::StructCreate(d, _, _)
             | InstructionKind::StructLoad(d, _, _)
             | InstructionKind::StructOffset(d, _, _)
             | InstructionKind::StructSet(d, _, _, _, _)
-            | InstructionKind::StructCreate(d, _, _)
             | InstructionKind::EnumCreate(d, _, _, _)
             | InstructionKind::EnumIsVariant(d, _, _)
+            | InstructionKind::EnumGetTag(d, _)
             | InstructionKind::EnumExtract(d, _, _)
             | InstructionKind::TupleCreate(d, _)
             | InstructionKind::TupleExtract(d, _, _)
+            | InstructionKind::Alloc(d, _)
+            | InstructionKind::PointerLoad(d, _)
             | InstructionKind::Lambda(d, _, _)
-            | InstructionKind::IndirectCall(d, _, _)
-            | InstructionKind::BufferLoad(d, _, _)
-            | InstructionKind::BufferStore(d, _, _, _, _)
-            | InstructionKind::BufferLen(d, _) => Some(*d),
-            _ => None,
+            | InstructionKind::IndirectCall(d, _, _) => Some(*d),
+
+            InstructionKind::Jump(_)
+            | InstructionKind::Branch(_, _, _)
+            | InstructionKind::Return(_)
+            | InstructionKind::Match(_, _, _, _)
+            | InstructionKind::PointerStore(_, _)
+            | InstructionKind::ParallelFor { .. }
+            | InstructionKind::Nop => None,
         }
     }
 
