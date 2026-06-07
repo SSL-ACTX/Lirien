@@ -225,8 +225,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 let mut offset = 1;
                 offset = (offset + p_align - 1) & !(p_align - 1);
 
-                let p_size = payload_ty.size(&ctx.ssa_func.struct_layouts);
-                super::copy_to_stack(&mut ctx.builder, p_val, slot, offset as i32, p_size);
+                if payload_ty.is_composite() {
+                    let p_size = payload_ty.size(&ctx.ssa_func.struct_layouts);
+                    super::copy_to_stack(&mut ctx.builder, p_val, slot, offset as i32, p_size);
+                } else {
+                    ctx.builder.ins().stack_store(p_val, slot, offset as i32);
+                }
             }
 
             let dest_addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
@@ -262,8 +266,14 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let mut offset = 1;
             offset = (offset + p_align - 1) & !(p_align - 1);
 
-            let res = ctx.builder.ins().iadd_imm(obj_ptr, offset as i64);
-            ctx.values.insert(*dest, res);
+            let addr = ctx.builder.ins().iadd_imm(obj_ptr, offset as i64);
+            if payload_ty.is_composite() {
+                ctx.values.insert(*dest, addr);
+            } else {
+                let cl_ty = translate_type(payload_ty);
+                let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
+                ctx.values.insert(*dest, res);
+            }
         }
         _ => return Err(format!("Not a memory instruction: {:?}", kind)),
     }

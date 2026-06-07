@@ -86,6 +86,17 @@ def format_verification_error(func_name: str, source: str, error: str) -> str:
     return f"Lila Verification Failed for '{func_name}': {error}"
 
 
+def _get_type_name(ty: Any) -> str:
+    """Consistently convert a Python-side type to its Lila IR string representation."""
+    if ty is None or ty is type(None):
+        return "None"
+    if hasattr(ty, "__name__"):
+        return ty.__name__
+    if isinstance(ty, tuple):
+        return "(" + ", ".join(_get_type_name(t) for t in ty) + ")"
+    return str(ty)
+
+
 def _discover_types(
     func: Callable, initial_struct_layouts: Dict
 ) -> Tuple[Dict, Dict, Dict]:
@@ -118,9 +129,13 @@ def _discover_types(
             layout = []
             for v_name in getattr(obj, "__lila_variants__", []):
                 v_ty = obj.__lila_variant_types__[v_name]
-                v_ty_name = v_ty.__name__
+                v_ty_name = _get_type_name(v_ty)
                 layout.append((v_name, v_ty_name))
-                if v_ty_name not in struct_layouts:
+                if (
+                    v_ty is not None
+                    and hasattr(v_ty, "__lila_fields__")
+                    and v_ty_name not in struct_layouts
+                ):
                     struct_layouts[v_ty_name] = getattr(v_ty, "__lila_fields__", [])
             enum_layouts[name] = layout
         elif hasattr(obj, "base_type") and hasattr(obj, "predicate"):

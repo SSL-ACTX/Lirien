@@ -300,13 +300,58 @@ def enum(cls):
     variant_types = {}
     union_fields = []
 
+    # Helper to generate a dummy struct for empty or primitive variants
+    def make_payload_struct(name, fields):
+        class PayloadStruct(ctypes.Structure):
+            _fields_ = fields
+
+        PayloadStruct.__name__ = name
+        return PayloadStruct
+
     for idx, (name, ty) in enumerate(fields.items()):
         variant_names.append(name)
         variant_types[name] = ty
-        if hasattr(ty, "__lila_ctypes__"):
+
+        if ty is None:
+            # Empty variant
+            union_fields.append(
+                (name, make_payload_struct(f"{cls.__name__}_{name}_payload", []))
+            )
+        elif hasattr(ty, "__lila_ctypes__"):
             union_fields.append((name, ty.__lila_ctypes__))
+        elif isinstance(ty, tuple):
+            # Tuple payload
+            tuple_fields = []
+            for i, t in enumerate(ty):
+                t_str = str(t).lower()
+                c_ty = ctypes.c_int64
+                for n, cty in TYPE_MAP.items():
+                    if n in t_str:
+                        c_ty = cty
+                        break
+                tuple_fields.append((f"f{i}", c_ty))
+            union_fields.append(
+                (
+                    name,
+                    make_payload_struct(f"{cls.__name__}_{name}_payload", tuple_fields),
+                )
+            )
         else:
-            raise TypeError(f"Enum variant {name} must be a @struct")
+            # Primitive type
+            ty_str = str(ty).lower()
+            c_ty = ctypes.c_int64
+            for n, cty in TYPE_MAP.items():
+                if n in ty_str:
+                    c_ty = cty
+                    break
+            union_fields.append(
+                (
+                    name,
+                    make_payload_struct(
+                        f"{cls.__name__}_{name}_payload", [("val", c_ty)]
+                    ),
+                )
+            )
 
     class LilaCtypesUnion(ctypes.Union):
         _fields_ = union_fields
@@ -333,18 +378,40 @@ def enum(cls):
     for idx, (name, ty) in enumerate(variant_types.items()):
 
         def make_variant_methods(variant_name, variant_type, tag_idx):
+            payload_cty = dict(union_fields)[variant_name]
+
             @classmethod
             def constructor(cls_ref, *args, **kwargs):
                 instance = cls_ref.__new__(cls_ref)
                 instance._ctypes_obj = LilaCtypesEnum()
                 instance._ctypes_obj.tag = tag_idx
-                # Construct the payload struct
-                payload_instance = variant_type(*args, **kwargs)
-                setattr(
-                    instance._ctypes_obj.payload,
-                    variant_name,
-                    payload_instance._ctypes_obj,
-                )
+
+                if variant_type is None:
+                    pass
+                elif hasattr(variant_type, "__lila_ctypes__"):
+                    # Check if we are passing an already constructed instance of the variant type
+                    if len(args) == 1 and isinstance(args[0], variant_type):
+                        payload_instance = args[0]
+                    else:
+                        payload_instance = variant_type(*args, **kwargs)
+
+                    setattr(
+                        instance._ctypes_obj.payload,
+                        variant_name,
+                        payload_instance._ctypes_obj,
+                    )
+                elif isinstance(variant_type, tuple):
+                    # args should match tuple elements
+                    payload_obj = payload_cty()
+                    for i, arg in enumerate(args):
+                        setattr(payload_obj, f"f{i}", arg)
+                    setattr(instance._ctypes_obj.payload, variant_name, payload_obj)
+                else:
+                    # Primitive
+                    payload_obj = payload_cty()
+                    payload_obj.val = args[0] if args else 0
+                    setattr(instance._ctypes_obj.payload, variant_name, payload_obj)
+
                 return instance
 
             def is_variant(self):
@@ -355,9 +422,21 @@ def enum(cls):
                     raise ValueError(
                         f"Tried to access Enum as {variant_name} but tag is {self._ctypes_obj.tag}"
                     )
-                wrapper = variant_type.__new__(variant_type)
-                wrapper._ctypes_obj = getattr(self._ctypes_obj.payload, variant_name)
-                return wrapper
+
+                raw_payload = getattr(self._ctypes_obj.payload, variant_name)
+                if variant_type is None:
+                    return None
+                elif hasattr(variant_type, "__lila_ctypes__"):
+                    wrapper = variant_type.__new__(variant_type)
+                    wrapper._ctypes_obj = raw_payload
+                    return wrapper
+                elif isinstance(variant_type, tuple):
+                    return tuple(
+                        getattr(raw_payload, f"f{i}") for i in range(len(variant_type))
+                    )
+                else:
+                    # Primitive
+                    return raw_payload.val
 
             return constructor, is_variant, as_variant
 
@@ -367,6 +446,9 @@ def enum(cls):
         setattr(cls, f"as_{name}", as_var)
 
     return cls
+
+
+adt = enum
 
 
 class FnPointer:

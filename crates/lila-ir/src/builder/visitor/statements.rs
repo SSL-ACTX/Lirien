@@ -517,10 +517,45 @@ impl CFGBuilder {
                                 return Err("Only simple name patterns supported for enum payload destructuring".to_string());
                             }
                         } else {
-                            return Err(
-                                "Enums with multi-element payloads not yet supported in match"
-                                    .to_string(),
-                            );
+                            // Multi-element payload: assume it's a tuple
+                            match variant_ty {
+                                Type::Tuple(ref types) => {
+                                    if types.len() != pattern_args.len() {
+                                        return Err(format!(
+                                            "Variant '{}' has {} fields, but pattern has {}",
+                                            variant_name,
+                                            types.len(),
+                                            pattern_args.len()
+                                        ));
+                                    }
+                                    for (i, p_arg) in pattern_args.iter().enumerate() {
+                                        let elt = self.func.next_value();
+                                        self.add_instruction(InstructionKind::TupleExtract(
+                                            elt, payload, i,
+                                        ));
+                                        self.func.set_type(elt, types[i].clone());
+
+                                        if let ast::Pattern::MatchAs(p) = p_arg {
+                                            if let Some(name) = &p.name {
+                                                self.write_variable(
+                                                    name.to_string(),
+                                                    body_block,
+                                                    elt,
+                                                );
+                                            }
+                                        } else {
+                                            return Err("Only simple name patterns supported for enum payload destructuring".to_string());
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "Variant '{}' has a non-tuple payload, but pattern has {} fields",
+                                        variant_name,
+                                        pattern_args.len()
+                                    ));
+                                }
+                            }
                         }
                     }
 
