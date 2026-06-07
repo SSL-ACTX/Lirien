@@ -420,7 +420,9 @@ impl CFGBuilder {
 
                 for case in s.cases {
                     match case.pattern {
-                        ast::Pattern::MatchAs(ref p) if p.pattern.is_none() && case.guard.is_none() => {
+                        ast::Pattern::MatchAs(ref p)
+                            if p.pattern.is_none() && case.guard.is_none() =>
+                        {
                             // Catch-all pattern without guard
                             if global_default_case.is_none() {
                                 global_default_case = Some(case);
@@ -433,14 +435,18 @@ impl CFGBuilder {
                                 ast::Pattern::MatchClass(ref p) => {
                                     let attr = match &*p.cls {
                                         ast::Expr::Attribute(a) => a,
-                                        _ => return Err("Expected Enum.Variant pattern".to_string()),
+                                        _ => {
+                                            return Err("Expected Enum.Variant pattern".to_string())
+                                        }
                                     };
                                     Some(attr.attr.to_string())
                                 }
                                 ast::Pattern::MatchValue(ref p) => {
                                     let attr = match &*p.value {
                                         ast::Expr::Attribute(a) => a,
-                                        _ => return Err("Expected Enum.Variant pattern".to_string()),
+                                        _ => {
+                                            return Err("Expected Enum.Variant pattern".to_string())
+                                        }
                                     };
                                     Some(attr.attr.to_string())
                                 }
@@ -448,7 +454,8 @@ impl CFGBuilder {
                             };
 
                             if let Some(variant_name) = variant_res {
-                                let tag_idx = variants.iter().position(|(name, _)| *name == variant_name);
+                                let tag_idx =
+                                    variants.iter().position(|(name, _)| *name == variant_name);
                                 if let Some(tag_idx) = tag_idx {
                                     tag_to_cases.entry(tag_idx).or_default().push(case);
                                 } else {
@@ -458,14 +465,12 @@ impl CFGBuilder {
                                     ));
                                 }
                             } else {
-                                // This is a MatchAs with a guard or something else.
-                                // Python's `match` is strictly sequential. If we have:
-                                // case Shape.Circle: ...
-                                // case x if cond: ...
-                                // case Shape.Rectangle: ...
-                                // We cannot easily use a jump table if we want to respect this order.
-                                // For now, let's assume all cases are either variants or a final catch-all.
-                                return Err("Currently only Enum variants or simple catch-all supported in match".to_string());
+                                // This is a non-variant pattern (e.g. MatchAs with a name/guard).
+                                // Python's `match` is strictly sequential.
+                                // Currently, Lila uses a single jump table for all variant-based cases.
+                                // Interleaving generic patterns (like `case x if cond:`) between variants
+                                // is not yet supported because it would require multiple sequential jump tables.
+                                return Err("Lila currently requires all Enum variant patterns to come before any guarded catch-all patterns.".to_string());
                             }
                         }
                     }
@@ -651,6 +656,15 @@ impl CFGBuilder {
         val: Value,
         block: BlockId,
     ) -> Result<(), String> {
+        let ty = self.func.get_type(val);
+        if let Type::Pointer(inner) = ty {
+            // Automatically dereference pointers for matching
+            let deref_val = self.func.next_value();
+            self.add_instruction(InstructionKind::PointerLoad(deref_val, val));
+            self.func.set_type(deref_val, (*inner).clone());
+            return self.handle_nested_pattern(pattern, deref_val, block);
+        }
+
         match pattern {
             ast::Pattern::MatchAs(p) => {
                 if p.pattern.is_some() {

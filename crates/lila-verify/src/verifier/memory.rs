@@ -105,6 +105,18 @@ pub fn init_values<
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_len);
+        } else if let Type::Pointer(_) = inner_ty {
+            let addr_val = ctx
+                .backend
+                .bv_const(&format!("{}_v{}_ptr_{}", ctx.func.name, i, ctx.uid), 64);
+            ctx.z3_bvs.insert(val, addr_val);
+
+            let payload_val = ctx.backend.array_const(
+                &format!("{}_v{}_heap_{}", ctx.func.name, i, ctx.uid),
+                false,
+                64,
+            );
+            ctx.z3_arrays.insert(val, payload_val);
         } else if inner_ty.is_float() {
             let is_f32 = matches!(inner_ty, Type::F32);
             let z3_val = ctx
@@ -402,6 +414,57 @@ pub fn translate<
                 let __inner = ctx.backend.array_eq(&z3_dest, &z3_obj_payload);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::Alloc(dest, _ty) => {
+            // In our model, Alloc produces a fresh value which is already initialized in init_values.
+            // We just need to assert it's not null.
+            let ptr_val = ctx.z3_bvs.get(dest).cloned().unwrap();
+            let zero = ctx.backend.bv_from_i64(0, 64);
+            let is_null = ctx.backend.bv_eq(&ptr_val, &zero);
+            let not_null = ctx.backend.bool_not(&is_null);
+            let __tmp = ctx.backend.bool_implies(path_cond, &not_null);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::PointerLoad(dest, ptr) => {
+            let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
+            let dest_ty = ctx.func.get_type(*dest);
+            if dest_ty.is_composite() {
+                let dest_payload = ctx.z3_arrays.get(dest).cloned().unwrap();
+                let __inner = ctx.backend.array_eq(&dest_payload, &ptr_payload);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else {
+                // Primitive load
+                if dest_ty.is_float() {
+                    // Floats not yet supported in heap model
+                } else if let Some(dest_bv) = ctx.z3_bvs.get(dest).cloned() {
+                    let zero = ctx.backend.int_from_i64(0);
+                    let res = ctx.backend.array_select_bv(&ptr_payload, &zero);
+                    let __inner = ctx.backend.bv_eq(&dest_bv, &res);
+                    let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                    ctx.backend.assert(&__tmp);
+                }
+            }
+        }
+        InstructionKind::PointerStore(ptr, val) => {
+            let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
+            let val_ty = ctx.func.get_type(*val);
+            if val_ty.is_composite() {
+                let val_payload = ctx.z3_arrays.get(val).cloned().unwrap();
+                let __inner = ctx.backend.array_eq(&ptr_payload, &val_payload);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else {
+                // Primitive store
+                if val_ty.is_float() {
+                    // Floats not yet supported in heap model
+                } else if let Some(val_bv) = ctx.z3_bvs.get(val).cloned() {
+                    let zero = ctx.backend.int_from_i64(0);
+                    let new_payload = ctx.backend.array_store_bv(&ptr_payload, &zero, &val_bv);
+                    // We need to update the ptr_payload mapping.
+                    ctx.z3_arrays.insert(*ptr, new_payload);
+                }
             }
         }
         _ => {}

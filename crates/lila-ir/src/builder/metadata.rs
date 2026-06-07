@@ -84,6 +84,10 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
+                "box" => {
+                    let inner = parse_type(&s.slice, aliases)?;
+                    Ok(Type::Pointer(Box::new(inner)))
+                }
                 "fnpointer" | "callable" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.len() == 2 {

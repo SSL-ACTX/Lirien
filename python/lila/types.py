@@ -1,4 +1,5 @@
 import ctypes
+import sys
 from typing import TypeVar, Generic, Annotated
 
 T = TypeVar("T")
@@ -136,6 +137,19 @@ class Buffer:
     def __class_getitem__(cls, base_type):
         base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
         return Annotated[cls, base_ty_str]
+
+
+class Box:
+    """
+    Represents a heap-allocated (boxed) value.
+    Usage: val: Box[i64]
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+    def __class_getitem__(cls, base_type):
+        return Annotated[cls, base_type]
 
 
 class Array(Generic[T]):
@@ -318,19 +332,28 @@ def enum(cls):
             union_fields.append(
                 (name, make_payload_struct(f"{cls.__name__}_{name}_payload", []))
             )
+        elif hasattr(ty, "__metadata__") and "Box" in str(ty.__origin__):
+            # Boxed variant
+            inner_ty = ty.__metadata__[0]
+            # Since this might be recursive, we might need a lazy pointer or a late-bound type.
+            # ctypes.POINTER(None) can work as a raw pointer.
+            union_fields.append((name, ctypes.c_void_p))
         elif hasattr(ty, "__lila_ctypes__"):
             union_fields.append((name, ty.__lila_ctypes__))
         elif isinstance(ty, tuple):
             # Tuple payload
             tuple_fields = []
             for i, t in enumerate(ty):
-                t_str = str(t).lower()
-                c_ty = ctypes.c_int64
-                for n, cty in TYPE_MAP.items():
-                    if n in t_str:
-                        c_ty = cty
-                        break
-                tuple_fields.append((f"f{i}", c_ty))
+                if hasattr(t, "__metadata__") and "Box" in str(t.__origin__):
+                    tuple_fields.append((f"f{i}", ctypes.c_void_p))
+                else:
+                    t_str = str(t).lower()
+                    c_ty = ctypes.c_int64
+                    for n, cty in TYPE_MAP.items():
+                        if n in t_str:
+                            c_ty = cty
+                            break
+                    tuple_fields.append((f"f{i}", c_ty))
             union_fields.append(
                 (
                     name,
@@ -389,6 +412,21 @@ def enum(cls):
 
                 if variant_type is None:
                     pass
+                elif hasattr(variant_type, "__metadata__") and "Box" in str(
+                    variant_type.__origin__
+                ):
+                    # Boxed variant
+                    payload_instance = args[0]
+                    if hasattr(payload_instance, "_ctypes_obj"):
+                        # Get a pointer to the object
+                        ptr = ctypes.cast(
+                            ctypes.pointer(payload_instance._ctypes_obj),
+                            ctypes.c_void_p,
+                        )
+                        setattr(instance._ctypes_obj.payload, variant_name, ptr)
+                    else:
+                        # Fallback for primitives?
+                        pass
                 elif hasattr(variant_type, "__lila_ctypes__"):
                     # Check if we are passing an already constructed instance of the variant type
                     if len(args) == 1 and isinstance(args[0], variant_type):
@@ -405,7 +443,21 @@ def enum(cls):
                     # args should match tuple elements
                     payload_obj = payload_cty()
                     for i, arg in enumerate(args):
-                        setattr(payload_obj, f"f{i}", arg)
+                        if i < len(variant_type):
+                            v_ty = variant_type[i]
+                            if hasattr(v_ty, "__metadata__") and "Box" in str(
+                                v_ty.__origin__
+                            ):
+                                # Boxed element
+                                if hasattr(arg, "_ctypes_obj"):
+                                    ptr = ctypes.cast(
+                                        ctypes.pointer(arg._ctypes_obj), ctypes.c_void_p
+                                    )
+                                    setattr(payload_obj, f"f{i}", ptr)
+                                else:
+                                    setattr(payload_obj, f"f{i}", arg)
+                            else:
+                                setattr(payload_obj, f"f{i}", arg)
                     setattr(instance._ctypes_obj.payload, variant_name, payload_obj)
                 else:
                     # Primitive
@@ -427,14 +479,59 @@ def enum(cls):
                 raw_payload = getattr(self._ctypes_obj.payload, variant_name)
                 if variant_type is None:
                     return None
+                elif hasattr(variant_type, "__metadata__") and "Box" in str(
+                    variant_type.__origin__
+                ):
+                    # Boxed variant: raw_payload is a c_void_p
+                    inner_ty = variant_type.__metadata__[0]
+                    # This might be a string (lazy type)
+                    if isinstance(inner_ty, str):
+                        # Try to resolve from the class's module
+                        module = sys.modules.get(cls.__module__)
+                        if module and hasattr(module, inner_ty):
+                            inner_ty = getattr(module, inner_ty)
+                        elif inner_ty == cls.__name__:
+                            inner_ty = cls
+
+                    if hasattr(inner_ty, "__lila_ctypes__"):
+                        wrapper = inner_ty.__new__(inner_ty)
+                        # We need to cast void_p back to the struct type
+                        wrapper._ctypes_obj = ctypes.cast(
+                            raw_payload, ctypes.POINTER(inner_ty.__lila_ctypes__)
+                        ).contents
+                        return wrapper
+                    return raw_payload
                 elif hasattr(variant_type, "__lila_ctypes__"):
                     wrapper = variant_type.__new__(variant_type)
                     wrapper._ctypes_obj = raw_payload
                     return wrapper
                 elif isinstance(variant_type, tuple):
-                    return tuple(
-                        getattr(raw_payload, f"f{i}") for i in range(len(variant_type))
-                    )
+                    res = []
+                    for i, v_ty in enumerate(variant_type):
+                        raw_val = getattr(raw_payload, f"f{i}")
+                        if hasattr(v_ty, "__metadata__") and "Box" in str(
+                            v_ty.__origin__
+                        ):
+                            inner_ty = v_ty.__metadata__[0]
+                            if isinstance(inner_ty, str):
+                                # Try to resolve from the class's module
+                                module = sys.modules.get(cls.__module__)
+                                if module and hasattr(module, inner_ty):
+                                    inner_ty = getattr(module, inner_ty)
+                                elif inner_ty == cls.__name__:
+                                    inner_ty = cls
+
+                            if hasattr(inner_ty, "__lila_ctypes__"):
+                                wrapper = inner_ty.__new__(inner_ty)
+                                wrapper._ctypes_obj = ctypes.cast(
+                                    raw_val, ctypes.POINTER(inner_ty.__lila_ctypes__)
+                                ).contents
+                                res.append(wrapper)
+                            else:
+                                res.append(raw_val)
+                        else:
+                            res.append(raw_val)
+                    return tuple(res)
                 else:
                     # Primitive
                     return raw_payload.val

@@ -221,6 +221,21 @@ pub fn propagate_types(func: &mut Function) {
                             changed = true;
                         }
                     }
+                    InstructionKind::Alloc(d, t) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Pointer(Box::new(t.clone())));
+                        }
+                    }
+                    InstructionKind::PointerLoad(d, p) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let p_ty = func.get_type(*p);
+                            if let Type::Pointer(inner) = p_ty {
+                                new_types.insert(*d, (*inner).clone());
+                            }
+                        }
+                    }
                     InstructionKind::EnumIsVariant(d, _, _) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {

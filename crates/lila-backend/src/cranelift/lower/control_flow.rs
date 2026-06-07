@@ -72,53 +72,52 @@ pub fn lower<M: Module>(
         }
         InstructionKind::Match(selector, cases, default, _is_strict) => {
             let s_val = get_val(&ctx.values, selector);
-            let default_block = ctx.blocks[default];
+            let default_ssa_id = default;
 
-            let mut switch = cranelift::frontend::Switch::new();
-            for (tag, target) in cases {
-                switch.set_entry((*tag as u64).into(), ctx.blocks[target]);
-            }
-
-            // Phi handling for each target block
-            let mut target_phi_args = HashMap::new();
             let mut targets = cases.values().collect::<Vec<_>>();
-            targets.push(default);
+            targets.push(default_ssa_id);
 
-            for &target_ssa_id in targets {
-                let mut args = Vec::new();
+            let mut target_to_cl_block = HashMap::new();
+
+            for &target_ssa_id in &targets {
+                let mut phi_args = Vec::new();
                 for ssa_block_iter in &ctx.ssa_func.blocks {
-                    if ssa_block_iter.id == target_ssa_id {
+                    if ssa_block_iter.id == *target_ssa_id {
                         for inst_iter in &ssa_block_iter.instructions {
                             if let InstructionKind::Phi(dest_val, mappings) = &inst_iter.kind {
                                 if let Some(src_val) = mappings.get(&current_ssa_block_id) {
-                                    args.push(get_val(&ctx.values, src_val));
+                                    phi_args.push(get_val(&ctx.values, src_val));
                                     if let SsaType::Buffer(_) = ctx.ssa_func.get_type(*dest_val) {
-                                        args.push(get_len(&ctx.buffer_lengths, src_val));
+                                        phi_args.push(get_len(&ctx.buffer_lengths, src_val));
                                     }
                                 }
                             }
                         }
                     }
                 }
-                target_phi_args.insert(target_ssa_id, args);
+
+                if phi_args.is_empty() {
+                    target_to_cl_block.insert(target_ssa_id, ctx.blocks[target_ssa_id]);
+                } else {
+                    // Create a trampoline block to pass Phi arguments
+                    let trampoline = ctx.builder.create_block();
+                    let target_cl_block = ctx.blocks[target_ssa_id];
+                    target_to_cl_block.insert(target_ssa_id, trampoline);
+
+                    // Switch to trampoline to emit the jump with arguments
+                    let prev_block = ctx.builder.current_block().unwrap();
+                    ctx.builder.switch_to_block(trampoline);
+                    ctx.builder.ins().jump(target_cl_block, &phi_args);
+                    ctx.builder.switch_to_block(prev_block);
+                }
             }
-
-            // We need a custom way to handle Switch with block arguments in Cranelift.
-            // Switch::emit doesn't support block arguments easily.
-            // Actually, we can just use br_table for low-level jump table if we wanted,
-            // but Switch is higher level.
-            // Wait, Cranelift's Switch::emit takes a FuncCursor and produces branches.
-            // It doesn't support block arguments.
-
-            // If we have Phi nodes, we might need to use intermediate blocks.
-            // But for now, Lila's match implementation usually doesn't have Phis into the case blocks directly
-            // because they are newly created.
 
             let mut switch_obj = cranelift::frontend::Switch::new();
-            for (tag, target) in cases {
-                switch_obj.set_entry((*tag as u64).into(), ctx.blocks[target]);
+            for (tag, target_ssa_id) in cases {
+                switch_obj.set_entry((*tag as u64).into(), target_to_cl_block[target_ssa_id]);
             }
-            switch_obj.emit(&mut ctx.builder, s_val, default_block);
+            let cl_default_block = target_to_cl_block[default_ssa_id];
+            switch_obj.emit(&mut ctx.builder, s_val, cl_default_block);
         }
         InstructionKind::Return(val) => {
             if ctx.is_tuple_return {

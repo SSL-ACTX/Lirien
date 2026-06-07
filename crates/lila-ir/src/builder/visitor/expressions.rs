@@ -415,14 +415,56 @@ impl CFGBuilder {
                                 )
                             })?;
 
+                        let variant_ty = variants[tag_idx].1.clone();
                         let payload = if s.args.is_empty() {
                             None
                         } else if s.args.len() == 1 {
-                            Some(self.visit_expr(s.args[0].clone())?)
+                            let mut v = self.visit_expr(s.args[0].clone())?;
+                            if let Type::Pointer(inner) = &variant_ty {
+                                // Automatic boxing
+                                let ptr = self.func.next_value();
+                                self.add_instruction(InstructionKind::Alloc(
+                                    ptr,
+                                    (**inner).clone(),
+                                ));
+                                self.func.set_type(ptr, variant_ty.clone());
+                                self.add_instruction(InstructionKind::PointerStore(ptr, v));
+                                v = ptr;
+                            }
+                            Some(v)
                         } else {
-                            return Err(
-                                "Enum variant constructor takes at most 1 argument".to_string()
-                            );
+                            // Multi-element payload: create a tuple
+                            let mut elts = Vec::new();
+                            let mut elt_types = Vec::new();
+                            let target_elt_types = if let Type::Tuple(ref types) = variant_ty {
+                                types.clone()
+                            } else {
+                                Vec::new()
+                            };
+
+                            for (i, arg) in s.args.iter().enumerate() {
+                                let mut v = self.visit_expr(arg.clone())?;
+                                if i < target_elt_types.len() {
+                                    let expected_ty = &target_elt_types[i];
+                                    if let Type::Pointer(inner) = expected_ty {
+                                        // Automatic boxing
+                                        let ptr = self.func.next_value();
+                                        self.add_instruction(InstructionKind::Alloc(
+                                            ptr,
+                                            (**inner).clone(),
+                                        ));
+                                        self.func.set_type(ptr, expected_ty.clone());
+                                        self.add_instruction(InstructionKind::PointerStore(ptr, v));
+                                        v = ptr;
+                                    }
+                                }
+                                elts.push(v);
+                                elt_types.push(self.func.get_type(v));
+                            }
+                            let tuple_dest = self.func.next_value();
+                            self.add_instruction(InstructionKind::TupleCreate(tuple_dest, elts));
+                            self.func.set_type(tuple_dest, Type::Tuple(elt_types));
+                            Some(tuple_dest)
                         };
 
                         let dest = self.func.next_value();

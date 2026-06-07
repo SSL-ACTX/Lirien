@@ -90,6 +90,15 @@ def _get_type_name(ty: Any) -> str:
     """Consistently convert a Python-side type to its Lila IR string representation."""
     if ty is None or ty is type(None):
         return "None"
+    if hasattr(ty, "__metadata__"):
+        # Annotated type (Buffer or Box)
+        origin = ty.__origin__
+        inner = ty.__metadata__[0]
+        if "Buffer" in str(origin):
+            return f"Buffer[{inner}]"
+        if "Box" in str(origin):
+            return f"Box[{inner}]"
+        return str(inner)
     if hasattr(ty, "__name__"):
         return ty.__name__
     if isinstance(ty, tuple):

@@ -145,7 +145,10 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::EnumCreate(_, _, _, _)
         | InstructionKind::EnumIsVariant(_, _, _)
         | InstructionKind::EnumGetTag(_, _)
-        | InstructionKind::EnumExtract(_, _, _) => memory::lower(ctx, &inst.kind),
+        | InstructionKind::EnumExtract(_, _, _)
+        | InstructionKind::Alloc(_, _)
+        | InstructionKind::PointerLoad(_, _)
+        | InstructionKind::PointerStore(_, _) => memory::lower(ctx, &inst.kind),
 
         InstructionKind::TupleCreate(_, _) | InstructionKind::TupleExtract(_, _, _) => {
             tuples::lower(ctx, &inst.kind)

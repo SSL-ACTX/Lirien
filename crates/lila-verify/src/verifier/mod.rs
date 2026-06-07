@@ -446,7 +446,10 @@ fn translate_instructions<
                 | InstructionKind::EnumCreate(..)
                 | InstructionKind::EnumIsVariant(..)
                 | InstructionKind::EnumGetTag(..)
-                | InstructionKind::EnumExtract(..) => {
+                | InstructionKind::EnumExtract(..)
+                | InstructionKind::Alloc(..)
+                | InstructionKind::PointerLoad(..)
+                | InstructionKind::PointerStore(..) => {
                     memory::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {

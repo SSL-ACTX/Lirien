@@ -22,9 +22,20 @@ pub fn compute_hash(
 ) -> u64 {
     let mut hasher = SeaHasher::new();
 
-    // Incorporate the compiler version to automatically invalidate caches on Rust updates.
+    // Incorporate the compiler version and build hash to automatically invalidate 
+    // caches on Rust updates or development rebuilds.
     let pkg_version = env!("CARGO_PKG_VERSION");
     pkg_version.hash(&mut hasher);
+
+    if let Ok(build_hash) = env::var("LILA_BUILD_HASH") {
+        build_hash.hash(&mut hasher);
+    } else {
+        // Fallback for cases where build.rs env is not available at runtime
+        // but was available at compile time via option_env!
+        if let Some(hash) = option_env!("LILA_BUILD_HASH") {
+            hash.hash(&mut hasher);
+        }
+    }
 
     source.hash(&mut hasher);
     func_name.hash(&mut hasher);

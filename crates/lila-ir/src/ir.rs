@@ -20,6 +20,7 @@ pub enum Type {
     Struct(String),
     Enum(String),
     Tuple(Vec<Type>),
+    Pointer(Box<Type>),
     FnPointer(Vec<Type>, Box<Type>),
     Closure(String, Vec<Type>, Box<Type>),
     Refined(Box<Type>, String),
@@ -51,6 +52,7 @@ impl fmt::Display for Type {
                 let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();
                 write!(f, "Tuple<{}>", inner.join(", "))
             }
+            Type::Pointer(t) => write!(f, "Box<{}>", t),
             Type::FnPointer(args, ret) => {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
                 write!(f, "Fn({}) -> {}", inner.join(", "), ret)
@@ -113,6 +115,7 @@ impl Type {
         match self {
             Type::Buffer(_)
             | Type::Array(_, _)
+            | Type::Pointer(_)
             | Type::FnPointer(_, _)
             | Type::Closure(_, _, _) => true,
             Type::Refined(inner, _) => inner.is_pointer_like(),
@@ -134,7 +137,7 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool => 1,
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
-            Type::I64 | Type::U64 | Type::F64 => 8,
+            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
@@ -205,7 +208,7 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool => 1,
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
-            Type::I64 | Type::U64 | Type::F64 => 8,
+            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
@@ -424,6 +427,11 @@ pub enum InstructionKind {
     // Tuples
     TupleCreate(Value, Vec<Value>),
     TupleExtract(Value, Value, usize), // dest, tuple_val, index
+
+    // Heap
+    Alloc(Value, Type),         // dest (Pointer<Type>), type to allocate
+    PointerLoad(Value, Value),  // dest, ptr
+    PointerStore(Value, Value), // ptr, val
 
     Lambda(Value, String, Vec<Value>), // dest, func_name, captured_vals
     IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
@@ -861,15 +869,24 @@ impl fmt::Display for Instruction {
                     constraints_str
                 )
             }
-            InstructionKind::TupleExtract(d, t, idx) => {
+            InstructionKind::TupleExtract(d, t, i) => {
                 write!(
                     f,
                     "  {} = extract {}[{}] (tuple){}{}",
-                    d, t, idx, loc_str, constraints_str
+                    d, t, i, loc_str, constraints_str
                 )
             }
-            InstructionKind::Lambda(d, name, captures) => {
-                let caps: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
+            InstructionKind::Alloc(d, t) => {
+                write!(f, "  {} = alloc {}{}{}", d, t, loc_str, constraints_str)
+            }
+            InstructionKind::PointerLoad(d, p) => {
+                write!(f, "  {} = pload *{}{}{}", d, p, loc_str, constraints_str)
+            }
+            InstructionKind::PointerStore(p, v) => {
+                write!(f, "  pstore *{} = {}{}{}", p, v, loc_str, constraints_str)
+            }
+            InstructionKind::Lambda(d, name, args) => {
+                let caps: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(
                     f,
                     "  {} = lambda {}({}){}{}",

@@ -77,6 +77,8 @@ impl CFGBuilder {
                         _ => {
                             if f_ty_str == "unknown" {
                                 Type::Unknown
+                            } else if enum_layouts_raw.contains_key(&f_ty_str) {
+                                Type::Enum(f_ty_str.clone())
                             } else {
                                 Type::Struct(f_ty_str.clone())
                             }

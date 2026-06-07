@@ -1,6 +1,6 @@
 use super::{get_len, get_val, translate_type, CodegenContext};
 use cranelift::prelude::*;
-use cranelift_module::Module;
+use cranelift_module::{Linkage, Module};
 use lila_ir::ir::{InstructionKind, Type as SsaType};
 
 pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), String> {
@@ -281,6 +281,66 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 let cl_ty = translate_type(payload_ty);
                 let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
                 ctx.values.insert(*dest, res);
+            }
+        }
+        InstructionKind::Alloc(dest, ty) => {
+            let size = ty.size(&ctx.ssa_func.struct_layouts);
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // size
+            sig.returns.push(AbiParam::new(types::I64)); // ptr
+            let callee = ctx
+                .module
+                .declare_function("malloc", Linkage::Import, &sig)
+                .unwrap();
+            let local_callee = ctx
+                .module
+                .declare_func_in_func(callee, ctx.builder.func);
+            let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
+            let call = ctx.builder.ins().call(local_callee, &[size_val]);
+            let res = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::PointerLoad(dest, ptr) => {
+            let ptr_val = get_val(&ctx.values, ptr);
+            let dest_ty = ctx.ssa_func.get_type(*dest);
+            if dest_ty.is_composite() {
+                // For composite types, we just return the pointer itself?
+                // Wait, if it's a Box<Struct>, pload should probably return the address of the struct.
+                // Which IS the ptr_val.
+                ctx.values.insert(*dest, ptr_val);
+            } else {
+                let cl_ty = translate_type(&dest_ty);
+                let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), ptr_val, 0);
+                ctx.values.insert(*dest, res);
+            }
+        }
+        InstructionKind::PointerStore(ptr, val) => {
+            let ptr_val = get_val(&ctx.values, ptr);
+            let val_val = get_val(&ctx.values, val);
+            let val_ty = ctx.ssa_func.get_type(*val);
+
+            if val_ty.is_composite() {
+                let size = val_ty.size(&ctx.ssa_func.struct_layouts);
+                let mut sig = ctx.module.make_signature();
+                sig.params.push(AbiParam::new(types::I64)); // dest
+                sig.params.push(AbiParam::new(types::I64)); // src
+                sig.params.push(AbiParam::new(types::I64)); // n
+                sig.returns.push(AbiParam::new(types::I64)); // dest
+
+                let callee = ctx
+                    .module
+                    .declare_function("memcpy", Linkage::Import, &sig)
+                    .unwrap();
+                let local_callee = ctx
+                    .module
+                    .declare_func_in_func(callee, ctx.builder.func);
+
+                let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
+                ctx.builder
+                    .ins()
+                    .call(local_callee, &[ptr_val, val_val, size_val]);
+            } else {
+                ctx.builder.ins().store(MemFlags::new(), val_val, ptr_val, 0);
             }
         }
         _ => return Err(format!("Not a memory instruction: {:?}", kind)),

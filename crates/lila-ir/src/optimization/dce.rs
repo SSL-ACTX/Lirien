@@ -118,6 +118,8 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::EnumExtract(d, _, _)
         | InstructionKind::TupleCreate(d, _)
         | InstructionKind::TupleExtract(d, _, _)
+        | InstructionKind::Alloc(d, _)
+        | InstructionKind::PointerLoad(d, _)
         | InstructionKind::Lambda(d, _, _)
         | InstructionKind::IndirectCall(d, _, _) => Some(*d),
 
@@ -129,6 +131,7 @@ fn get_def(inst: &Instruction) -> Option<Value> {
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
+        | InstructionKind::PointerStore(_, _)
         | InstructionKind::ParallelFor { .. }
         | InstructionKind::Nop => None,
     }
@@ -186,8 +189,13 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         | InstructionKind::EnumIsVariant(_, s, _)
         | InstructionKind::EnumGetTag(_, s)
         | InstructionKind::EnumExtract(_, s, _)
+        | InstructionKind::PointerLoad(_, s)
         | InstructionKind::TupleExtract(_, s, _) => {
             operands.push(*s);
+        }
+        InstructionKind::PointerStore(p, v) => {
+            operands.push(*p);
+            operands.push(*v);
         }
         InstructionKind::Branch(c, _, _) => {
             operands.push(*c);
@@ -198,7 +206,10 @@ fn get_operands(inst: &Instruction) -> Vec<Value> {
         InstructionKind::Return(Some(v)) => {
             operands.push(*v);
         }
-        InstructionKind::Return(None) | InstructionKind::Jump(_) | InstructionKind::Nop => {}
+        InstructionKind::Return(None)
+        | InstructionKind::Alloc(_, _)
+        | InstructionKind::Jump(_)
+        | InstructionKind::Nop => {}
 
         InstructionKind::Phi(_, mappings) => {
             for v in mappings.values() {
@@ -278,7 +289,9 @@ fn has_side_effects(inst: &Instruction) -> bool {
         // Memory writes
         InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
-        | InstructionKind::StructSet(_, _, _, _, _) => true,
+        | InstructionKind::StructSet(_, _, _, _, _)
+        | InstructionKind::PointerStore(_, _)
+        | InstructionKind::Alloc(_, _) => true,
 
         // Parallel loop
         InstructionKind::ParallelFor { .. } => true,
@@ -331,6 +344,7 @@ fn has_side_effects(inst: &Instruction) -> bool {
         | InstructionKind::ArrayLoad(_, _, _)
         | InstructionKind::BufferLoad(_, _, _)
         | InstructionKind::BufferLen(_, _)
+        | InstructionKind::PointerLoad(_, _)
         | InstructionKind::StructCreate(_, _, _)
         | InstructionKind::StructLoad(_, _, _)
         | InstructionKind::StructOffset(_, _, _)

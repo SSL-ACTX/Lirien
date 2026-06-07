@@ -35,6 +35,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         | SsaType::Buffer(_)
         | SsaType::Struct(_)
         | SsaType::Enum(_)
+        | SsaType::Pointer(_)
         | SsaType::Tuple(_) => {
             types::I64 // Pointer
         }
@@ -73,11 +74,13 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     // Link math intrinsics
     extern "C" {
         fn malloc(size: usize) -> *mut u8;
+        fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
         fn sin(x: f64) -> f64;
         fn cos(x: f64) -> f64;
         fn pow(x: f64, y: f64) -> f64;
     }
     jit_builder.symbol("malloc", malloc as *const u8);
+    jit_builder.symbol("memcpy", memcpy as *const u8);
     jit_builder.symbol("sin", sin as *const u8);
     jit_builder.symbol("cos", cos as *const u8);
     jit_builder.symbol("pow", pow as *const u8);
