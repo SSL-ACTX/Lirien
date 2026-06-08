@@ -170,14 +170,12 @@ pub fn lower_instruction<M: Module>(
         InstructionKind::Lambda(dest, name, captures) => {
             higher_order::lower_lambda(ctx, *dest, name, captures)
         }
-        InstructionKind::ParallelFor {
-            index_var, start, ..
-        } => {
+        InstructionKind::ParallelFor(index_var, start, ..) => {
             let cl_start = get_val(&ctx.values, start);
             ctx.values.insert(*index_var, cl_start);
             Ok(())
         }
-        InstructionKind::Nop => Ok(()),
+        InstructionKind::Nop() => Ok(()),
     }
 }
 

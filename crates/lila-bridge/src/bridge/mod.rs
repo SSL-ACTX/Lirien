@@ -50,12 +50,16 @@ pub fn verify_and_compile(
                 "[Lila Bridge Error] SSA Transform failed for {}: {}",
                 func_name, e
             );
+            cache::invalidate(cache_hash);
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
         })?;
 
         for ssa in &funcs {
             info!(target: "lila::bridge", "Processing SSA for '{}'...", ssa.name);
-            lila_verify::verify(ssa).map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
+            if let Err(e) = lila_verify::verify(ssa) {
+                cache::invalidate(cache_hash);
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+            }
             info!(target: "lila::bridge", "Verification complete for '{}'", ssa.name);
         }
 
@@ -80,8 +84,13 @@ pub fn verify_and_compile(
         let return_type = ssa.return_type.clone();
         let return_refinement = ssa.ret_refinement.clone();
 
-        let code_ptr = lila_backend::compile(&ssa)
-            .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
+        let code_ptr = match lila_backend::compile(&ssa) {
+            Ok(ptr) => ptr,
+            Err(e) => {
+                cache::invalidate(cache_hash);
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+            }
+        };
 
         {
             let mut registry = GLOBAL_REGISTRY.lock().unwrap();

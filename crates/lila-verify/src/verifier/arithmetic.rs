@@ -625,8 +625,8 @@ pub fn translate<
 
         InstructionKind::SIMDSplat(..)
         | InstructionKind::SIMDExtractLane(..)
-        | InstructionKind::SIMDInsertLane(..)
-        | _ => {}
+        | InstructionKind::SIMDInsertLane(..) => {}
+        _ => {}
     }
     Ok(())
 }

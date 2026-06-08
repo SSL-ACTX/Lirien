@@ -62,7 +62,7 @@ impl CFGBuilder {
                     current = &*inner_attr.value;
                 }
 
-                if let ast::Expr::Subscript(sub) = current {
+                if let ast::Expr::Subscript(_) = current {
                     is_subscript_base = true;
                 }
 
@@ -72,23 +72,21 @@ impl CFGBuilder {
                     let base_val = self.visit_expr(*attr.value.clone())?;
                     let base_ty = self.func.get_type(base_val);
 
-                    let mut offset = 0;
-                    let mut leaf_ty = base_ty.clone();
-                    if let Type::Struct(struct_name) = &base_ty {
+                    let (offset, leaf_ty) = if let Type::Struct(struct_name) = &base_ty {
                         let field_offset = self
                             .get_field_offset(struct_name, attr.attr.as_str())
                             .unwrap();
-                        offset = field_offset;
                         let fields = self.func.struct_layouts.get(struct_name).unwrap();
-                        leaf_ty = fields
+                        let ty = fields
                             .iter()
                             .find(|(f, _)| f == attr.attr.as_str())
                             .unwrap()
                             .1
                             .clone();
+                        (field_offset, ty)
                     } else {
                         return Err("Expected struct base".to_string());
-                    }
+                    };
 
                     let dest_obj = self.func.next_value();
                     self.add_instruction(InstructionKind::StructSet(
@@ -98,7 +96,7 @@ impl CFGBuilder {
 
                     // Now we need to store `dest_obj` back into whatever `attr.value` was.
                     // This means `handle_assignment_target` needs to be recursive!
-                    self.handle_assignment_target(&*attr.value, dest_obj)?;
+                    self.handle_assignment_target(&attr.value, dest_obj)?;
                     return Ok(());
                 }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -367,632 +369,561 @@ impl fmt::Display for SourceLocation {
     }
 }
 
+#[macro_export]
+macro_rules! lila_instructions {
+    ($mac:ident) => {
+        $mac! {
+            // Integer Arithmetic
+            Add(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = add {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Sub(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sub {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Mul(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = mul {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            SDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sdiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            UDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = udiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            SRem(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = srem {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            URem(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = urem {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+
+            // Bitwise
+            And(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = and {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Or(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = or {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Xor(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = xor {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Shl(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = shl {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            LShr(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = lshr {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            AShr(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ashr {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Not(dest: Value, src: Value) {
+                display: "{} = not {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Bitwise
+            },
+
+            // Float Arithmetic
+            FAdd(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fadd {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FSub(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fsub {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FMul(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fmul {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fdiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FSqrt(dest: Value, src: Value) {
+                display: "{} = sqrt {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+
+            // SIMD
+            SIMDSplat(dest: Value, src: Value) {
+                display: "{} = splat {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: SIMD
+            },
+            SIMDExtractLane(dest: Value, vector: Value, lane: usize) {
+                display: "{} = extract_lane {}[{}]",
+                def: Some(*dest),
+                uses: [*vector],
+                side_effects: false,
+                category: SIMD
+            },
+            SIMDInsertLane(dest: Value, vector: Value, scalar: Value, lane: usize) {
+                display: "{} = insert_lane {}[{}] <- {}",
+                def: Some(*dest),
+                uses: [*vector, *scalar],
+                side_effects: false,
+                category: SIMD
+            },
+            FSin(dest: Value, src: Value) {
+                display: "{} = sin {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FCos(dest: Value, src: Value) {
+                display: "{} = cos {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FPow(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = pow {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+
+            // Comparisons
+            Eq(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = eq {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            Ne(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ne {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SLt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = slt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SLe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sle {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sgt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            ULt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ult {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            ULe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ule {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            UGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ugt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            UGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = uge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FLt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = flt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FLe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fle {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fgt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+
+            IToF(dest: Value, src: Value, ty: Type) {
+                display: "{} = itof {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+            FToI(dest: Value, src: Value, ty: Type) {
+                display: "{} = ftoi {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+            FConv(dest: Value, src: Value, ty: Type) {
+                display: "{} = fconv {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+
+            ConstInt(dest: Value, val: i64) {
+                display: "{} = const_int {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Constant
+            },
+            ConstFloat(dest: Value, val: f64) {
+                display: "{} = const_float {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Constant
+            },
+            Assign(dest: Value, src: Value) {
+                display: "{} = assign {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Jump(target: BlockId) {
+                display: "jump {}",
+                def: None,
+                uses: [],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Branch(cond: Value, true_block: BlockId, false_block: BlockId) {
+                display: "br {}, {}, {}",
+                def: None,
+                uses: [*cond],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Return(val: Option<Value>) {
+                display: "ret",
+                def: None,
+                uses: [],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Phi(dest: Value, mappings: HashMap<BlockId, Value>) {
+                display: "{} = phi",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: ControlFlow
+            },
+            Call(dest: Value, func: String, args: Vec<Value>) {
+                display: "{} = call {}(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: Arithmetic
+            },
+            ArrayLoad(dest: Value, arr: Value, idx: Value) {
+                display: "{} = load {}[{}]",
+                def: Some(*dest),
+                uses: [*arr, *idx],
+                side_effects: false,
+                category: Memory
+            },
+            ArrayStore(dest: Value, arr: Value, idx: Value, val: Value, ty: Type) {
+                display: "{} = store {}[{}] <- {} (as {})",
+                def: Some(*dest),
+                uses: [*arr, *idx, *val],
+                side_effects: true,
+                category: Memory
+            },
+            BufferLoad(dest: Value, buf: Value, idx: Value) {
+                display: "{} = bufload {}[{}]",
+                def: Some(*dest),
+                uses: [*buf, *idx],
+                side_effects: false,
+                category: Memory
+            },
+            BufferStore(dest: Value, buf: Value, idx: Value, val: Value, ty: Type) {
+                display: "{} = bufstore {}[{}] <- {} (as {})",
+                def: Some(*dest),
+                uses: [*buf, *idx, *val],
+                side_effects: true,
+                category: Memory
+            },
+            BufferLen(dest: Value, buf: Value) {
+                display: "{} = buflen {}",
+                def: Some(*dest),
+                uses: [*buf],
+                side_effects: false,
+                category: Memory
+            },
+            StructCreate(dest: Value, name: String, args: Vec<Value>) {
+                display: "{} = struct {} (...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Memory
+            },
+            StructLoad(dest: Value, obj: Value, offset: usize) {
+                display: "{} = load {} + {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Memory
+            },
+            StructOffset(dest: Value, obj: Value, offset: usize) {
+                display: "{} = offset {} + {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Memory
+            },
+            StructSet(dest: Value, obj: Value, offset: usize, val: Value, ty: Type) {
+                display: "{} = set {} + {} <- {} (as {})",
+                def: Some(*dest),
+                uses: [*obj, *val],
+                side_effects: true,
+                category: Memory
+            },
+
+            // Enums
+            EnumCreate(dest: Value, name: String, tag_idx: usize, payload: Option<Value>) {
+                display: "{} = enum {}::{}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Enum
+            },
+            EnumIsVariant(dest: Value, obj: Value, tag_idx: usize) {
+                display: "{} = is_variant {} == {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+            EnumGetTag(dest: Value, obj: Value) {
+                display: "{} = get_tag {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+            EnumExtract(dest: Value, obj: Value, tag_idx: usize) {
+                display: "{} = extract_variant {} as {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+
+            Match(selector: Value, cases: HashMap<usize, BlockId>, default: BlockId, is_strict: bool) {
+                display: "match {}",
+                def: None,
+                uses: [*selector],
+                side_effects: true,
+                category: ControlFlow
+            },
+
+            // Tuples
+            TupleCreate(dest: Value, elts: Vec<Value>) {
+                display: "{} = tuple(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Tuple
+            },
+            TupleExtract(dest: Value, tuple_val: Value, index: usize) {
+                display: "{} = extract {}[{}] (tuple)",
+                def: Some(*dest),
+                uses: [*tuple_val],
+                side_effects: false,
+                category: Tuple
+            },
+
+            // Heap
+            Alloc(dest: Value, ty: Type) {
+                display: "{} = alloc {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: Memory
+            },
+            PointerLoad(dest: Value, ptr: Value) {
+                display: "{} = pload *{}",
+                def: Some(*dest),
+                uses: [*ptr],
+                side_effects: false,
+                category: Memory
+            },
+            PointerStore(ptr: Value, val: Value) {
+                display: "pstore *{} = {}",
+                def: None,
+                uses: [*ptr, *val],
+                side_effects: true,
+                category: Memory
+            },
+
+            Lambda(dest: Value, name: String, captures: Vec<Value>) {
+                display: "{} = lambda {}(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: HigherOrder
+            },
+            IndirectCall(dest: Value, ptr: Value, args: Vec<Value>) {
+                display: "{} = icall {}(...)",
+                def: Some(*dest),
+                uses: [*ptr],
+                side_effects: true,
+                category: HigherOrder
+            },
+
+            ParallelFor(index_var: Value, start: Value, stop: Value, step: Value, body_block: BlockId, exit_block: BlockId, captures: Vec<Value>) {
+                display: "pfor",
+                def: None,
+                uses: [*start, *stop, *step],
+                side_effects: true,
+                category: Parallel
+            },
+            Nop() {
+                display: "nop",
+                def: None,
+                uses: [],
+                side_effects: false,
+                category: Arithmetic
+            }
+        }
+    }
+}
+
+macro_rules! generate_instruction_kind {
+    ($($name:ident($($arg_name:ident : $arg_ty:ty),*) { $($rest:tt)* }),* $(,)?) => {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub enum InstructionKind {
+            $($name($($arg_ty),*)),*
+        }
+    }
+}
+
+lila_instructions!(generate_instruction_kind);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instruction {
     pub kind: InstructionKind,
     pub location: Option<SourceLocation>,
     pub constraints: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum InstructionKind {
-    // Integer Arithmetic
-    Add(Value, Value, Value),
-    Sub(Value, Value, Value),
-    Mul(Value, Value, Value),
-    SDiv(Value, Value, Value),
-    UDiv(Value, Value, Value),
-    SRem(Value, Value, Value),
-    URem(Value, Value, Value),
-
-    // Bitwise
-    And(Value, Value, Value),
-    Or(Value, Value, Value),
-    Xor(Value, Value, Value),
-    Shl(Value, Value, Value),
-    LShr(Value, Value, Value),
-    AShr(Value, Value, Value),
-    Not(Value, Value),
-
-    // Float Arithmetic
-    FAdd(Value, Value, Value),
-    FSub(Value, Value, Value),
-    FMul(Value, Value, Value),
-    FDiv(Value, Value, Value),
-    FSqrt(Value, Value),
-
-    // SIMD
-    SIMDSplat(Value, Value),                    // dest, scalar
-    SIMDExtractLane(Value, Value, usize),       // dest, vector, lane
-    SIMDInsertLane(Value, Value, Value, usize), // dest, vector, scalar, lane
-    FSin(Value, Value),
-    FCos(Value, Value),
-    FPow(Value, Value, Value),
-
-    // Comparisons
-    Eq(Value, Value, Value),
-    Ne(Value, Value, Value),
-    SLt(Value, Value, Value),
-    SLe(Value, Value, Value),
-    SGt(Value, Value, Value),
-    SGe(Value, Value, Value),
-    ULt(Value, Value, Value),
-    ULe(Value, Value, Value),
-    UGt(Value, Value, Value),
-    UGe(Value, Value, Value),
-    FLt(Value, Value, Value),
-    FLe(Value, Value, Value),
-    FGt(Value, Value, Value),
-    FGe(Value, Value, Value),
-
-    IToF(Value, Value, Type),
-    FToI(Value, Value, Type),
-    FConv(Value, Value, Type), // dest, src, target_type (f32 <-> f64)
-
-    ConstInt(Value, i64),
-    ConstFloat(Value, f64),
-    Assign(Value, Value), // dest, src
-    Jump(BlockId),
-    Branch(Value, BlockId, BlockId),
-    Return(Option<Value>),
-    Phi(Value, HashMap<BlockId, Value>),
-    Call(Value, String, Vec<Value>),
-    ArrayLoad(Value, Value, Value),
-    ArrayStore(Value, Value, Value, Value, Type),
-    BufferLoad(Value, Value, Value),
-    BufferStore(Value, Value, Value, Value, Type),
-    BufferLen(Value, Value),
-    StructCreate(Value, String, Vec<Value>),
-    StructLoad(Value, Value, usize),
-    StructOffset(Value, Value, usize),
-    StructSet(Value, Value, usize, Value, Type),
-
-    // Enums
-    EnumCreate(Value, String, usize, Option<Value>), // dest, name, tag_idx, payload
-    EnumIsVariant(Value, Value, usize),              // dest, enum_val, tag_idx
-    EnumGetTag(Value, Value),                        // dest, enum_val
-    EnumExtract(Value, Value, usize),                // dest, enum_val, tag_idx
-
-    Match(Value, HashMap<usize, BlockId>, BlockId, bool), // selector, cases, default, is_strict
-
-    // Tuples
-    TupleCreate(Value, Vec<Value>),
-    TupleExtract(Value, Value, usize), // dest, tuple_val, index
-
-    // Heap
-    Alloc(Value, Type),         // dest (Pointer<Type>), type to allocate
-    PointerLoad(Value, Value),  // dest, ptr
-    PointerStore(Value, Value), // ptr, val
-
-    Lambda(Value, String, Vec<Value>), // dest, func_name, captured_vals
-    IndirectCall(Value, Value, Vec<Value>), // dest, fn_ptr_val, args
-
-    ParallelFor {
-        index_var: Value,
-        start: Value,
-        stop: Value,
-        step: Value,
-        body_block: BlockId,
-        exit_block: BlockId,
-        captures: Vec<Value>,
-    },
-    Nop,
-}
-
-impl fmt::Display for Instruction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let loc_str = self
-            .location
-            .map(|l| format!("  ; at {}", l))
-            .unwrap_or_default();
-        let constraints_str = if self.constraints.is_empty() {
-            String::new()
-        } else {
-            format!("  ; constraints: [{}]", self.constraints.join(", "))
-        };
-        match &self.kind {
-            InstructionKind::Add(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = add {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Sub(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = sub {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Mul(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = mul {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SDiv(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = sdiv {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::UDiv(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = udiv {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SRem(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = srem {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::URem(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = urem {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-
-            InstructionKind::And(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = and {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Or(d, l, r) => {
-                write!(f, "  {} = or {}, {}{}{}", d, l, r, loc_str, constraints_str)
-            }
-            InstructionKind::Xor(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = xor {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Shl(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = shl {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::LShr(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = lshr {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::AShr(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = ashr {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Not(d, s) => {
-                write!(f, "  {} = not {}{}{}", d, s, loc_str, constraints_str)
-            }
-
-            InstructionKind::FAdd(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fadd {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FSub(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fsub {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FMul(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fmul {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FDiv(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fdiv {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FSqrt(d, s) => {
-                write!(f, "  {} = sqrt {}{}{}", d, s, loc_str, constraints_str)
-            }
-            InstructionKind::SIMDSplat(d, s) => {
-                write!(f, "  {} = splat {}{}{}", d, s, loc_str, constraints_str)
-            }
-            InstructionKind::SIMDExtractLane(d, v, l) => {
-                write!(
-                    f,
-                    "  {} = extract_lane {}[{}] {}{}",
-                    d, v, l, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SIMDInsertLane(d, v, s, l) => {
-                write!(
-                    f,
-                    "  {} = insert_lane {}[{}] <- {} {}{}",
-                    d, v, l, s, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FSin(d, s) => {
-                write!(f, "  {} = sin {}{}{}", d, s, loc_str, constraints_str)
-            }
-            InstructionKind::FCos(d, s) => {
-                write!(f, "  {} = cos {}{}{}", d, s, loc_str, constraints_str)
-            }
-            InstructionKind::FPow(d, b, e) => {
-                write!(
-                    f,
-                    "  {} = pow {}, {}{}{}",
-                    d, b, e, loc_str, constraints_str
-                )
-            }
-
-            InstructionKind::Eq(d, l, r) => {
-                write!(f, "  {} = eq {}, {}{}{}", d, l, r, loc_str, constraints_str)
-            }
-            InstructionKind::Ne(d, l, r) => {
-                write!(f, "  {} = ne {}, {}{}{}", d, l, r, loc_str, constraints_str)
-            }
-            InstructionKind::SLt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = slt {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SLe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = sle {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SGt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = sgt {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::SGe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = sge {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::ULt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = ult {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::ULe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = ule {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::UGt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = ugt {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::UGe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = uge {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FLt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = flt {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FLe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fle {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FGt(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fgt {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FGe(d, l, r) => {
-                write!(
-                    f,
-                    "  {} = fge {}, {}{}{}",
-                    d, l, r, loc_str, constraints_str
-                )
-            }
-
-            InstructionKind::IToF(d, s, t) => {
-                write!(
-                    f,
-                    "  {} = itof {} to {}{}{}",
-                    d, s, t, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FToI(d, s, t) => {
-                write!(
-                    f,
-                    "  {} = ftoi {} to {}{}{}",
-                    d, s, t, loc_str, constraints_str
-                )
-            }
-            InstructionKind::FConv(d, s, t) => {
-                write!(
-                    f,
-                    "  {} = fconv {} to {}{}{}",
-                    d, s, t, loc_str, constraints_str
-                )
-            }
-
-            InstructionKind::ConstInt(d, v) => {
-                write!(f, "  {} = const_int {}{}{}", d, v, loc_str, constraints_str)
-            }
-            InstructionKind::ConstFloat(d, v) => {
-                write!(
-                    f,
-                    "  {} = const_float {}{}{}",
-                    d, v, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Assign(d, s) => {
-                write!(f, "  {} = assign {}{}{}", d, s, loc_str, constraints_str)
-            }
-
-            InstructionKind::Jump(b) => write!(f, "  jump {}{}{}", b, loc_str, constraints_str),
-            InstructionKind::Branch(c, t, e) => {
-                write!(f, "  br {}, {}, {}{}{}", c, t, e, loc_str, constraints_str)
-            }
-            InstructionKind::Return(v) => match v {
-                Some(val) => write!(f, "  ret {}{}{}", val, loc_str, constraints_str),
-                None => write!(f, "  ret{}{}", loc_str, constraints_str),
-            },
-            InstructionKind::Phi(d, m) => {
-                let mappings: Vec<String> =
-                    m.iter().map(|(b, v)| format!("{}: {}", b, v)).collect();
-                write!(
-                    f,
-                    "  {} = phi [{}]{}{}",
-                    d,
-                    mappings.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::Call(d, func, args) => {
-                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  {} = call {}({}){}{}",
-                    d,
-                    func,
-                    args_str.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::ArrayLoad(d, arr, idx) => {
-                write!(
-                    f,
-                    "  {} = load {}[{}]{}{}",
-                    d, arr, idx, loc_str, constraints_str
-                )
-            }
-            InstructionKind::ArrayStore(d, arr, idx, val, ty) => {
-                write!(
-                    f,
-                    "  {} = store {}[{}] <- {} (as {}){}{}",
-                    d, arr, idx, val, ty, loc_str, constraints_str
-                )
-            }
-            InstructionKind::BufferLoad(d, buf, idx) => {
-                write!(
-                    f,
-                    "  {} = bufload {}[{}]{}{}",
-                    d, buf, idx, loc_str, constraints_str
-                )
-            }
-            InstructionKind::BufferStore(d, buf, idx, val, ty) => {
-                write!(
-                    f,
-                    "  {} = bufstore {}[{}] <- {} (as {}){}{}",
-                    d, buf, idx, val, ty, loc_str, constraints_str
-                )
-            }
-            InstructionKind::BufferLen(d, buf) => {
-                write!(f, "  {} = buflen {}{}{}", d, buf, loc_str, constraints_str)
-            }
-            InstructionKind::StructCreate(d, name, args) => {
-                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  {} = struct {} ({}){}{}",
-                    d,
-                    name,
-                    args_str.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::StructLoad(d, obj, offset) => {
-                write!(
-                    f,
-                    "  {} = load {} + {}{}{}",
-                    d, obj, offset, loc_str, constraints_str
-                )
-            }
-            InstructionKind::StructOffset(d, obj, offset) => {
-                write!(
-                    f,
-                    "  {} = offset {} + {}{}{}",
-                    d, obj, offset, loc_str, constraints_str
-                )
-            }
-            InstructionKind::StructSet(d, obj, offset, val, ty) => {
-                write!(
-                    f,
-                    "  {} = set {} + {} <- {} (as {}){}{}",
-                    d, obj, offset, val, ty, loc_str, constraints_str
-                )
-            }
-            InstructionKind::EnumCreate(d, name, tag_idx, payload) => {
-                if let Some(p) = payload {
-                    write!(
-                        f,
-                        "  {} = enum {}::{} ({}){}{}",
-                        d, name, tag_idx, p, loc_str, constraints_str
-                    )
-                } else {
-                    write!(
-                        f,
-                        "  {} = enum {}::{}{}{}",
-                        d, name, tag_idx, loc_str, constraints_str
-                    )
-                }
-            }
-            InstructionKind::EnumIsVariant(d, e, tag_idx) => {
-                write!(
-                    f,
-                    "  {} = is_variant {} == {}{}{}",
-                    d, e, tag_idx, loc_str, constraints_str
-                )
-            }
-            InstructionKind::EnumGetTag(d, o) => {
-                write!(f, "  {} = get_tag {}{}{}", d, o, loc_str, constraints_str)
-            }
-            InstructionKind::EnumExtract(d, o, i) => {
-                write!(
-                    f,
-                    "  {} = extract_variant {} as {}{}{}",
-                    d, o, i, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Match(s, cases, default, is_strict) => {
-                let mut case_strings: Vec<String> = cases
-                    .iter()
-                    .map(|(tag, block)| format!("{}: {}", tag, block))
-                    .collect();
-                case_strings.sort();
-                write!(
-                    f,
-                    "  match {}, default {} [ {} ]{}{}{}",
-                    s,
-                    default,
-                    case_strings.join(", "),
-                    if *is_strict { " (strict)" } else { "" },
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::TupleCreate(d, e) => {
-                let args_str: Vec<String> = e.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  {} = tuple({}){}{}",
-                    d,
-                    args_str.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::TupleExtract(d, t, i) => {
-                write!(
-                    f,
-                    "  {} = extract {}[{}] (tuple){}{}",
-                    d, t, i, loc_str, constraints_str
-                )
-            }
-            InstructionKind::Alloc(d, t) => {
-                write!(f, "  {} = alloc {}{}{}", d, t, loc_str, constraints_str)
-            }
-            InstructionKind::PointerLoad(d, p) => {
-                write!(f, "  {} = pload *{}{}{}", d, p, loc_str, constraints_str)
-            }
-            InstructionKind::PointerStore(p, v) => {
-                write!(f, "  pstore *{} = {}{}{}", p, v, loc_str, constraints_str)
-            }
-            InstructionKind::Lambda(d, name, args) => {
-                let caps: Vec<String> = args.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  {} = lambda {}({}){}{}",
-                    d,
-                    name,
-                    caps.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::IndirectCall(d, ptr, args) => {
-                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  {} = icall {}({}){}{}",
-                    d,
-                    ptr,
-                    args_str.join(", "),
-                    loc_str,
-                    constraints_str
-                )
-            }
-            InstructionKind::ParallelFor {
-                index_var,
-                start,
-                stop,
-                step,
-                body_block,
-                exit_block,
-                captures,
-            } => {
-                let captures_str: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
-                write!(
-                    f,
-                    "  pfor {} in range({}, {}, {}) body: {:?}, exit: {:?}, captures: [{}]",
-                    index_var,
-                    start,
-                    stop,
-                    step,
-                    body_block,
-                    exit_block,
-                    captures_str.join(", ")
-                )
-            }
-            InstructionKind::Nop => write!(f, "  nop{}{}", loc_str, constraints_str),
-        }
-    }
 }
 
 impl Instruction {
@@ -1014,211 +945,251 @@ impl Instruction {
         self
     }
 
+    #[allow(unused_variables)]
     pub fn get_def(&self) -> Option<Value> {
-        match &self.kind {
-            InstructionKind::Add(d, _, _)
-            | InstructionKind::Sub(d, _, _)
-            | InstructionKind::Mul(d, _, _)
-            | InstructionKind::SDiv(d, _, _)
-            | InstructionKind::UDiv(d, _, _)
-            | InstructionKind::SRem(d, _, _)
-            | InstructionKind::URem(d, _, _)
-            | InstructionKind::And(d, _, _)
-            | InstructionKind::Or(d, _, _)
-            | InstructionKind::Xor(d, _, _)
-            | InstructionKind::Shl(d, _, _)
-            | InstructionKind::LShr(d, _, _)
-            | InstructionKind::AShr(d, _, _)
-            | InstructionKind::Not(d, _)
-            | InstructionKind::FAdd(d, _, _)
-            | InstructionKind::FSub(d, _, _)
-            | InstructionKind::FMul(d, _, _)
-            | InstructionKind::FDiv(d, _, _)
-            | InstructionKind::FSqrt(d, _)
-            | InstructionKind::SIMDSplat(d, _)
-            | InstructionKind::SIMDExtractLane(d, _, _)
-            | InstructionKind::SIMDInsertLane(d, _, _, _)
-            | InstructionKind::FSin(d, _)
-            | InstructionKind::FCos(d, _)
-            | InstructionKind::FPow(d, _, _)
-            | InstructionKind::Eq(d, _, _)
-            | InstructionKind::Ne(d, _, _)
-            | InstructionKind::SLt(d, _, _)
-            | InstructionKind::SLe(d, _, _)
-            | InstructionKind::SGt(d, _, _)
-            | InstructionKind::SGe(d, _, _)
-            | InstructionKind::ULt(d, _, _)
-            | InstructionKind::ULe(d, _, _)
-            | InstructionKind::UGt(d, _, _)
-            | InstructionKind::UGe(d, _, _)
-            | InstructionKind::FLt(d, _, _)
-            | InstructionKind::FLe(d, _, _)
-            | InstructionKind::FGt(d, _, _)
-            | InstructionKind::FGe(d, _, _)
-            | InstructionKind::IToF(d, _, _)
-            | InstructionKind::FToI(d, _, _)
-            | InstructionKind::FConv(d, _, _)
-            | InstructionKind::ConstInt(d, _)
-            | InstructionKind::ConstFloat(d, _)
-            | InstructionKind::Assign(d, _)
-            | InstructionKind::Phi(d, _)
-            | InstructionKind::Call(d, _, _)
-            | InstructionKind::ArrayLoad(d, _, _)
-            | InstructionKind::ArrayStore(d, _, _, _, _)
-            | InstructionKind::BufferLoad(d, _, _)
-            | InstructionKind::BufferStore(d, _, _, _, _)
-            | InstructionKind::BufferLen(d, _)
-            | InstructionKind::StructCreate(d, _, _)
-            | InstructionKind::StructLoad(d, _, _)
-            | InstructionKind::StructOffset(d, _, _)
-            | InstructionKind::StructSet(d, _, _, _, _)
-            | InstructionKind::EnumCreate(d, _, _, _)
-            | InstructionKind::EnumIsVariant(d, _, _)
-            | InstructionKind::EnumGetTag(d, _)
-            | InstructionKind::EnumExtract(d, _, _)
-            | InstructionKind::TupleCreate(d, _)
-            | InstructionKind::TupleExtract(d, _, _)
-            | InstructionKind::Alloc(d, _)
-            | InstructionKind::PointerLoad(d, _)
-            | InstructionKind::Lambda(d, _, _)
-            | InstructionKind::IndirectCall(d, _, _) => Some(*d),
-
-            InstructionKind::Jump(_)
-            | InstructionKind::Branch(_, _, _)
-            | InstructionKind::Return(_)
-            | InstructionKind::Match(_, _, _, _)
-            | InstructionKind::PointerStore(_, _)
-            | InstructionKind::ParallelFor { .. }
-            | InstructionKind::Nop => None,
+        macro_rules! match_def {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => $def),*
+                }
+            }
         }
+        lila_instructions!(match_def)
     }
 
+    #[allow(unused_variables)]
     pub fn get_uses(&self) -> Vec<Value> {
-        let mut operands = Vec::new();
-        match &self.kind {
-            InstructionKind::Add(_, l, r)
-            | InstructionKind::Sub(_, l, r)
-            | InstructionKind::Mul(_, l, r)
-            | InstructionKind::SDiv(_, l, r)
-            | InstructionKind::UDiv(_, l, r)
-            | InstructionKind::SRem(_, l, r)
-            | InstructionKind::URem(_, l, r)
-            | InstructionKind::And(_, l, r)
-            | InstructionKind::Or(_, l, r)
-            | InstructionKind::Xor(_, l, r)
-            | InstructionKind::Shl(_, l, r)
-            | InstructionKind::LShr(_, l, r)
-            | InstructionKind::AShr(_, l, r)
-            | InstructionKind::FAdd(_, l, r)
-            | InstructionKind::FSub(_, l, r)
-            | InstructionKind::FMul(_, l, r)
-            | InstructionKind::FDiv(_, l, r)
-            | InstructionKind::Eq(_, l, r)
-            | InstructionKind::Ne(_, l, r)
-            | InstructionKind::SLt(_, l, r)
-            | InstructionKind::SLe(_, l, r)
-            | InstructionKind::SGt(_, l, r)
-            | InstructionKind::SGe(_, l, r)
-            | InstructionKind::ULt(_, l, r)
-            | InstructionKind::ULe(_, l, r)
-            | InstructionKind::UGt(_, l, r)
-            | InstructionKind::UGe(_, l, r)
-            | InstructionKind::FLt(_, l, r)
-            | InstructionKind::FLe(_, l, r)
-            | InstructionKind::FGt(_, l, r)
-            | InstructionKind::FGe(_, l, r) => {
-                operands.push(*l);
-                operands.push(*r);
-            }
-            InstructionKind::Not(_, s)
-            | InstructionKind::FSqrt(_, s)
-            | InstructionKind::FSin(_, s)
-            | InstructionKind::FCos(_, s)
-            | InstructionKind::IToF(_, s, _)
-            | InstructionKind::FToI(_, s, _) => {
-                operands.push(*s);
-            }
-            InstructionKind::FPow(_, b, e) => {
-                operands.push(*b);
-                operands.push(*e);
-            }
-            InstructionKind::Branch(c, _, _) => {
-                operands.push(*c);
-            }
-            InstructionKind::Return(Some(v)) => {
-                operands.push(*v);
-            }
-            InstructionKind::Phi(_, _) => {
-                // Phi uses are handled specially by liveness analysis
-                // as they depend on the predecessor block.
-            }
-            InstructionKind::Call(_, _, args) => {
-                for v in args {
-                    operands.push(*v);
+        macro_rules! match_uses {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => {
+                        let mut operands = Vec::new();
+                        $(operands.push($uses);)*
+                        // Special handling for instructions with Vec<Value>
+                        match &self.kind {
+                            InstructionKind::Call(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::StructCreate(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::TupleCreate(_, elts) => {
+                                for v in elts { operands.push(*v); }
+                            }
+                            InstructionKind::Lambda(_, _, captures) => {
+                                for v in captures { operands.push(*v); }
+                            }
+                            InstructionKind::IndirectCall(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::ParallelFor(_, _, _, _, _, _, captures) => {
+                                for v in captures { operands.push(*v); }
+                            }
+                            InstructionKind::EnumCreate(_, _, _, Some(v)) => {
+                                operands.push(*v);
+                            }
+                            InstructionKind::Return(Some(v)) => {
+                                operands.push(*v);
+                            }
+                            _ => {}
+                        }
+                        operands
+                    }),*
                 }
             }
-            InstructionKind::ArrayLoad(_, arr, idx) => {
-                operands.push(*arr);
-                operands.push(*idx);
-            }
-            InstructionKind::ArrayStore(_, arr, idx, val, _) => {
-                operands.push(*arr);
-                operands.push(*idx);
-                operands.push(*val);
-            }
-            InstructionKind::BufferLoad(_, buf, idx) => {
-                operands.push(*buf);
-                operands.push(*idx);
-            }
-            InstructionKind::BufferStore(_, buf, idx, val, _) => {
-                operands.push(*buf);
-                operands.push(*idx);
-                operands.push(*val);
-            }
-            InstructionKind::BufferLen(_, buf) => {
-                operands.push(*buf);
-            }
-            InstructionKind::StructCreate(_, _, args) => {
-                for v in args {
-                    operands.push(*v);
-                }
-            }
-            InstructionKind::StructLoad(_, obj, _) | InstructionKind::StructOffset(_, obj, _) => {
-                operands.push(*obj);
-            }
-            InstructionKind::StructSet(_, obj, _, val, _) => {
-                operands.push(*obj);
-                operands.push(*val);
-            }
-            InstructionKind::EnumCreate(_, _, _, Some(p)) => {
-                operands.push(*p);
-            }
-            InstructionKind::EnumCreate(_, _, _, None) => {}
-            InstructionKind::EnumIsVariant(_, obj, _) | InstructionKind::EnumExtract(_, obj, _) => {
-                operands.push(*obj);
-            }
-            InstructionKind::TupleCreate(_, elts) => {
-                for v in elts {
-                    operands.push(*v);
-                }
-            }
-            InstructionKind::TupleExtract(_, t, _) => {
-                operands.push(*t);
-            }
-            InstructionKind::Lambda(_, _, captures) => {
-                for v in captures {
-                    operands.push(*v);
-                }
-            }
-            InstructionKind::IndirectCall(_, ptr, args) => {
-                operands.push(*ptr);
-                for v in args {
-                    operands.push(*v);
-                }
-            }
-            _ => {}
         }
-        operands
+        lila_instructions!(match_uses)
+    }
+
+    #[allow(unused_variables)]
+    pub fn has_side_effects(&self) -> bool {
+        macro_rules! match_side_effects {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name(..) => $side_effects),*
+                }
+            }
+        }
+        lila_instructions!(match_side_effects)
+    }
+
+    #[allow(unused_variables)]
+    pub fn visit<V: InstructionVisitor<R>, R>(&self, visitor: &mut V) -> R {
+        macro_rules! match_visit {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => visitor.$name($($arg_name),*)),*
+                }
+            }
+        }
+        lila_instructions!(match_visit)
+    }
+}
+
+macro_rules! define_visitor_methods {
+    ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+        display: $display:expr,
+        def: $def:expr,
+        uses: [$($uses:expr),*],
+        side_effects: $side_effects:expr,
+        category: $category:ident
+    }),* $(,)?) => {
+        $(
+            #[allow(non_snake_case, clippy::ptr_arg, clippy::too_many_arguments)]
+            fn $name(&mut self, $($arg_name: &$arg_ty),*) -> R;
+        )*
+    }
+}
+
+pub trait InstructionVisitor<R> {
+    lila_instructions!(define_visitor_methods);
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let loc_str = self
+            .location
+            .map(|l| format!("  ; at {}", l))
+            .unwrap_or_default();
+        let constraints_str = if self.constraints.is_empty() {
+            String::new()
+        } else {
+            format!("  ; constraints: [{}]", self.constraints.join(", "))
+        };
+
+        match &self.kind {
+            InstructionKind::Add(d, l, r) => write!(f, "  {} = add {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Sub(d, l, r) => write!(f, "  {} = sub {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Mul(d, l, r) => write!(f, "  {} = mul {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SDiv(d, l, r) => write!(f, "  {} = sdiv {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::UDiv(d, l, r) => write!(f, "  {} = udiv {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SRem(d, l, r) => write!(f, "  {} = srem {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::URem(d, l, r) => write!(f, "  {} = urem {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::And(d, l, r) => write!(f, "  {} = and {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Or(d, l, r) => write!(f, "  {} = or {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Xor(d, l, r) => write!(f, "  {} = xor {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Shl(d, l, r) => write!(f, "  {} = shl {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::LShr(d, l, r) => write!(f, "  {} = lshr {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::AShr(d, l, r) => write!(f, "  {} = ashr {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Not(d, s) => write!(f, "  {} = not {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::FAdd(d, l, r) => write!(f, "  {} = fadd {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FSub(d, l, r) => write!(f, "  {} = fsub {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FMul(d, l, r) => write!(f, "  {} = fmul {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FDiv(d, l, r) => write!(f, "  {} = fdiv {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FSqrt(d, s) => write!(f, "  {} = sqrt {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::SIMDSplat(d, s) => write!(f, "  {} = splat {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::SIMDExtractLane(d, v, l) => write!(f, "  {} = extract_lane {}[{}] {}{}", d, v, l, loc_str, constraints_str),
+            InstructionKind::SIMDInsertLane(d, v, s, l) => write!(f, "  {} = insert_lane {}[{}] <- {} {}{}", d, v, l, s, loc_str, constraints_str),
+            InstructionKind::FSin(d, s) => write!(f, "  {} = sin {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::FCos(d, s) => write!(f, "  {} = cos {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::FPow(d, b, e) => write!(f, "  {} = pow {}, {}{}{}", d, b, e, loc_str, constraints_str),
+            InstructionKind::Eq(d, l, r) => write!(f, "  {} = eq {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::Ne(d, l, r) => write!(f, "  {} = ne {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SLt(d, l, r) => write!(f, "  {} = slt {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SLe(d, l, r) => write!(f, "  {} = sle {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SGt(d, l, r) => write!(f, "  {} = sgt {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::SGe(d, l, r) => write!(f, "  {} = sge {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::ULt(d, l, r) => write!(f, "  {} = ult {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::ULe(d, l, r) => write!(f, "  {} = ule {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::UGt(d, l, r) => write!(f, "  {} = ugt {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::UGe(d, l, r) => write!(f, "  {} = uge {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FLt(d, l, r) => write!(f, "  {} = flt {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FLe(d, l, r) => write!(f, "  {} = fle {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FGt(d, l, r) => write!(f, "  {} = fgt {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::FGe(d, l, r) => write!(f, "  {} = fge {}, {}{}{}", d, l, r, loc_str, constraints_str),
+            InstructionKind::IToF(d, s, t) => write!(f, "  {} = itof {} to {}{}{}", d, s, t, loc_str, constraints_str),
+            InstructionKind::FToI(d, s, t) => write!(f, "  {} = ftoi {} to {}{}{}", d, s, t, loc_str, constraints_str),
+            InstructionKind::FConv(d, s, t) => write!(f, "  {} = fconv {} to {}{}{}", d, s, t, loc_str, constraints_str),
+            InstructionKind::ConstInt(d, v) => write!(f, "  {} = const_int {}{}{}", d, v, loc_str, constraints_str),
+            InstructionKind::ConstFloat(d, v) => write!(f, "  {} = const_float {}{}{}", d, v, loc_str, constraints_str),
+            InstructionKind::Assign(d, s) => write!(f, "  {} = assign {}{}{}", d, s, loc_str, constraints_str),
+            InstructionKind::Jump(b) => write!(f, "  jump {}{}{}", b, loc_str, constraints_str),
+            InstructionKind::Branch(c, t, e) => write!(f, "  br {}, {}, {}{}{}", c, t, e, loc_str, constraints_str),
+            InstructionKind::Return(v) => match v {
+                Some(val) => write!(f, "  ret {}{}{}", val, loc_str, constraints_str),
+                None => write!(f, "  ret{}{}", loc_str, constraints_str),
+            },
+            InstructionKind::Phi(d, m) => {
+                let mappings: Vec<String> = m.iter().map(|(b, v)| format!("{}: {}", b, v)).collect();
+                write!(f, "  {} = phi [{}]{}{}", d, mappings.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::Call(d, func, args) => {
+                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = call {}({}){}{}", d, func, args_str.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::ArrayLoad(d, arr, idx) => write!(f, "  {} = load {}[{}]{}{}", d, arr, idx, loc_str, constraints_str),
+            InstructionKind::ArrayStore(d, arr, idx, val, ty) => write!(f, "  {} = store {}[{}] <- {} (as {}){}{}", d, arr, idx, val, ty, loc_str, constraints_str),
+            InstructionKind::BufferLoad(d, buf, idx) => write!(f, "  {} = bufload {}[{}]{}{}", d, buf, idx, loc_str, constraints_str),
+            InstructionKind::BufferStore(d, buf, idx, val, ty) => write!(f, "  {} = bufstore {}[{}] <- {} (as {}){}{}", d, buf, idx, val, ty, loc_str, constraints_str),
+            InstructionKind::BufferLen(d, buf) => write!(f, "  {} = buflen {}{}{}", d, buf, loc_str, constraints_str),
+            InstructionKind::StructCreate(d, name, args) => {
+                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = struct {} ({}){}{}", d, name, args_str.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::StructLoad(d, obj, offset) => write!(f, "  {} = load {} + {}{}{}", d, obj, offset, loc_str, constraints_str),
+            InstructionKind::StructOffset(d, obj, offset) => write!(f, "  {} = offset {} + {}{}{}", d, obj, offset, loc_str, constraints_str),
+            InstructionKind::StructSet(d, obj, offset, val, ty) => write!(f, "  {} = set {} + {} <- {} (as {}){}{}", d, obj, offset, val, ty, loc_str, constraints_str),
+            InstructionKind::EnumCreate(d, name, tag_idx, payload) => {
+                if let Some(p) = payload {
+                    write!(f, "  {} = enum {}::{} ({}){}{}", d, name, tag_idx, p, loc_str, constraints_str)
+                } else {
+                    write!(f, "  {} = enum {}::{}{}{}", d, name, tag_idx, loc_str, constraints_str)
+                }
+            }
+            InstructionKind::EnumIsVariant(d, e, tag_idx) => write!(f, "  {} = is_variant {} == {}{}{}", d, e, tag_idx, loc_str, constraints_str),
+            InstructionKind::EnumGetTag(d, o) => write!(f, "  {} = get_tag {}{}{}", d, o, loc_str, constraints_str),
+            InstructionKind::EnumExtract(d, o, i) => write!(f, "  {} = extract_variant {} as {}{}{}", d, o, i, loc_str, constraints_str),
+            InstructionKind::Match(s, cases, default, is_strict) => {
+                let mut case_strings: Vec<String> = cases.iter().map(|(tag, block)| format!("{}: {}", tag, block)).collect();
+                case_strings.sort();
+                write!(f, "  match {}, default {} [ {} ]{}{}{}", s, default, case_strings.join(", "), if *is_strict { " (strict)" } else { "" }, loc_str, constraints_str)
+            }
+            InstructionKind::TupleCreate(d, e) => {
+                let args_str: Vec<String> = e.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = tuple({}){}{}", d, args_str.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::TupleExtract(d, t, i) => write!(f, "  {} = extract {}[{}] (tuple){}{}", d, t, i, loc_str, constraints_str),
+            InstructionKind::Alloc(d, t) => write!(f, "  {} = alloc {}{}{}", d, t, loc_str, constraints_str),
+            InstructionKind::PointerLoad(d, p) => write!(f, "  {} = pload *{}{}{}", d, p, loc_str, constraints_str),
+            InstructionKind::PointerStore(p, v) => write!(f, "  pstore *{} = {}{}{}", p, v, loc_str, constraints_str),
+            InstructionKind::Lambda(d, name, args) => {
+                let caps: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = lambda {}({}){}{}", d, name, caps.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::IndirectCall(d, ptr, args) => {
+                let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
+                write!(f, "  {} = icall {}({}){}{}", d, ptr, args_str.join(", "), loc_str, constraints_str)
+            }
+            InstructionKind::ParallelFor(index_var, start, stop, step, body_block, exit_block, captures) => {
+                let captures_str: Vec<String> = captures.iter().map(|v| v.to_string()).collect();
+                write!(f, "  pfor {} in range({}, {}, {}) body: {:?}, exit: {:?}, captures: [{}]", index_var, start, stop, step, body_block, exit_block, captures_str.join(", "))
+            }
+            InstructionKind::Nop() => write!(f, "  nop{}{}", loc_str, constraints_str),
+        }
     }
 }
 

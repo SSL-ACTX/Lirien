@@ -328,7 +328,7 @@ fn assert_cfg_constraints<
 
         // Handle implicit edges from ParallelFor
         for inst in &block.instructions {
-            if let InstructionKind::ParallelFor { body_block, .. } = &inst.kind {
+            if let InstructionKind::ParallelFor(_, _, _, _, body_block, ..) = &inst.kind {
                 let e_cond = t_ctx.backend.bool_const(&format!(
                     "{}_edge_{}_{}_{}",
                     t_ctx.func.name, block.id.0, body_block.0, t_ctx.uid
@@ -466,13 +466,15 @@ fn translate_instructions<
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
                 | InstructionKind::Return(..) => {}
-                InstructionKind::ParallelFor {
+                InstructionKind::ParallelFor(
                     index_var,
                     start,
                     stop,
+                    _step,
                     body_block,
-                    ..
-                } => {
+                    _exit_block,
+                    _captures,
+                ) => {
                     if let Some(edge_p) = t_ctx.edge_conditions.get(&(block.id, *body_block)) {
                         let __tmp = t_ctx.backend.bool_eq(edge_p, &path_cond);
                         t_ctx.backend.assert(&__tmp);
@@ -505,7 +507,7 @@ fn translate_instructions<
                         t_ctx.backend.assert(&__tmp2);
                     }
                 }
-                InstructionKind::Nop => {}
+                InstructionKind::Nop() => {}
             }
 
             // Translate logical constraints attached to the instruction

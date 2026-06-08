@@ -71,6 +71,15 @@ pub fn compute_hash(
     hasher.finish()
 }
 
+pub fn invalidate(hash: u64) {
+    let cache_dir = get_cache_dir();
+    let file_path = cache_dir.join(format!("{:016x}.lir", hash));
+    if file_path.exists() {
+        let _ = fs::remove_file(file_path);
+        info!(target: "lila::cache", "Invalidated stale cache: {:016x}", hash);
+    }
+}
+
 pub fn load_ir(hash: u64) -> Option<Vec<Function>> {
     let cache_dir = get_cache_dir();
     let file_path = cache_dir.join(format!("{:016x}.lir", hash));

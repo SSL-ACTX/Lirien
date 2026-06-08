@@ -682,15 +682,10 @@ impl CFGBuilder {
                         // Add ParallelFor to the original block
                         self.current_block = prev_block;
                         self.update_location(expr_offset);
-                        self.add_instruction(InstructionKind::ParallelFor {
-                            index_var,
-                            start: start_v,
-                            stop: stop_v,
-                            step: step_v,
-                            body_block,
-                            exit_block,
-                            captures,
-                        });
+                        self.add_instruction(InstructionKind::ParallelFor(
+                            index_var, start_v, stop_v, step_v, body_block, exit_block, captures,
+                        ));
+
                         self.add_instruction(InstructionKind::Jump(exit_block));
 
                         // Switch back to exit block for subsequent instructions
