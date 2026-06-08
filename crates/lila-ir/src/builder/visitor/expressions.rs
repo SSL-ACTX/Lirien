@@ -197,8 +197,16 @@ impl CFGBuilder {
                 let orig_ty = self.func.get_type(obj);
                 let curr_ty = orig_ty.clone();
 
-                // Handle .val unwrap for Refined types (no-op in IR)
-                if s.attr.as_str() == "val" && !matches!(curr_ty, Type::Struct(_)) {
+                // Handle .val or .value unwrap for Refined/Box types (no-op in IR)
+                if (s.attr.as_str() == "val" || s.attr.as_str() == "value")
+                    && !matches!(curr_ty, Type::Struct(_))
+                {
+                    if let Type::Pointer(inner) = curr_ty {
+                        let deref_val = self.func.next_value();
+                        self.add_instruction(InstructionKind::PointerLoad(deref_val, obj));
+                        self.func.set_type(deref_val, *inner);
+                        return Ok(deref_val);
+                    }
                     return Ok(obj);
                 }
 

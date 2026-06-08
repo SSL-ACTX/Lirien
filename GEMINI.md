@@ -69,3 +69,13 @@ When adding a new capability to the DSL:
 *   **Framework:** Use the standard Python `unittest` library. Do not use `pytest`.
 *   **Execution:** Run tests using `PYTHONPATH=./python python -m unittest discover tests/python`.
 *   **Structure:** Each test file must be runnable directly (e.g., `if __name__ == "__main__": unittest.main()`).
+
+## 5. AI Agent Execution Mandates (STRICT & NON-NEGOTIABLE)
+
+### 5.1 OBEY THE USER EXACTLY
+*   **The User's Diagnosis is Absolute Law:** If the user tells you a bug is in the `git diff`, or points you to a specific file or cause, you drop your generic debugging bullshit and investigate exactly what they told you IMMEDIATELY. The user's diagnosis is the highest signal.
+*   **Do NOT Stall or Loop:** Do NOT fall back on generic heuristics, infinite test running scripts, or over-analyzing irrelevant files to "buy time". If your automated approach fails or infinite-loops, and the user gives you a direct hint, immediately pivot and follow their explicit path.
+
+### 5.2 READ BEFORE ACTING
+*   **Consult This File FIRST:** You must read and abide by the rules in this `GEMINI.md` file before attempting to execute tasks. Do not assume standard generic workflows (like running raw `cargo build` or `maturin develop` without verifying the project's exact required sequence).
+*   **Acknowledge Flaws:** If you fail to follow these rules, recognize that it is a critical flaw and fundamentally dangerous to the codebase. Do not bullshit the user or feign blindness.

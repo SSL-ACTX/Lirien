@@ -80,15 +80,16 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     extern "C" {
         fn malloc(size: usize) -> *mut u8;
         fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
-        fn sin(x: f64) -> f64;
-        fn cos(x: f64) -> f64;
-        fn pow(x: f64, y: f64) -> f64;
     }
+    extern "C" fn lila_sin(x: f64) -> f64 { x.sin() }
+    extern "C" fn lila_cos(x: f64) -> f64 { x.cos() }
+    extern "C" fn lila_pow(x: f64, y: f64) -> f64 { x.powf(y) }
+
     jit_builder.symbol("malloc", malloc as *const u8);
     jit_builder.symbol("memcpy", memcpy as *const u8);
-    jit_builder.symbol("sin", sin as *const u8);
-    jit_builder.symbol("cos", cos as *const u8);
-    jit_builder.symbol("pow", pow as *const u8);
+    jit_builder.symbol("sin", lila_sin as *const u8);
+    jit_builder.symbol("cos", lila_cos as *const u8);
+    jit_builder.symbol("pow", lila_pow as *const u8);
 
     let mut module = JITModule::new(jit_builder);
     let mut ctx = module.make_context();

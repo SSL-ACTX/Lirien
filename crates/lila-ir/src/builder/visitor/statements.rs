@@ -81,7 +81,23 @@ impl CFGBuilder {
             }
             ast::Stmt::AnnAssign(s) => {
                 if let Some(value_expr) = s.value {
-                    let value = self.visit_expr(*value_expr)?;
+                    let mut value = self.visit_expr(*value_expr)?;
+                    value = self.auto_load(value);
+
+                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases) {
+                        let val_ty = self.func.get_type(value);
+                        if ann_ty.is_float() && val_ty.is_int() {
+                            let converted = self.func.next_value();
+                            self.add_instruction(InstructionKind::IToF(
+                                converted,
+                                value,
+                                ann_ty.clone(),
+                            ));
+                            self.func.set_type(converted, ann_ty);
+                            value = converted;
+                        }
+                    }
+
                     self.handle_assignment_target(&s.target, value)?;
                 }
                 Ok(())

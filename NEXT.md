@@ -28,7 +28,7 @@ def fast_simd_loop(data: Buffer[f32x4], passes: Literal[4]) -> None:
 ```
 **Why it fits Lila:** Because `passes` is mathematically guaranteed to be exactly `4`, she can tell her SSA optimizer to completely delete the `for` loop and just copy-paste the math 4 times in a row in Cranelift. This is called "Loop Unrolling," and it's a massive performance cheat code in C++.
 
-### 3. Hijack Python's `typing.TypeVar` (Monomorphization)
+### 3. [DONE] Hijack Python's `typing.TypeVar` (Monomorphization)
 Right now, if she wants to add two `i64`s and two `f64`s, she has to write two different functions. She should hijack Python's `TypeVar` to build C++-style Templates (Generics).
 
 ```python

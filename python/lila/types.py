@@ -340,6 +340,24 @@ class Box:
         return Annotated[cls, base_type]
 
 
+class Tensor(Generic[T]):
+    """
+    Statically shape-typed Tensor.
+    Usage: a: Tensor[f32, "M", "N"]
+    """
+
+    def __class_getitem__(cls, params):
+        if not isinstance(params, tuple) or len(params) < 2:
+            raise TypeError("Tensor requires [type, *shape]")
+
+        base_type = params[0]
+        shape = params[1:]
+
+        from typing import Annotated
+
+        return Annotated[cls, (base_type, shape)]
+
+
 class Array(Generic[T]):
     def __init__(self, size: int, initial_val: T = 0):
         self.data = [initial_val] * size
@@ -764,5 +782,6 @@ __all__ = [
     "FnPointer",
     "Callable",
     "Closure",
+    "Tensor",
     "TYPE_MAP",
 ]

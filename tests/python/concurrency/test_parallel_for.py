@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from lila import verify, parallel_for, Buffer, f64, i64, struct, VerificationError
+from lila import verify, parallel_for, Buffer, f64, i64
 
 
 @verify

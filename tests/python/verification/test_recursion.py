@@ -1,6 +1,5 @@
 import unittest
 from lila import verify, i64, Refined
-from lila.compiler import VerificationError
 
 
 class TestRecursion(unittest.TestCase):
