@@ -36,6 +36,9 @@ pub fn get_leaf_offsets(
                 offset += f_ty.size(struct_layouts);
             }
         }
+        Type::Literal(inner, _) | Type::Refined(inner, _) => {
+            get_leaf_offsets(inner, struct_layouts, base_offset, offsets);
+        }
         _ => {
             offsets.push((base_offset, ty.clone()));
         }
@@ -187,7 +190,7 @@ fn assert_derived_intervals<
                 }
             } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                 if let Bound::Finite(low) = interval.low {
-                    let low_float = if matches!(ty, Type::F32) {
+                    let low_float = if ty.is_float32() {
                         t_ctx.backend.float_from_f32(low as f32)
                     } else {
                         t_ctx.backend.float_from_f64(low)
@@ -196,7 +199,7 @@ fn assert_derived_intervals<
                     t_ctx.backend.assert(&__tmp);
                 }
                 if let Bound::Finite(high) = interval.high {
-                    let high_float = if matches!(ty, Type::F32) {
+                    let high_float = if ty.is_float32() {
                         t_ctx.backend.float_from_f32(high as f32)
                     } else {
                         t_ctx.backend.float_from_f64(high)
@@ -241,7 +244,7 @@ fn assert_derived_intervals<
                     }
                 } else if let Some(z3_float) = t_ctx.z3_floats.get(val) {
                     if let Bound::Finite(low) = interval.low {
-                        let low_float = if matches!(ty, Type::F32) {
+                        let low_float = if ty.is_float32() {
                             t_ctx.backend.float_from_f32(low as f32)
                         } else {
                             t_ctx.backend.float_from_f64(low)
@@ -251,7 +254,7 @@ fn assert_derived_intervals<
                         t_ctx.backend.assert(&__tmp);
                     }
                     if let Bound::Finite(high) = interval.high {
-                        let high_float = if matches!(ty, Type::F32) {
+                        let high_float = if ty.is_float32() {
                             t_ctx.backend.float_from_f32(high as f32)
                         } else {
                             t_ctx.backend.float_from_f64(high)

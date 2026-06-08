@@ -179,7 +179,7 @@ impl Interval {
 
     pub fn clamp(&mut self, ty: Type) {
         if let Some(bit_width) = ty.int_bit_width() {
-            let (min, max) = if matches!(ty, Type::U8 | Type::U16 | Type::U32 | Type::U64) {
+            let (min, max) = if ty.is_unsigned() {
                 (0.0, ((1u128 << bit_width) as f64) - 1.0)
             } else {
                 (
@@ -235,7 +235,7 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
         let val = Value(i);
         let ty = func.get_type(val);
         let mut interval = if let Some(bit_width) = ty.int_bit_width() {
-            let (min, max) = if matches!(ty, Type::U8 | Type::U16 | Type::U32 | Type::U64) {
+            let (min, max) = if ty.is_unsigned() {
                 (0.0, ((1u128 << bit_width) as f64) - 1.0)
             } else {
                 (
@@ -304,15 +304,14 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                         let mut res = Interval::everything();
                         let ty = func.get_type(*d);
                         if let Some(bit_width) = ty.int_bit_width() {
-                            let (min, max) =
-                                if matches!(ty, Type::U8 | Type::U16 | Type::U32 | Type::U64) {
-                                    (0.0, ((1u128 << bit_width) as f64) - 1.0)
-                                } else {
-                                    (
-                                        -((1u128 << (bit_width - 1)) as f64),
-                                        ((1u128 << (bit_width - 1)) as f64) - 1.0,
-                                    )
-                                };
+                            let (min, max) = if ty.is_unsigned() {
+                                (0.0, ((1u128 << bit_width) as f64) - 1.0)
+                            } else {
+                                (
+                                    -((1u128 << (bit_width - 1)) as f64),
+                                    ((1u128 << (bit_width - 1)) as f64) - 1.0,
+                                )
+                            };
                             res = Interval {
                                 low: Bound::Finite(min),
                                 high: Bound::Finite(max),

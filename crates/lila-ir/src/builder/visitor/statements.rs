@@ -266,6 +266,155 @@ impl CFGBuilder {
                     }
                 };
 
+                // UNROLLING LOGIC
+                let start_const = self.get_constant_int(start_val);
+                let end_const = self.get_constant_int(end_val);
+                let step_const = self.get_constant_int(step_val);
+
+                if let (Some(start_c), Some(end_c), Some(step_c)) =
+                    (start_const, end_const, step_const)
+                {
+                    let trip_count = if step_c > 0 {
+                        if end_c > start_c {
+                            (end_c - start_c + step_c - 1) / step_c
+                        } else {
+                            0
+                        }
+                    } else if step_c < 0 {
+                        if start_c > end_c {
+                            (start_c - end_c + (-step_c) - 1) / (-step_c)
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    if step_c != 0 && trip_count >= 0 && trip_count <= 128 {
+                        // UNROLL SAFETY: Check for total unrolled complexity
+                        let body_stmt_count = s.body.len();
+                        if trip_count as usize * body_stmt_count > 1024 {
+                            // Too much code bloat, fall back to regular loop
+                        } else {
+                            // Unroll!
+                            let idx_name = if is_direct_iter {
+                                format!("_lila_idx_{}", self.func.value_count)
+                            } else if let ast::Expr::Name(n) = target.clone() {
+                                n.id.to_string()
+                            } else {
+                                return Err("Unsupported loop target".to_string());
+                            };
+
+                            // UNROLL!
+                            // We generate a dedicated sequence of blocks for each iteration.
+                            // This ensures 'break' and 'continue' work correctly via the loop_stack.
+                            let final_exit_block = self.create_block();
+                            let mut current_idx_const = start_c;
+
+                            for i in 0..trip_count {
+                                let iteration_body_block = self.create_block();
+                                let next_iteration_block = if i == trip_count - 1 {
+                                    final_exit_block
+                                } else {
+                                    self.create_block()
+                                };
+
+                                // Connect previous block to this iteration's body
+                                self.add_instruction(InstructionKind::Jump(iteration_body_block));
+                                self.link_blocks(self.current_block, iteration_body_block);
+                                self.seal_block(iteration_body_block)?;
+                                self.start_block(iteration_body_block);
+
+                                // Set up loop stack for this iteration:
+                                // continue -> next_iteration_block (start of next iteration or final exit)
+                                // break -> final_exit_block
+                                self.loop_stack
+                                    .push((next_iteration_block, final_exit_block));
+
+                                let curr_idx = self.func.next_value();
+                                self.add_instruction(InstructionKind::ConstInt(
+                                    curr_idx,
+                                    current_idx_const,
+                                ));
+                                self.func.set_type(curr_idx, Type::I64);
+                                // Inject refinement for Z3 to know the exact loop index
+                                self.add_instruction(InstructionKind::Nop()).add_constraint(
+                                    format!("(= {} {})", curr_idx, current_idx_const),
+                                );
+
+                                self.write_variable(idx_name.clone(), self.current_block, curr_idx);
+
+                                if is_direct_iter {
+                                    let buf_expr = if is_enumerate {
+                                        enum_buf_expr.clone().unwrap()
+                                    } else {
+                                        iter_expr.clone()
+                                    };
+                                    let buf_val = self.visit_expr(buf_expr)?;
+                                    let buf_ty = self.func.get_type(buf_val);
+                                    let element = self.func.next_value();
+                                    match buf_ty {
+                                        Type::Buffer(inner) => {
+                                            self.add_instruction(InstructionKind::BufferLoad(
+                                                element, buf_val, curr_idx,
+                                            ));
+                                            self.func.set_type(element, *inner);
+                                        }
+                                        Type::Array(inner, _) => {
+                                            self.add_instruction(InstructionKind::ArrayLoad(
+                                                element, buf_val, curr_idx,
+                                            ));
+                                            self.func.set_type(element, *inner);
+                                        }
+                                        _ => unreachable!(),
+                                    }
+
+                                    if is_enumerate {
+                                        if let ast::Expr::Tuple(t) = target.clone() {
+                                            if t.elts.len() != 2 {
+                                                return Err(
+                                                    "enumerate() requires a tuple of 2 elements"
+                                                        .to_string(),
+                                                );
+                                            }
+                                            self.handle_assignment_target(&t.elts[0], curr_idx)?;
+                                            self.handle_assignment_target(&t.elts[1], element)?;
+                                        }
+                                    } else {
+                                        self.handle_assignment_target(&target, element)?;
+                                    }
+                                }
+
+                                for stmt in s.body.clone() {
+                                    self.visit_stmt(stmt)?;
+                                }
+
+                                // If not terminated (no break/return/continue), jump to next iteration
+                                if !self.is_terminated(self.current_block) {
+                                    self.add_instruction(InstructionKind::Jump(
+                                        next_iteration_block,
+                                    ));
+                                    self.link_blocks(self.current_block, next_iteration_block);
+                                }
+
+                                self.loop_stack.pop();
+
+                                // Prepare for next iteration
+                                if i < trip_count - 1 {
+                                    self.seal_block(next_iteration_block)?;
+                                    self.start_block(next_iteration_block);
+                                }
+
+                                current_idx_const += step_c;
+                            }
+
+                            self.start_block(final_exit_block);
+                            self.seal_block(final_exit_block)?;
+                            return Ok(());
+                        }
+                    }
+                }
+
                 let header_block = self.create_block();
                 let body_block = self.create_block();
                 let increment_block = self.create_block();

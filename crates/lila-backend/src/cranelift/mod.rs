@@ -44,7 +44,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
             types::I64 // Pointer
         }
         SsaType::Unknown => types::I64,
-        SsaType::Refined(inner, _) => translate_type(inner),
+        SsaType::Refined(inner, _) | SsaType::Literal(inner, _) => translate_type(inner),
     }
 }
 

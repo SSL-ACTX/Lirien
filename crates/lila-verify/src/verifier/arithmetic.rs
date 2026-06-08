@@ -27,7 +27,7 @@ pub fn translate<
         InstructionKind::ConstFloat(dest, val) => {
             if let Some(z3_dest) = ctx.z3_floats.get(dest) {
                 let ty = ctx.func.get_type(*dest);
-                let z3_val = if matches!(ty, Type::F32) {
+                let z3_val = if ty.is_float32() {
                     ctx.backend.float_from_f32(*val as f32)
                 } else {
                     ctx.backend.float_from_f64(*val)
@@ -178,7 +178,7 @@ pub fn translate<
                 ctx.z3_floats.get(rhs),
             ) {
                 let ty = ctx.func.get_type(*rhs);
-                let zero = if matches!(ty, Type::F32) {
+                let zero = if ty.is_float32() {
                     ctx.backend.float_from_f32(0.0)
                 } else {
                     ctx.backend.float_from_f64(0.0)
@@ -365,7 +365,7 @@ pub fn translate<
                 ctx.z3_bvs.get(rhs),
             ) {
                 let ty = ctx.func.get_type(*dest);
-                if matches!(ty, Type::Bool) {
+                if ty == Type::Bool {
                     let one = ctx.backend.bv_from_i64(1, 1);
                     let zero = ctx.backend.bv_from_i64(0, 1);
                     let l_eq = ctx.backend.bv_eq(z3_l, &one);
@@ -395,7 +395,7 @@ pub fn translate<
                 ctx.z3_bvs.get(rhs),
             ) {
                 let ty = ctx.func.get_type(*dest);
-                if matches!(ty, Type::Bool) {
+                if ty == Type::Bool {
                     let one = ctx.backend.bv_from_i64(1, 1);
                     let zero = ctx.backend.bv_from_i64(0, 1);
                     let l_eq = ctx.backend.bv_eq(z3_l, &one);
@@ -433,7 +433,7 @@ pub fn translate<
         InstructionKind::Not(dest, src) => {
             if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
                 let ty = ctx.func.get_type(*dest);
-                if matches!(ty, Type::Bool) {
+                if ty == Type::Bool {
                     let one = ctx.backend.bv_from_i64(1, 1);
                     let zero = ctx.backend.bv_from_i64(0, 1);
                     let is_false = ctx.backend.bv_eq(z3_src, &zero);
@@ -499,7 +499,7 @@ pub fn translate<
                     InstructionKind::FSqrt(_, _) => {
                         if let Some(z3_src) = ctx.z3_floats.get(s_val) {
                             let ty = ctx.func.get_type(*s_val);
-                            let zero = if matches!(ty, Type::F32) {
+                            let zero = if ty.is_float32() {
                                 ctx.backend.float_from_f32(0.0)
                             } else {
                                 ctx.backend.float_from_f64(0.0)
@@ -544,7 +544,7 @@ pub fn translate<
                 ctx.z3_floats.get(rhs),
             ) {
                 let ty = ctx.func.get_type(*lhs);
-                let zero = if matches!(ty, Type::F32) {
+                let zero = if ty.is_float32() {
                     ctx.backend.float_from_f32(0.0)
                 } else {
                     ctx.backend.float_from_f64(0.0)
@@ -587,12 +587,9 @@ pub fn translate<
 
         InstructionKind::IToF(dest, src, _) => {
             if let (Some(d), Some(s)) = (ctx.z3_floats.get(dest), ctx.z3_bvs.get(src)) {
-                let is_signed = !matches!(
-                    ctx.func.get_type(*src),
-                    Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
-                );
+                let is_signed = !ctx.func.get_type(*src).is_unsigned();
 
-                let is_f32 = matches!(ctx.func.get_type(*dest), Type::F32);
+                let is_f32 = ctx.func.get_type(*dest).is_float32();
                 let res = ctx.backend.bv_to_float(s, is_signed, is_f32);
                 let __inner = ctx.backend.float_eq(d, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
@@ -601,10 +598,7 @@ pub fn translate<
         }
         InstructionKind::FToI(dest, src, _) => {
             if let (Some(d), Some(s)) = (ctx.z3_bvs.get(dest), ctx.z3_floats.get(src)) {
-                let is_signed = !matches!(
-                    ctx.func.get_type(*dest),
-                    Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Bool
-                );
+                let is_signed = !ctx.func.get_type(*dest).is_unsigned();
                 let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
 
                 let res = ctx.backend.float_to_bv(s, is_signed, bit_width);
@@ -615,7 +609,7 @@ pub fn translate<
         }
         InstructionKind::FConv(dest, src, target_ty) => {
             if let (Some(d), Some(s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
-                let is_f32 = matches!(target_ty, Type::F32);
+                let is_f32 = target_ty.is_float32();
                 let res = ctx.backend.float_to_float(s, is_f32);
                 let __inner = ctx.backend.float_eq(d, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);

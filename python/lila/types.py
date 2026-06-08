@@ -233,30 +233,54 @@ class SizedArray(Generic[T]):
 
         # Default to i64
         cty = ctypes.c_int64
-        for name, ct in TYPE_MAP.items():
-            if name in base_ty_str:
-                cty = ct
-                break
+        if hasattr(base_type, "__lila_struct__"):
+            cty = base_type.__lila_ctypes__
+        elif isinstance(base_type, type) and issubclass(base_type, ctypes.Structure):
+            cty = base_type
+        else:
+            base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
+            for name, ct in TYPE_MAP.items():
+                if name in base_ty_str:
+                    cty = ct
+                    break
 
         class SizedCtypesArray(ctypes.Structure):
             _fields_ = [("data", cty * size)]
 
+        class SizedLilaArray:
             def __init__(self, *args):
+                self._ctypes_obj = SizedCtypesArray()
                 if len(args) == 1 and isinstance(args[0], (list, tuple)):
-                    for i, val in enumerate(args[0]):
-                        self.data[i] = val
+                    vals = args[0]
                 else:
-                    for i, val in enumerate(args):
-                        self.data[i] = val
+                    vals = args
+
+                for i, val in enumerate(vals):
+                    if i >= size:
+                        break
+                    if hasattr(val, "_ctypes_obj"):
+                        self._ctypes_obj.data[i] = val._ctypes_obj
+                    else:
+                        self._ctypes_obj.data[i] = val
 
             def __getitem__(self, idx):
-                return self.data[idx]
+                val = self._ctypes_obj.data[idx]
+                # If the element is a ctypes object (e.g. SIMD vector), wrap it back if needed
+                # However, for SIMD we usually return the raw ctypes object if it's not wrapped.
+                # Let's ensure consistency.
+                return val
 
             def __setitem__(self, idx, val):
-                self.data[idx] = val
+                if hasattr(val, "_ctypes_obj"):
+                    self._ctypes_obj.data[idx] = val._ctypes_obj
+                else:
+                    self._ctypes_obj.data[idx] = val
 
-        SizedCtypesArray.__name__ = f"SizedArray_{base_ty_str}_{size}"
-        return Annotated[SizedCtypesArray, (base_type, size)]
+            def __len__(self):
+                return size
+
+        SizedLilaArray.__name__ = f"SizedArray_{base_ty_str}_{size}"
+        return Annotated[SizedLilaArray, (base_type, size)]
 
 
 class Buffer:

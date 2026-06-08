@@ -92,6 +92,18 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
+                "literal" => {
+                    if let ast::Expr::Constant(c) = &*s.slice {
+                        if let ast::Constant::Int(i) = &c.value {
+                            let val = i
+                                .to_string()
+                                .parse::<i64>()
+                                .map_err(|_| "Invalid literal value")?;
+                            return Ok(Type::Literal(Box::new(Type::I64), val));
+                        }
+                    }
+                    Err("Literal expects an integer constant".to_string())
+                }
                 "box" => {
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Pointer(Box::new(inner)))

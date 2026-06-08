@@ -121,6 +121,13 @@ def _get_type_name(ty: Any) -> str:
     if hasattr(ty, "__metadata__"):
         origin = getattr(ty, "__origin__", ty)
         origin_str = str(origin).lower()
+
+        # Handle Literal
+        if "literal" in origin_str:
+            args = getattr(ty, "__args__", [])
+            if args:
+                return f"Literal[{args[0]}]"
+
         inner = ty.__metadata__[0]
 
         # Check for Tuple in Annotated
@@ -142,6 +149,13 @@ def _get_type_name(ty: Any) -> str:
 
     # Handle standard Tuples
     origin = getattr(ty, "__origin__", None)
+    if origin:
+        origin_str = str(origin)
+        if "Literal" in origin_str:
+            args = getattr(ty, "__args__", [])
+            if args:
+                return f"Literal[{args[0]}]"
+
     if origin is tuple or origin is Tuple or "tuple" in str(ty).lower():
         args = getattr(ty, "__args__", [])
         if args:
@@ -583,8 +597,11 @@ def _prepare_runtime_args(
                 processed_args.append(arg)
         else:
             target_cty = c_args[c_idx]
+            # Check for Lila wrapped objects
+            if hasattr(arg, "_ctypes_obj"):
+                processed_args.append(arg._ctypes_obj)
             # Check if it's already a ctypes object (Structure, Array, or Pointer)
-            if (
+            elif (
                 isinstance(arg, target_cty)
                 or hasattr(arg, "_type_")
                 or hasattr(arg, "_fields_")
