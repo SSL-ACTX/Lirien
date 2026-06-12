@@ -257,6 +257,47 @@ class TestRefinements(unittest.TestCase):
 
         self.assertEqual(sum_positives(10, 20), 30)
 
+    def test_nested_struct_refinement(self):
+        @struct
+        class Inner:
+            val: i64
+
+        @struct
+        class Outer:
+            inner: Inner
+            other: i64
+
+        SafeOuter = Refined[Outer, lambda o: o.inner.val > 0]
+
+        @verify
+        def get_inner_val(o: SafeOuter) -> i64:
+            return o.inner.val
+
+        o = Outer(Inner(42), 10)
+        self.assertEqual(get_inner_val(o), 42)
+
+    def test_deeply_nested_struct_refinement(self):
+        @struct
+        class Inner:
+            val: i64
+
+        @struct
+        class Outer:
+            inner: Inner
+
+        @struct
+        class Deep:
+            outer: Outer
+
+        SafeDeep = Refined[Deep, lambda d: d.outer.inner.val == 1337]
+
+        @verify
+        def get_deep_val(d: SafeDeep) -> i64:
+            return d.outer.inner.val
+
+        d = Deep(Outer(Inner(1337)))
+        self.assertEqual(get_deep_val(d), 1337)
+
 
 if __name__ == "__main__":
     unittest.main()
