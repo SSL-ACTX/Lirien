@@ -192,6 +192,28 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         a.bvashr(b)
     }
 
+    fn bv_sext(&mut self, a: &Self::BV, sz: u32) -> Self::BV {
+        let current_sz = a.get_size();
+        if sz > current_sz {
+            a.sign_ext(sz - current_sz)
+        } else {
+            a.clone()
+        }
+    }
+
+    fn bv_zext(&mut self, a: &Self::BV, sz: u32) -> Self::BV {
+        let current_sz = a.get_size();
+        if sz > current_sz {
+            a.zero_ext(sz - current_sz)
+        } else {
+            a.clone()
+        }
+    }
+
+    fn bv_extract(&mut self, a: &Self::BV, high: u32, low: u32) -> Self::BV {
+        a.extract(high, low)
+    }
+
     fn bv_slt(&mut self, a: &Self::BV, b: &Self::BV) -> Self::Bool {
         a.bvslt(b)
     }

@@ -36,6 +36,8 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I32X4 => types::I32X4,
         SsaType::F64X2 => types::F64X2,
         SsaType::I64X2 => types::I64X2,
+        SsaType::I8X16 | SsaType::U8X16 => types::I8X16,
+        SsaType::I16X8 | SsaType::U16X8 => types::I16X8,
         SsaType::Array(_, _)
         | SsaType::Buffer(_)
         | SsaType::Tensor(_, _)

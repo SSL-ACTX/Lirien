@@ -73,6 +73,10 @@ def _map_ctypes_arguments(
                 "i32x4",
                 "f64x2",
                 "i64x2",
+                "i8x16",
+                "u8x16",
+                "i16x8",
+                "u16x8",
             ]
         ):
             is_ptr_wrapper = True
@@ -137,7 +141,19 @@ def _handle_pointer_return(
     is_tuple = "tuple" in raw_ann_str or (
         ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
     )
-    is_simd = any(x in ret_ann_str for x in ["f32x4", "i32x4", "f64x2", "i64x2"])
+    is_simd = any(
+        x in ret_ann_str
+        for x in [
+            "f32x4",
+            "i32x4",
+            "f64x2",
+            "i64x2",
+            "i8x16",
+            "u8x16",
+            "i16x8",
+            "u16x8",
+        ]
+    )
 
     if not (is_tuple or is_simd):
         return False, None, c_args, arg_map
@@ -216,6 +232,10 @@ def _create_jit_wrapper(
                 "i32x4",
                 "f64x2",
                 "i64x2",
+                "i8x16",
+                "u8x16",
+                "i16x8",
+                "u16x8",
             ]
         ):
             c_args.append(ctypes.c_void_p)

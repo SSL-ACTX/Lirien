@@ -47,6 +47,9 @@ pub trait SolverBackend {
     fn bv_shl(&mut self, a: &Self::BV, b: &Self::BV) -> Self::BV;
     fn bv_lshr(&mut self, a: &Self::BV, b: &Self::BV) -> Self::BV;
     fn bv_ashr(&mut self, a: &Self::BV, b: &Self::BV) -> Self::BV;
+    fn bv_sext(&mut self, a: &Self::BV, sz: u32) -> Self::BV;
+    fn bv_zext(&mut self, a: &Self::BV, sz: u32) -> Self::BV;
+    fn bv_extract(&mut self, a: &Self::BV, high: u32, low: u32) -> Self::BV;
     fn bv_slt(&mut self, a: &Self::BV, b: &Self::BV) -> Self::Bool;
     fn bv_sle(&mut self, a: &Self::BV, b: &Self::BV) -> Self::Bool;
     fn bv_sgt(&mut self, a: &Self::BV, b: &Self::BV) -> Self::Bool;

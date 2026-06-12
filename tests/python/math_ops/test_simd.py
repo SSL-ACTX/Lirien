@@ -1,9 +1,68 @@
 import unittest
 import math
-from lila import verify, f32x4, f64x2, i32x4, i64x2
+from lila import verify, f32x4, f64x2, i32x4, i64x2, i8x16, u8x16, i16x8, u16x8
 
 
 class TestSIMD(unittest.TestCase):
+    def test_i8x16_arithmetic(self):
+        @verify
+        def i8_ops(a: i8x16, b: i8x16) -> i8x16:
+            return a + b
+
+        va = i8x16(*(i for i in range(16)))
+        vb = i8x16(10)
+        res = i8_ops(va, vb)
+
+        for i in range(16):
+            self.assertEqual(res[i], i + 10)
+
+    def test_u8x16_arithmetic(self):
+        @verify
+        def u8_ops(a: u8x16, b: u8x16) -> u8x16:
+            return a - b
+
+        va = u8x16(255)
+        vb = u8x16(*(i for i in range(16)))
+        res = u8_ops(va, vb)
+
+        for i in range(16):
+            self.assertEqual(res[i], 255 - i)
+
+    def test_i16x8_arithmetic(self):
+        @verify
+        def i16_ops(a: i16x8, b: i16x8) -> i16x8:
+            return a * b
+
+        va = i16x8(*(i * 10 for i in range(8)))
+        vb = i16x8(2)
+        res = i16_ops(va, vb)
+
+        for i in range(8):
+            self.assertEqual(res[i], i * 20)
+
+    def test_u16x8_arithmetic(self):
+        @verify
+        def u16_ops(a: u16x8, b: u16x8) -> u16x8:
+            return a + b
+
+        va = u16x8(*(i * 100 for i in range(8)))
+        vb = u16x8(50)
+        res = u16_ops(va, vb)
+
+        for i in range(8):
+            self.assertEqual(res[i], i * 100 + 50)
+
+    def test_i8x16_auto_splat(self):
+        @verify
+        def splat_i8(a: i8x16, val: int) -> i8x16:
+            return a + val
+
+        va = i8x16(0)
+        res = splat_i8(va, 42)
+
+        for i in range(16):
+            self.assertEqual(res[i], 42)
+
     def test_f32x4_arithmetic(self):
         @verify
         def f32_ops(a: f32x4, b: f32x4) -> f32x4:

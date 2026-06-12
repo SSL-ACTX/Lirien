@@ -364,6 +364,18 @@ pub fn propagate_types(func: &mut Function) {
                                 Type::I64X2 => {
                                     new_types.insert(*d, Type::I64);
                                 }
+                                Type::I8X16 => {
+                                    new_types.insert(*d, Type::I8);
+                                }
+                                Type::U8X16 => {
+                                    new_types.insert(*d, Type::U8);
+                                }
+                                Type::I16X8 => {
+                                    new_types.insert(*d, Type::I16);
+                                }
+                                Type::U16X8 => {
+                                    new_types.insert(*d, Type::U16);
+                                }
                                 _ => {}
                             }
                         }

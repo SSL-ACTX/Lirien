@@ -239,7 +239,7 @@ def _value_to_lila_type(val: Any) -> str:
 
     # SIMD and common wrappers
     name = val.__class__.__name__
-    if name in ["f32x4", "i32x4", "f64x2", "i64x2"]:
+    if name in ["f32x4", "i32x4", "f64x2", "i64x2", "i8x16", "u8x16", "i16x8", "u16x8"]:
         return name
 
     # Handle NumPy-like arrays or memoryviews (Buffer Protocol)

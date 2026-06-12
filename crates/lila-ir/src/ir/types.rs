@@ -19,6 +19,10 @@ pub enum Type {
     I32X4,
     F64X2,
     I64X2,
+    I8X16,
+    U8X16,
+    I16X8,
+    U16X8,
     Array(Box<Type>, Option<usize>),
     Buffer(Box<Type>),
     Tensor(Box<Type>, Vec<String>),
@@ -69,7 +73,11 @@ impl Type {
             | Type::I64
             | Type::U64
             | Type::I32X4
-            | Type::I64X2 => true,
+            | Type::I64X2
+            | Type::I8X16
+            | Type::U8X16
+            | Type::I16X8
+            | Type::U16X8 => true,
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_int(),
             _ => false,
         }
@@ -117,7 +125,14 @@ impl Type {
 
     pub fn is_simd(&self) -> bool {
         match self {
-            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => true,
+            Type::F32X4
+            | Type::I32X4
+            | Type::F64X2
+            | Type::I64X2
+            | Type::I8X16
+            | Type::U8X16
+            | Type::I16X8
+            | Type::U16X8 => true,
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_simd(),
             _ => false,
         }
@@ -149,7 +164,14 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
-            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => 16,
+            Type::F32X4
+            | Type::I32X4
+            | Type::F64X2
+            | Type::I64X2
+            | Type::I8X16
+            | Type::U8X16
+            | Type::I16X8
+            | Type::U16X8 => 16,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
@@ -221,7 +243,14 @@ impl Type {
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
-            Type::F32X4 | Type::I32X4 | Type::F64X2 | Type::I64X2 => 16,
+            Type::F32X4
+            | Type::I32X4
+            | Type::F64X2
+            | Type::I64X2
+            | Type::I8X16
+            | Type::U8X16
+            | Type::I16X8
+            | Type::U16X8 => 16,
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,

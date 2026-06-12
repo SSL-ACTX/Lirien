@@ -17,7 +17,7 @@ pub fn translate<
     match &inst.kind {
         InstructionKind::ConstInt(dest, val) => {
             if let Some(z3_dest) = ctx.z3_bvs.get(dest) {
-                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let bit_width = z3_dest.get_size();
                 let z3_val = ctx.backend.bv_from_i64(*val, bit_width);
                 let __inner = ctx.backend.bv_eq(z3_dest, &z3_val);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
@@ -39,7 +39,26 @@ pub fn translate<
         }
         InstructionKind::Assign(dest, src) => {
             if let (Some(d), Some(s)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
-                let __inner = ctx.backend.bv_eq(d, s);
+                let d_bits = d.get_size();
+                let s_bits = s.get_size();
+
+                let __inner = if d_bits == s_bits {
+                    ctx.backend.bv_eq(d, s)
+                } else if d_bits > s_bits {
+                    let src_ty = ctx.func.get_type(*src);
+                    if src_ty.is_signed() {
+                        let s_ext = ctx.backend.bv_sext(s, d_bits);
+                        ctx.backend.bv_eq(d, &s_ext)
+                    } else {
+                        let s_ext = ctx.backend.bv_zext(s, d_bits);
+                        ctx.backend.bv_eq(d, &s_ext)
+                    }
+                } else {
+                    // Truncation
+                    let s_trunc = ctx.backend.bv_extract(s, d_bits - 1, 0);
+                    ctx.backend.bv_eq(d, &s_trunc)
+                };
+
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let (Some(d), Some(s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
@@ -463,7 +482,7 @@ pub fn translate<
                     InstructionKind::UGe(_, _, _) => ctx.backend.bv_uge(l, r),
                     _ => unreachable!(),
                 };
-                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let bit_width = z3_dest.get_size();
                 let one = ctx.backend.bv_from_i64(1, bit_width);
                 let zero = ctx.backend.bv_from_i64(0, bit_width);
 
@@ -507,7 +526,7 @@ pub fn translate<
                     }
                     _ => unreachable!(),
                 };
-                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let bit_width = z3_dest.get_size();
                 let one = ctx.backend.bv_from_i64(1, bit_width);
                 let zero = ctx.backend.bv_from_i64(0, bit_width);
 
@@ -539,7 +558,7 @@ pub fn translate<
                     InstructionKind::FGe(_, _, _) => ctx.backend.float_ge(l, r),
                     _ => unreachable!(),
                 };
-                let bit_width = ctx.func.get_type(*dest).int_bit_width().unwrap_or(64);
+                let bit_width = z3_dest.get_size();
                 let one = ctx.backend.bv_from_i64(1, bit_width);
                 let zero = ctx.backend.bv_from_i64(0, bit_width);
 
@@ -563,16 +582,23 @@ pub fn translate<
             ) {
                 let ty = ctx.func.get_type(*dest);
                 if ty == Type::Bool {
-                    let one = ctx.backend.bv_from_i64(1, 1);
-                    let zero = ctx.backend.bv_from_i64(0, 1);
-                    let l_eq = ctx.backend.bv_eq(z3_l, &one);
-                    let r_eq = ctx.backend.bv_eq(z3_r, &one);
+                    let bit_width_l = z3_l.get_size();
+                    let bit_width_r = z3_r.get_size();
+                    let bit_width_dest = z3_dest.get_size();
+
+                    let one_l = ctx.backend.bv_from_i64(1, bit_width_l);
+                    let one_r = ctx.backend.bv_from_i64(1, bit_width_r);
+                    let one_dest = ctx.backend.bv_from_i64(1, bit_width_dest);
+                    let zero_dest = ctx.backend.bv_from_i64(0, bit_width_dest);
+
+                    let l_eq = ctx.backend.bv_eq(z3_l, &one_l);
+                    let r_eq = ctx.backend.bv_eq(z3_r, &one_r);
                     let both_true = ctx.backend.bool_and(&[&l_eq, &r_eq]);
 
-                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one);
+                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one_dest);
                     let __implies1 = ctx.backend.bool_implies(&both_true, &__is_true_eq_one);
                     let __not_both = ctx.backend.bool_not(&both_true);
-                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero);
+                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero_dest);
                     let __implies2 = ctx.backend.bool_implies(&__not_both, &__is_false_eq_zero);
                     let __both = ctx.backend.bool_and(&[&__implies1, &__implies2]);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__both);
@@ -593,16 +619,23 @@ pub fn translate<
             ) {
                 let ty = ctx.func.get_type(*dest);
                 if ty == Type::Bool {
-                    let one = ctx.backend.bv_from_i64(1, 1);
-                    let zero = ctx.backend.bv_from_i64(0, 1);
-                    let l_eq = ctx.backend.bv_eq(z3_l, &one);
-                    let r_eq = ctx.backend.bv_eq(z3_r, &one);
+                    let bit_width_l = z3_l.get_size();
+                    let bit_width_r = z3_r.get_size();
+                    let bit_width_dest = z3_dest.get_size();
+
+                    let one_l = ctx.backend.bv_from_i64(1, bit_width_l);
+                    let one_r = ctx.backend.bv_from_i64(1, bit_width_r);
+                    let one_dest = ctx.backend.bv_from_i64(1, bit_width_dest);
+                    let zero_dest = ctx.backend.bv_from_i64(0, bit_width_dest);
+
+                    let l_eq = ctx.backend.bv_eq(z3_l, &one_l);
+                    let r_eq = ctx.backend.bv_eq(z3_r, &one_r);
                     let either_true = ctx.backend.bool_or(&[&l_eq, &r_eq]);
 
-                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one);
+                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one_dest);
                     let __implies1 = ctx.backend.bool_implies(&either_true, &__is_true_eq_one);
                     let __not_both = ctx.backend.bool_not(&either_true);
-                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero);
+                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero_dest);
                     let __implies2 = ctx.backend.bool_implies(&__not_both, &__is_false_eq_zero);
                     let __both = ctx.backend.bool_and(&[&__implies1, &__implies2]);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__both);
@@ -631,14 +664,19 @@ pub fn translate<
             if let (Some(z3_dest), Some(z3_src)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
                 let ty = ctx.func.get_type(*dest);
                 if ty == Type::Bool {
-                    let one = ctx.backend.bv_from_i64(1, 1);
-                    let zero = ctx.backend.bv_from_i64(0, 1);
-                    let is_false = ctx.backend.bv_eq(z3_src, &zero);
+                    let bit_width_src = z3_src.get_size();
+                    let bit_width_dest = z3_dest.get_size();
 
-                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one);
+                    let one_dest = ctx.backend.bv_from_i64(1, bit_width_dest);
+                    let zero_src = ctx.backend.bv_from_i64(0, bit_width_src);
+                    let zero_dest = ctx.backend.bv_from_i64(0, bit_width_dest);
+
+                    let is_false = ctx.backend.bv_eq(z3_src, &zero_src);
+
+                    let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one_dest);
                     let __implies1 = ctx.backend.bool_implies(&is_false, &__is_true_eq_one);
                     let __not_false = ctx.backend.bool_not(&is_false);
-                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero);
+                    let __is_false_eq_zero = ctx.backend.bv_eq(z3_dest, &zero_dest);
                     let __implies2 = ctx.backend.bool_implies(&__not_false, &__is_false_eq_zero);
                     let __both = ctx.backend.bool_and(&[&__implies1, &__implies2]);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__both);

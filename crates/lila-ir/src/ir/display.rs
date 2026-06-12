@@ -20,7 +20,11 @@ impl fmt::Display for Type {
             Type::I32X4 => write!(f, "i32x4"),
             Type::F64X2 => write!(f, "f64x2"),
             Type::I64X2 => write!(f, "i64x2"),
-            Type::Array(t, s) => match s {
+            Type::I8X16 => write!(f, "i8x16"),
+            Type::U8X16 => write!(f, "u8x16"),
+            Type::I16X8 => write!(f, "i16x8"),
+            Type::U16X8 => write!(f, "u16x8"),
+            Type::Array(t, size) => match size {
                 Some(size) => write!(f, "Array<{}, {}>", t, size),
                 None => write!(f, "Array<{}>", t),
             },

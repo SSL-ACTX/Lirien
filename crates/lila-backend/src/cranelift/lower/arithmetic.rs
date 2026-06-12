@@ -136,7 +136,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let s = get_val(&ctx.values, scalar);
             let ty = ctx.ssa_func.get_type(*dest);
             let cl_ty = super::translate_type(&ty);
-            let res = ctx.builder.ins().splat(cl_ty, s);
+            let lane_ty = cl_ty.lane_type();
+            let narrowed_s = if ctx.builder.func.dfg.value_type(s) != lane_ty {
+                ctx.builder.ins().ireduce(lane_ty, s)
+            } else {
+                s
+            };
+            let res = ctx.builder.ins().splat(cl_ty, narrowed_s);
             ctx.values.insert(*dest, res);
         }
 

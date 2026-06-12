@@ -1022,6 +1022,10 @@ impl CFGBuilder {
                 Type::I32X4 => Type::I32,
                 Type::F64X2 => Type::F64,
                 Type::I64X2 => Type::I64,
+                Type::I8X16 => Type::I8,
+                Type::U8X16 => Type::U8,
+                Type::I16X8 => Type::I16,
+                Type::U16X8 => Type::U16,
                 _ => unreachable!(),
             };
 
@@ -1065,6 +1069,10 @@ impl CFGBuilder {
                 Type::I32X4 => Type::I32,
                 Type::F64X2 => Type::F64,
                 Type::I64X2 => Type::I64,
+                Type::I8X16 => Type::I8,
+                Type::U8X16 => Type::U8,
+                Type::I16X8 => Type::I16,
+                Type::U16X8 => Type::U16,
                 _ => unreachable!(),
             };
 
