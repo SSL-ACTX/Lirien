@@ -141,14 +141,15 @@ def unrolled_sum(limit: Literal[5]) -> i64:
 Lila caches its proven Intermediate Representation (IR) to disk in a fast binary format. If the Python source code, memory layouts, and compiler version remain unchanged, subsequent executions completely bypass AST parsing and the computationally expensive Z3 formal verification phase. The pre-verified IR is fed directly to Cranelift for near-instant execution startup times.
 
 #### Native SIMD (Vectorized) Execution
-Lila exposes native CPU vector registers directly to Python, allowing for high-performance math that bypasses NumPy's calling overhead.
+Lila exposes native CPU vector registers directly to Python, allowing for high-performance math that bypasses NumPy's calling overhead. It supports floating-point vectors (`f32x4`, `f64x2`) as well as a full suite of integer vectors including 8-bit and 16-bit types (`i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `i64x2`).
 ```python
-from lila import verify, f32x4
+from lila import verify, i8x16
 
 @verify
-def add_vectors(a: f32x4, b: f32x4) -> f32x4:
-    # Compiles to a single native SIMD instruction (e.g., ADDPS)
-    return (a + b) * 2.0
+def process_pixels(a: i8x16, b: i8x16) -> i8x16:
+    # Compiles to a single native SIMD instruction
+    # Automatic splatting broadcasts scalars (e.g., 10) to all vector lanes
+    return (a + b) - 10
 ```
 
 ---

@@ -7,17 +7,20 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 #[pyfunction]
+#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, timeout_ms=5000))]
 pub fn verify_and_compile(
     source: String,
     func_name: String,
     struct_layouts: HashMap<String, Vec<(String, String)>>,
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
+    timeout_ms: u32,
 ) -> PyResult<usize> {
     info!(target: "lila::bridge", "Received source for '{}'", func_name);
     debug!(target: "lila::bridge", "Struct layouts: {:?}", struct_layouts);
     debug!(target: "lila::bridge", "Enum layouts: {:?}", enum_layouts);
     debug!(target: "lila::bridge", "Type aliases: {:?}", type_aliases);
+    debug!(target: "lila::bridge", "Timeout ms: {}", timeout_ms);
 
     let cache_hash = cache::compute_hash(
         &source,
@@ -56,7 +59,8 @@ pub fn verify_and_compile(
 
         for ssa in &funcs {
             info!(target: "lila::bridge", "Processing SSA for '{}'...", ssa.name);
-            if let Err(e) = lila_verify::verify(ssa) {
+            if let Err(e) = lila_verify::verify(ssa, timeout_ms) {
+
                 cache::invalidate(cache_hash);
                 return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
             }

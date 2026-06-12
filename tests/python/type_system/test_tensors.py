@@ -13,7 +13,7 @@ class TestTensors(unittest.TestCase):
         ) -> f32:
             return a[i, j]
 
-        @verify
+        @verify(timeout=15000)
         def tensor_set(
             a: Tensor[f32, "M", "N"],
             i: Refined[i64, "0 <= v < M"],

@@ -13,7 +13,7 @@ use tracing::info;
 
 static VERIFY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-pub fn verify(func: &Function) -> Result<(), String> {
+pub fn verify(func: &Function, timeout_ms: u32) -> Result<(), String> {
     info!(target: "lila::verify", "Verifying function '{}'...", func.name);
 
     let uid = VERIFY_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -33,8 +33,7 @@ pub fn verify(func: &Function) -> Result<(), String> {
 
     let mut backend = z3_backend::Z3Backend::new(&ctx, &solver);
 
-    // Set a 5-second timeout for the entire verification process
-    backend.set_timeout(5000);
+    backend.set_timeout(timeout_ms);
 
     verify_with_context(&mut backend, func, &analysis_results, liveness, uid)
 }

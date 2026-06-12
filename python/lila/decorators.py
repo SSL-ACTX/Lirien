@@ -165,6 +165,7 @@ class MonomorphizedFunction:
         struct_layouts,
         class_name=None,
         method_name=None,
+        timeout=5000,
     ):
         self.func = func
         self.typevars = typevars  # Set of TypeVar objects
@@ -173,6 +174,7 @@ class MonomorphizedFunction:
         self.struct_layouts = struct_layouts
         self.class_name = class_name
         self.method_name = method_name
+        self.timeout = timeout
         self.cache = {}
         self.sig = inspect.signature(func)
 
@@ -282,6 +284,7 @@ class MonomorphizedFunction:
                 struct_layouts,
                 enum_layouts,
                 type_aliases,
+                self.timeout,
             )
         except Exception as e:
             error_msg = format_verification_error(
@@ -327,6 +330,7 @@ class MonomorphizedFunction:
 def verify(
     strict: bool = True,
     log_level: str = None,
+    timeout: int = 5000,
     _struct_layouts: dict = None,
     _class_name: str = None,
     _method_name: str = None,
@@ -336,6 +340,7 @@ def verify(
 
     :param strict: If True, raises VerificationError on failure. If False, falls back to Python.
     :param log_level: Override LILA_LOG level (e.g., 'info', 'debug', 'warn').
+    :param timeout: Verification timeout in milliseconds (default 5000).
     """
 
     # Handle the case where the decorator is used without parentheses: @verify
@@ -357,6 +362,7 @@ def verify(
                 _struct_layouts,
                 _class_name,
                 _method_name,
+                timeout,
             )
 
         log_lvl, old_log = _setup_logging(log_level)
@@ -371,7 +377,12 @@ def verify(
 
             try:
                 code_ptr = lila_bridge.verify_and_compile(
-                    source, target_func_name, struct_layouts, enum_layouts, type_aliases
+                    source,
+                    target_func_name,
+                    struct_layouts,
+                    enum_layouts,
+                    type_aliases,
+                    timeout,
                 )
             finally:
                 _restore_logging(log_lvl, old_log)
