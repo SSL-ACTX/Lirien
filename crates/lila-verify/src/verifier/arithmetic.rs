@@ -124,6 +124,93 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::Neg(dest, src) => {
+            if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
+                let bit_width = z3_s.get_size();
+                let zero = ctx.backend.bv_from_i64(0, bit_width);
+                let res = ctx.backend.bv_sub(&zero, z3_s);
+                let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+                let zero = ctx.backend.float_from_f64(0.0);
+                let res = ctx.backend.float_sub(&zero, z3_s);
+                let __inner = ctx.backend.float_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::Abs(dest, src) => {
+            if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(src)) {
+                let bit_width = z3_s.get_size();
+                let zero = ctx.backend.bv_from_i64(0, bit_width);
+                let is_neg = ctx.backend.bv_slt(z3_s, &zero);
+                let neg_val = ctx.backend.bv_sub(&zero, z3_s);
+                let res = ctx.backend.bool_ite(&is_neg, &neg_val, z3_s);
+                let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+                let zero = ctx.backend.float_from_f64(0.0);
+                let is_neg = ctx.backend.float_lt(z3_s, &zero);
+                let neg_val = ctx.backend.float_sub(&zero, z3_s);
+                let res = ctx.backend.float_ite(&is_neg, &neg_val, z3_s);
+                let __inner = ctx.backend.float_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::Min(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+                let is_lt = if ctx.func.get_type(*lhs).is_signed() {
+                    ctx.backend.bv_slt(z3_l, z3_r)
+                } else {
+                    ctx.backend.bv_ult(z3_l, z3_r)
+                };
+                let res = ctx.backend.bool_ite(&is_lt, z3_l, z3_r);
+                let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(lhs), ctx.z3_floats.get(rhs)) {
+                let is_lt = ctx.backend.float_lt(z3_l, z3_r);
+                let res = ctx.backend.float_ite(&is_lt, z3_l, z3_r);
+                let __inner = ctx.backend.float_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::Max(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+                let is_gt = if ctx.func.get_type(*lhs).is_signed() {
+                    ctx.backend.bv_sgt(z3_l, z3_r)
+                } else {
+                    ctx.backend.bv_ugt(z3_l, z3_r)
+                };
+                let res = ctx.backend.bool_ite(&is_gt, z3_l, z3_r);
+                let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(lhs), ctx.z3_floats.get(rhs)) {
+                let is_gt = ctx.backend.float_gt(z3_l, z3_r);
+                let res = ctx.backend.float_ite(&is_gt, z3_l, z3_r);
+                let __inner = ctx.backend.float_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::Avg(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+                let bit_width = z3_l.get_size();
+                let one = ctx.backend.bv_from_i64(1, bit_width);
+                let two = ctx.backend.bv_from_i64(2, bit_width);
+                let sum = ctx.backend.bv_add(z3_l, z3_r);
+                let sum_plus_one = ctx.backend.bv_add(&sum, &one);
+                let res = ctx.backend.bv_udiv(&sum_plus_one, &two);
+                let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
         InstructionKind::MatMult(_dest, lhs, rhs) => {
             if let (Some(l_dims), Some(r_dims)) = (
                 ctx.z3_tensor_dims.get(lhs),

@@ -5,10 +5,9 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 ## Roadmap & Future Directions
 
 1. [ ] **Automated Loop Invariant Synthesis**: Researching Abstract Interpretation to automatically derive loop invariants.
-2. [ ] **Flat Value Types (`@value`)**: Support for stack-allocated, non-boxed structs to reduce heap pressure.
-3. [ ] **Transition to Aeneas and F***: Moving from Z3 to Aeneas and F* for absolute formal proof.
 
 ## Completed Features
+- [x] **Flat Value Types (`@value`)**: Support for stack-allocated, non-boxed structs and inline nested buffer allocations to reduce heap pressure.
 - [x] **Zero-Cost ADTs**: Full support for variants with primitive, tuple, and None payloads.
 - [x] **Optimized Match Dispatch**: Cranelift `switch` based jump tables for $O(1)$ variant dispatch.
 - [x] **Z3-Backed Exhaustiveness Checking**: Formal proof that all ADT variants are handled in `match` blocks.

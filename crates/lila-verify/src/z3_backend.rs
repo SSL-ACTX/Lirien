@@ -83,6 +83,14 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         a.eq(b)
     }
 
+    fn bool_ite(&mut self, cond: &Self::Bool, then: &Self::BV, orelse: &Self::BV) -> Self::BV {
+        cond.ite(then, orelse)
+    }
+
+    fn float_ite(&mut self, cond: &Self::Bool, then: &Self::Float, orelse: &Self::Float) -> Self::Float {
+        cond.ite(then, orelse)
+    }
+
     fn int_const(&mut self, name: &str) -> Self::Int {
         Int::new_const(name)
     }

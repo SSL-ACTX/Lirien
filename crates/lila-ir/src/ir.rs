@@ -459,6 +459,41 @@ macro_rules! lila_instructions {
                 side_effects: false,
                 category: Arithmetic
             },
+            Abs(dest: Value, src: Value) {
+                display: "{} = abs {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Neg(dest: Value, src: Value) {
+                display: "{} = neg {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Min(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = min {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Max(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = max {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Avg(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = avg {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
             MatMult(dest: Value, lhs: Value, rhs: Value) {
                 display: "{} = matmult {}, {}",
                 def: Some(*dest),
@@ -1288,6 +1323,31 @@ impl fmt::Display for Instruction {
             InstructionKind::URem(d, l, r) => write!(
                 f,
                 "  {} = urem {}, {}{}{}",
+                d, l, r, loc_str, constraints_str
+            ),
+            InstructionKind::Abs(d, s) => write!(
+                f,
+                "  {} = abs {}{}{}",
+                d, s, loc_str, constraints_str
+            ),
+            InstructionKind::Neg(d, s) => write!(
+                f,
+                "  {} = neg {}{}{}",
+                d, s, loc_str, constraints_str
+            ),
+            InstructionKind::Min(d, l, r) => write!(
+                f,
+                "  {} = min {}, {}{}{}",
+                d, l, r, loc_str, constraints_str
+            ),
+            InstructionKind::Max(d, l, r) => write!(
+                f,
+                "  {} = max {}, {}{}{}",
+                d, l, r, loc_str, constraints_str
+            ),
+            InstructionKind::Avg(d, l, r) => write!(
+                f,
+                "  {} = avg {}, {}{}{}",
                 d, l, r, loc_str, constraints_str
             ),
             InstructionKind::MatMult(d, l, r) => write!(

@@ -21,6 +21,11 @@ impl CFGBuilder {
                             return Some(l - r);
                         }
                     }
+                    InstructionKind::Neg(v, src) if v == val => {
+                        if let Some(s) = self.get_constant_int(src) {
+                            return Some(-s);
+                        }
+                    }
                     _ => {}
                 }
             }

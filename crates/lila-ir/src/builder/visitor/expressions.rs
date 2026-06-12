@@ -93,12 +93,11 @@ impl CFGBuilder {
                     ast::UnaryOp::Not => (InstructionKind::Not(dest, operand), "not"),
                     ast::UnaryOp::Invert => (InstructionKind::Not(dest, operand), "~"),
                     ast::UnaryOp::USub => {
-                        let zero = self.func.next_value();
-                        self.add_instruction(InstructionKind::ConstInt(zero, 0));
-                        (InstructionKind::Sub(dest, zero, operand), "-")
+                        (InstructionKind::Neg(dest, operand), "-")
                     }
                     ast::UnaryOp::UAdd => return Ok(operand),
                 };
+                self.func.set_type(dest, self.func.get_type(operand));
                 let inst = self.add_instruction(kind);
                 if op_str == "-" {
                     inst.add_constraint(format!("(= {} (- 0 {}))", dest, operand));
@@ -760,27 +759,30 @@ impl CFGBuilder {
                         return Err("sqrt() expects 1 argument".to_string());
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
+                    let arg = self.auto_load(arg);
                     let dest = self.func.next_value();
                     self.add_instruction(InstructionKind::FSqrt(dest, arg));
-                    self.func.set_type(dest, Type::F64);
+                    self.func.set_type(dest, self.func.get_type(arg));
                     return Ok(dest);
                 } else if func_name == "math.sin" {
                     if s.args.len() != 1 {
                         return Err("sin() expects 1 argument".to_string());
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
+                    let arg = self.auto_load(arg);
                     let dest = self.func.next_value();
                     self.add_instruction(InstructionKind::FSin(dest, arg));
-                    self.func.set_type(dest, Type::F64);
+                    self.func.set_type(dest, self.func.get_type(arg));
                     return Ok(dest);
                 } else if func_name == "math.cos" {
                     if s.args.len() != 1 {
                         return Err("cos() expects 1 argument".to_string());
                     }
                     let arg = self.visit_expr(s.args[0].clone())?;
+                    let arg = self.auto_load(arg);
                     let dest = self.func.next_value();
                     self.add_instruction(InstructionKind::FCos(dest, arg));
-                    self.func.set_type(dest, Type::F64);
+                    self.func.set_type(dest, self.func.get_type(arg));
                     return Ok(dest);
                 } else if func_name == "math.pow" {
                     if s.args.len() != 2 {
@@ -788,9 +790,57 @@ impl CFGBuilder {
                     }
                     let b = self.visit_expr(s.args[0].clone())?;
                     let e = self.visit_expr(s.args[1].clone())?;
+                    let b = self.auto_load(b);
+                    let e = self.auto_load(e);
                     let dest = self.func.next_value();
                     self.add_instruction(InstructionKind::FPow(dest, b, e));
-                    self.func.set_type(dest, Type::F64);
+                    self.func.set_type(dest, self.func.get_type(b));
+                    return Ok(dest);
+                } else if func_name == "abs" || func_name == "math.abs" {
+                    if s.args.len() != 1 {
+                        return Err("abs() expects 1 argument".to_string());
+                    }
+                    let arg = self.visit_expr(s.args[0].clone())?;
+                    let arg = self.auto_load(arg);
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::Abs(dest, arg));
+                    self.func.set_type(dest, self.func.get_type(arg));
+                    return Ok(dest);
+                } else if func_name == "min" || func_name == "math.min" {
+                    if s.args.len() != 2 {
+                        return Err("min() expects 2 arguments".to_string());
+                    }
+                    let l = self.visit_expr(s.args[0].clone())?;
+                    let r = self.visit_expr(s.args[1].clone())?;
+                    let l = self.auto_load(l);
+                    let r = self.auto_load(r);
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::Min(dest, l, r));
+                    self.func.set_type(dest, self.func.get_type(l));
+                    return Ok(dest);
+                } else if func_name == "max" || func_name == "math.max" {
+                    if s.args.len() != 2 {
+                        return Err("max() expects 2 arguments".to_string());
+                    }
+                    let l = self.visit_expr(s.args[0].clone())?;
+                    let r = self.visit_expr(s.args[1].clone())?;
+                    let l = self.auto_load(l);
+                    let r = self.auto_load(r);
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::Max(dest, l, r));
+                    self.func.set_type(dest, self.func.get_type(l));
+                    return Ok(dest);
+                } else if func_name == "avg" || func_name == "math.avg" {
+                    if s.args.len() != 2 {
+                        return Err("avg() expects 2 arguments".to_string());
+                    }
+                    let l = self.visit_expr(s.args[0].clone())?;
+                    let r = self.visit_expr(s.args[1].clone())?;
+                    let l = self.auto_load(l);
+                    let r = self.auto_load(r);
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::Avg(dest, l, r));
+                    self.func.set_type(dest, self.func.get_type(l));
                     return Ok(dest);
                 }
 

@@ -67,12 +67,64 @@ pub fn propagate_types(func: &mut Function) {
                             }
                         }
                     }
-                    InstructionKind::Not(d, s) => {
+                    InstructionKind::Not(d, s)
+                    | InstructionKind::Abs(d, s)
+                    | InstructionKind::Neg(d, s) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
                             let s_ty = func.get_type(*s);
                             if s_ty != Type::Unknown {
-                                new_types.insert(*d, s_ty);
+                                let inner_ty = match s_ty {
+                                    Type::Refined(inner, _) => *inner,
+                                    other => other,
+                                };
+                                let constraint = match &inst.kind {
+                                    InstructionKind::Neg(_, _) => {
+                                        format!("(= {{v}} (- 0 {}))", s)
+                                    }
+                                    InstructionKind::Abs(_, _) => {
+                                        format!("(= {{v}} (ite (>= {} 0) {} (- 0 {})))", s, s, s)
+                                    }
+                                    _ => "".to_string(),
+                                };
+                                if !constraint.is_empty() {
+                                    new_types.insert(*d, Type::Refined(Box::new(inner_ty), constraint));
+                                } else {
+                                    new_types.insert(*d, inner_ty);
+                                }
+                            }
+                        }
+                    }
+                    InstructionKind::Min(d, l, r)
+                    | InstructionKind::Max(d, l, r)
+                    | InstructionKind::Avg(d, l, r) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let l_ty = func.get_type(*l);
+                            let r_ty = func.get_type(*r);
+                            let base_ty = if l_ty != Type::Unknown { l_ty } else { r_ty };
+                            if base_ty != Type::Unknown {
+                                let inner_ty = match base_ty {
+                                    Type::Refined(inner, _) => *inner,
+                                    other => other,
+                                };
+                                let constraint = match &inst.kind {
+                                    InstructionKind::Min(_, _, _) => {
+                                        format!("(= {{v}} (ite (<= {} {}) {} {}))", l, r, l, r)
+                                    }
+                                    InstructionKind::Max(_, _, _) => {
+                                        format!("(= {{v}} (ite (>= {} {}) {} {}))", l, r, l, r)
+                                    }
+                                    InstructionKind::Avg(_, _, _) => {
+                                        format!("(= {{v}} (/ (+ {} {} 1) 2))", l, r)
+                                    }
+                                    _ => "".to_string(),
+                                };
+                                if !constraint.is_empty() {
+                                    new_types.insert(*d, Type::Refined(Box::new(inner_ty), constraint));
+                                } else {
+                                    new_types.insert(*d, inner_ty);
+                                }
                             }
                         }
                     }

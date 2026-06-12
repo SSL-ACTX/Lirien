@@ -434,9 +434,15 @@ fn translate_instructions<
                 | InstructionKind::FToI(..)
                 | InstructionKind::FConv(..)
                 | InstructionKind::Not(..)
+                | InstructionKind::Abs(..)
+                | InstructionKind::Neg(..)
+                | InstructionKind::Min(..)
+                | InstructionKind::Max(..)
+                | InstructionKind::Avg(..)
                 | InstructionKind::SIMDSplat(..)
                 | InstructionKind::SIMDExtractLane(..)
                 | InstructionKind::SIMDInsertLane(..) => {
+
                     arithmetic::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::Jump(_)

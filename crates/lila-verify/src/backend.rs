@@ -19,6 +19,8 @@ pub trait SolverBackend {
     fn bool_or(&mut self, args: &[&Self::Bool]) -> Self::Bool;
     fn bool_implies(&mut self, a: &Self::Bool, b: &Self::Bool) -> Self::Bool;
     fn bool_eq(&mut self, a: &Self::Bool, b: &Self::Bool) -> Self::Bool;
+    fn bool_ite(&mut self, cond: &Self::Bool, then: &Self::BV, orelse: &Self::BV) -> Self::BV;
+    fn float_ite(&mut self, cond: &Self::Bool, then: &Self::Float, orelse: &Self::Float) -> Self::Float;
 
     fn int_const(&mut self, name: &str) -> Self::Int;
     fn int_from_i64(&mut self, val: i64) -> Self::Int;

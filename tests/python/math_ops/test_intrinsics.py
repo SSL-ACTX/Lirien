@@ -48,6 +48,18 @@ class TestNewIntrinsics(unittest.TestCase):
 
         self.assertAlmostEqual(compute_pow(2.0, 3.0), 8.0)
 
+    def test_new_scalar_intrinsics(self):
+        @verify
+        def scalar_ops(a: i64, b: i64) -> i64:
+            return abs(a) + min(a, b) + max(a, b)
+
+        # a=-10, b=20
+        # abs(-10) = 10
+        # min(-10, 20) = -10
+        # max(-10, 20) = 20
+        # sum = 10 - 10 + 20 = 20
+        self.assertEqual(scalar_ops(-10, 20), 20)
+
 
 if __name__ == "__main__":
     unittest.main()

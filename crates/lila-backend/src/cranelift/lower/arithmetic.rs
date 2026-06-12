@@ -47,6 +47,62 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().urem(l, r);
             ctx.values.insert(*dest, res);
         }
+        InstructionKind::Abs(dest, src) => {
+            let s = get_val(&ctx.values, src);
+            let ssa_ty = ctx.ssa_func.get_type(*src);
+            let res = if ssa_ty.is_float() {
+                ctx.builder.ins().fabs(s)
+            } else {
+                ctx.builder.ins().iabs(s)
+            };
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::Neg(dest, src) => {
+            let s = get_val(&ctx.values, src);
+            let ssa_ty = ctx.ssa_func.get_type(*src);
+            let res = if ssa_ty.is_float() {
+                ctx.builder.ins().fneg(s)
+            } else {
+                ctx.builder.ins().ineg(s)
+            };
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::Min(dest, lhs, rhs) => {
+            let l = get_val(&ctx.values, lhs);
+            let r = get_val(&ctx.values, rhs);
+            let ssa_ty = ctx.ssa_func.get_type(*lhs);
+            let res = if ssa_ty.is_float() {
+                ctx.builder.ins().fmin(l, r)
+            } else {
+                if ssa_ty.is_signed() {
+                    ctx.builder.ins().smin(l, r)
+                } else {
+                    ctx.builder.ins().umin(l, r)
+                }
+            };
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::Max(dest, lhs, rhs) => {
+            let l = get_val(&ctx.values, lhs);
+            let r = get_val(&ctx.values, rhs);
+            let ssa_ty = ctx.ssa_func.get_type(*lhs);
+            let res = if ssa_ty.is_float() {
+                ctx.builder.ins().fmax(l, r)
+            } else {
+                if ssa_ty.is_signed() {
+                    ctx.builder.ins().smax(l, r)
+                } else {
+                    ctx.builder.ins().umax(l, r)
+                }
+            };
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::Avg(dest, lhs, rhs) => {
+            let l = get_val(&ctx.values, lhs);
+            let r = get_val(&ctx.values, rhs);
+            let res = ctx.builder.ins().avg_round(l, r);
+            ctx.values.insert(*dest, res);
+        }
         InstructionKind::FAdd(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);

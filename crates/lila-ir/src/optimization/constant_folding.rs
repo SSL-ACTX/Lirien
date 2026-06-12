@@ -74,6 +74,30 @@ pub fn fold_constants(func: &mut Function) {
                         folded_instructions.push(inst);
                     }
                 }
+                InstructionKind::Neg(d, s) => {
+                    if let Some(c) = constants.get(s) {
+                        match c {
+                            Constant::Int(v) => {
+                                let res = -v;
+                                constants.insert(*d, Constant::Int(res));
+                                folded_instructions.push(Instruction::new(
+                                    InstructionKind::ConstInt(*d, res),
+                                    location,
+                                ));
+                            }
+                            Constant::Float(v) => {
+                                let res = -v;
+                                constants.insert(*d, Constant::Float(res));
+                                folded_instructions.push(Instruction::new(
+                                    InstructionKind::ConstFloat(*d, res),
+                                    location,
+                                ));
+                            }
+                        }
+                    } else {
+                        folded_instructions.push(inst);
+                    }
+                }
                 _ => {
                     folded_instructions.push(inst);
                 }

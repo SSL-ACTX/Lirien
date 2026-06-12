@@ -1,4 +1,5 @@
 import unittest
+import math
 from lila import verify, f32x4, f64x2, i32x4, i64x2
 
 
@@ -84,6 +85,47 @@ class TestSIMD(unittest.TestCase):
         self.assertAlmostEqual(res[1], 15.0)
         self.assertAlmostEqual(res[2], 25.0)
         self.assertAlmostEqual(res[3], 35.0)
+
+    def test_simd_abs_neg(self):
+        @verify
+        def abs_neg_test(a: f32x4) -> f32x4:
+            return abs(-a)
+
+        va = f32x4(-1.0, 2.0, -3.0, 4.0)
+        res = abs_neg_test(va)
+        # -va = [1.0, -2.0, 3.0, -4.0]
+        # abs(-va) = [1.0, 2.0, 3.0, 4.0]
+        self.assertEqual(res[0], 1.0)
+        self.assertEqual(res[1], 2.0)
+        self.assertEqual(res[2], 3.0)
+        self.assertEqual(res[3], 4.0)
+
+    def test_simd_min_max(self):
+        @verify
+        def min_max_test(a: i32x4, b: i32x4) -> i32x4:
+            return min(a, b) + max(a, b)
+
+        va = i32x4(10, 20, 30, 40)
+        vb = i32x4(40, 30, 20, 10)
+        res = min_max_test(va, vb)
+        # min = [10, 20, 20, 10]
+        # max = [40, 30, 30, 40]
+        # sum = [50, 50, 50, 50]
+        for i in range(4):
+            self.assertEqual(res[i], 50)
+
+    def test_simd_avg(self):
+        @verify
+        def avg_test(a: i32x4, b: i32x4) -> i32x4:
+            return math.avg(a, b)
+
+        va = i32x4(10, 20, 30, 40)
+        vb = i32x4(11, 21, 31, 41)
+        res = avg_test(va, vb)
+        # (10 + 11 + 1) // 2 = 11 (avg_round)
+        # (20 + 21 + 1) // 2 = 21
+        for i in range(4):
+            self.assertEqual(res[i], va[i] + 1)
 
 
 if __name__ == "__main__":
