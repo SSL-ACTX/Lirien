@@ -457,6 +457,8 @@ fn translate_instructions<
                 | InstructionKind::BufferStore(..)
                 | InstructionKind::TensorLoad(..)
                 | InstructionKind::TensorStore(..)
+                | InstructionKind::TensorDim(..)
+                | InstructionKind::TensorBroadcast(..)
                 | InstructionKind::BufferLen(..)
                 | InstructionKind::TensorAdd(..)
                 | InstructionKind::TensorSub(..)

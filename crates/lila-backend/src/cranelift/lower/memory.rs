@@ -158,6 +158,84 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             // Re-register dimensions for the new tensor value
             ctx.tensor_dims.insert(*dest, dims);
         }
+        InstructionKind::TensorDim(dest, tensor, index) => {
+            let dims = ctx
+                .tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found");
+            let dim = dims[*index];
+            ctx.values.insert(*dest, dim);
+        }
+        InstructionKind::TensorBroadcast(dest, src, target_dims) => {
+            let src_ptr = get_val(&ctx.values, src);
+            let src_dims = ctx
+                .tensor_dims
+                .get(src)
+                .expect("Source tensor dimensions not found")
+                .clone();
+
+            let mut target_dim_vals = Vec::new();
+            for dim_val in target_dims {
+                target_dim_vals.push(get_val(&ctx.values, dim_val));
+            }
+
+            let src_rank = src_dims.len();
+            let target_rank = target_dim_vals.len();
+
+            let src_dims_slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (src_rank * 8) as u32,
+            ));
+            for (i, &dim) in src_dims.iter().enumerate() {
+                ctx.builder
+                    .ins()
+                    .stack_store(dim, src_dims_slot, (i * 8) as i32);
+            }
+            let src_dims_ptr = ctx.builder.ins().stack_addr(types::I64, src_dims_slot, 0);
+
+            let target_dims_slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                (target_rank * 8) as u32,
+            ));
+            for (i, &dim) in target_dim_vals.iter().enumerate() {
+                ctx.builder
+                    .ins()
+                    .stack_store(dim, target_dims_slot, (i * 8) as i32);
+            }
+            let target_dims_ptr = ctx.builder.ins().stack_addr(types::I64, target_dims_slot, 0);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // src_ptr
+            sig.params.push(AbiParam::new(types::I64)); // src_dims_ptr
+            sig.params.push(AbiParam::new(types::I64)); // src_rank
+            sig.params.push(AbiParam::new(types::I64)); // target_dims_ptr
+            sig.params.push(AbiParam::new(types::I64)); // target_rank
+            sig.returns.push(AbiParam::new(types::I64)); // dest_ptr
+
+            let func_id = ctx
+                .module
+                .declare_function("lila_tensor_broadcast_f32", Linkage::Import, &sig)
+                .expect("Failed to declare lila_tensor_broadcast_f32");
+            let local_func = ctx.module.declare_func_in_func(func_id, ctx.builder.func);
+
+            let src_rank_val = ctx.builder.ins().iconst(types::I64, src_rank as i64);
+            let target_rank_val = ctx.builder.ins().iconst(types::I64, target_rank as i64);
+
+            let call = ctx.builder.ins().call(
+                local_func,
+                &[
+                    src_ptr,
+                    src_dims_ptr,
+                    src_rank_val,
+                    target_dims_ptr,
+                    target_rank_val,
+                ],
+            );
+            let res_ptr = ctx.builder.inst_results(call)[0];
+
+            ctx.values.insert(*dest, res_ptr);
+            ctx.tensor_dims.insert(*dest, target_dim_vals);
+        }
         InstructionKind::TensorAdd(dest, lhs, rhs)
         | InstructionKind::TensorSub(dest, lhs, rhs)
         | InstructionKind::TensorMul(dest, lhs, rhs)

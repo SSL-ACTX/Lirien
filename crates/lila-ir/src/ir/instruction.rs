@@ -535,6 +535,20 @@ macro_rules! lila_instructions {
                 side_effects: false,
                 category: Arithmetic
             },
+            TensorDim(dest: Value, tensor: Value, index: usize) {
+                display: "{} = tdim {}[{}]",
+                def: Some(*dest),
+                uses: [*tensor],
+                side_effects: false,
+                category: Memory
+            },
+            TensorBroadcast(dest: Value, src: Value, target_dims: Vec<Value>) {
+                display: "{} = tbroadcast {} to [...]",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Memory
+            },
             StructCreate(dest: Value, name: String, args: Vec<Value>) {
                 display: "{} = struct {} (...)",
                 def: Some(*dest),
@@ -760,6 +774,13 @@ impl Instruction {
                             }
                             InstructionKind::TensorStore(_, _, indices, _) => {
                                 for v in indices { operands.push(*v); }
+                            }
+                            InstructionKind::TensorDim(_, tensor, _) => {
+                                operands.push(*tensor);
+                            }
+                            InstructionKind::TensorBroadcast(_, src, dims) => {
+                                operands.push(*src);
+                                for v in dims { operands.push(*v); }
                             }
                             InstructionKind::TensorAdd(_, l, r)
                             | InstructionKind::TensorSub(_, l, r)

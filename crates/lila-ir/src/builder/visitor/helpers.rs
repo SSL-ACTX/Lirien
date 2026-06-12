@@ -40,4 +40,56 @@ impl CFGBuilder {
     pub(super) fn auto_load(&mut self, val: Value) -> Value {
         val
     }
+
+    pub(super) fn resolve_dim(&mut self, tensor: Value, dim_str: &str, index: usize) -> Value {
+        if let Ok(val) = dim_str.parse::<i64>() {
+            let dest = self.func.next_value();
+            self.add_instruction(InstructionKind::ConstInt(dest, val));
+            self.func.set_type(dest, crate::ir::Type::I64);
+            dest
+        } else {
+            let dest = self.func.next_value();
+            self.add_instruction(InstructionKind::TensorDim(dest, tensor, index));
+            self.func.set_type(dest, crate::ir::Type::I64);
+            dest
+        }
+    }
+
+    pub(super) fn get_broadcast_shape(
+        &self,
+        dims1: &[String],
+        dims2: &[String],
+    ) -> Option<Vec<String>> {
+        let mut res = Vec::new();
+        let len1 = dims1.len();
+        let len2 = dims2.len();
+        let max_len = std::cmp::max(len1, len2);
+
+        for i in 0..max_len {
+            let idx1 = i as i64 - (max_len as i64 - len1 as i64);
+            let idx2 = i as i64 - (max_len as i64 - len2 as i64);
+
+            let d1 = if idx1 < 0 {
+                "1"
+            } else {
+                &dims1[idx1 as usize]
+            };
+            let d2 = if idx2 < 0 {
+                "1"
+            } else {
+                &dims2[idx2 as usize]
+            };
+
+            if d1 == d2 {
+                res.push(d1.to_string());
+            } else if d1 == "1" {
+                res.push(d2.to_string());
+            } else if d2 == "1" {
+                res.push(d1.to_string());
+            } else {
+                return None;
+            }
+        }
+        Some(res)
+    }
 }

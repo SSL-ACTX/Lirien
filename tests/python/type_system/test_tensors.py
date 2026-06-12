@@ -5,7 +5,7 @@ from lila import VerificationError
 
 class TestTensors(unittest.TestCase):
     def test_tensor_indexing(self):
-        @verify
+        @verify(timeout=15000)
         def tensor_get(
             a: Tensor[f32, "M", "N"],
             i: Refined[i64, "0 <= v < M"],

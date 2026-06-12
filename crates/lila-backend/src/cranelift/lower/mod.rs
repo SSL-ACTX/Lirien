@@ -153,7 +153,10 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::BufferStore(_, _, _, _, _)
         | InstructionKind::TensorLoad(_, _, _)
         | InstructionKind::TensorStore(_, _, _, _)
+        | InstructionKind::TensorDim(_, _, _)
+        | InstructionKind::TensorBroadcast(_, _, _)
         | InstructionKind::TensorAdd(_, _, _)
+
         | InstructionKind::TensorSub(_, _, _)
         | InstructionKind::TensorMul(_, _, _)
         | InstructionKind::TensorDiv(_, _, _)

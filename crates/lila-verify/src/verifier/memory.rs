@@ -315,6 +315,28 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::TensorDim(dest, tensor, index) => {
+            let dims = ctx
+                .z3_tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found");
+            let dim = &dims[*index];
+            let z3_dest = ctx.z3_bvs.get(dest).expect("Dest not modeled");
+
+            let dim_bv = ctx.backend.int_to_bv(dim, 64);
+            let __inner = ctx.backend.bv_eq(z3_dest, &dim_bv);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::TensorBroadcast(dest, _src, target_dims) => {
+            let mut z3_target_dims = Vec::new();
+            for dim_val in target_dims {
+                let z3_dim_bv = ctx.z3_bvs.get(dim_val).expect("Dim value not modeled");
+                let z3_dim_int = ctx.backend.bv_to_int(z3_dim_bv, false);
+                z3_target_dims.push(z3_dim_int);
+            }
+            ctx.z3_tensor_dims.insert(*dest, z3_target_dims);
+        }
         InstructionKind::TensorStore(dest, tensor, indices, val) => {
             let z3_dest_data = ctx.z3_arrays.get(dest).cloned().unwrap();
             let z3_tensor_data = ctx.z3_arrays.get(tensor).cloned().unwrap();

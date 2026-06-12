@@ -471,6 +471,23 @@ impl fmt::Display for Instruction {
                 "  {} = tmin {}{}{}",
                 d, t, loc_str, constraints_str
             ),
+            InstructionKind::TensorDim(d, t, i) => write!(
+                f,
+                "  {} = tdim {}[{}] {}{}",
+                d, t, i, loc_str, constraints_str
+            ),
+            InstructionKind::TensorBroadcast(d, s, dims) => {
+                let dims_str: Vec<String> = dims.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  {} = tbroadcast {} to [{}] {}{}",
+                    d,
+                    s,
+                    dims_str.join(", "),
+                    loc_str,
+                    constraints_str
+                )
+            }
             InstructionKind::StructCreate(d, name, args) => {
                 let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(

@@ -158,6 +158,58 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }
     }
 
+    extern "C" fn lila_tensor_broadcast_f32(
+        src_ptr: *const f32,
+        src_dims: *const usize,
+        src_rank: usize,
+        target_dims: *const usize,
+        target_rank: usize,
+    ) -> *mut f32 {
+        unsafe {
+            let mut total_size = 1;
+            let target_dims_slice = std::slice::from_raw_parts(target_dims, target_rank);
+            for &d in target_dims_slice {
+                total_size *= d;
+            }
+
+            let dest_ptr = malloc(total_size * 4) as *mut f32;
+            let src_dims_slice = std::slice::from_raw_parts(src_dims, src_rank);
+
+            let mut src_strides = vec![1; src_rank];
+            for i in (0..src_rank as i64 - 1).rev() {
+                src_strides[i as usize] = src_strides[i as usize + 1] * src_dims_slice[i as usize + 1];
+            }
+
+            let mut broadcast_strides = vec![0; target_rank];
+            for i in 0..target_rank {
+                let target_idx = target_rank as i64 - 1 - i as i64;
+                let src_idx = src_rank as i64 - 1 - i as i64;
+                if src_idx >= 0 {
+                    if src_dims_slice[src_idx as usize] == target_dims_slice[target_idx as usize] {
+                        broadcast_strides[target_idx as usize] = src_strides[src_idx as usize];
+                    } else if src_dims_slice[src_idx as usize] == 1 {
+                        broadcast_strides[target_idx as usize] = 0;
+                    }
+                }
+            }
+
+            for i in 0..total_size {
+                let mut curr_idx = i;
+                let mut src_offset = 0;
+                let mut stride_in_dest = total_size;
+                for j in 0..target_rank {
+                    stride_in_dest /= target_dims_slice[j];
+                    let dim_idx = curr_idx / stride_in_dest;
+                    src_offset += dim_idx * broadcast_strides[j];
+                    curr_idx %= stride_in_dest;
+                }
+                *dest_ptr.add(i) = *src_ptr.add(src_offset);
+            }
+
+            dest_ptr
+        }
+    }
+
     jit_builder.symbol("malloc", malloc as *const u8);
     jit_builder.symbol("memcpy", memcpy as *const u8);
     jit_builder.symbol("sin", lila_sin as *const u8);
@@ -167,6 +219,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("lila_tensor_arith_f32", lila_tensor_arith_f32 as *const u8);
     jit_builder.symbol("lila_tensor_reduce_f32", lila_tensor_reduce_f32 as *const u8);
     jit_builder.symbol("lila_tensor_scalar_arith_f32", lila_tensor_scalar_arith_f32 as *const u8);
+    jit_builder.symbol("lila_tensor_broadcast_f32", lila_tensor_broadcast_f32 as *const u8);
 
     let mut module = JITModule::new(jit_builder);
     let mut ctx = module.make_context();

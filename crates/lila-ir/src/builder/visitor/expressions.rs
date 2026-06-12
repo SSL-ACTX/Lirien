@@ -1112,16 +1112,91 @@ impl CFGBuilder {
 
         let is_float = l_ty.is_float() || r_ty.is_float();
 
-        if let (Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (&l_ty, &r_ty) {
+        if let (Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (l_ty.clone(), r_ty.clone()) {
             if op != ast::Operator::MatMult {
                 if t1 != t2 {
                     return Err("Tensor arithmetic requires same base types".to_string());
                 }
                 if dims1 != dims2 {
-                    return Err(format!(
-                        "Tensor shape mismatch in element-wise operation: {:?} vs {:?}",
-                        dims1, dims2
-                    ));
+                    if let Some(res_dims) = self.get_broadcast_shape(&dims1, &dims2) {
+                        if dims1 != res_dims {
+                            let mut target_dim_values = Vec::new();
+                            for (i, d_str) in res_dims.iter().enumerate() {
+                                let len1 = dims1.len();
+                                let len2 = dims2.len();
+                                let max_len = res_dims.len();
+                                let idx1 = i as i64 - (max_len as i64 - len1 as i64);
+                                let idx2 = i as i64 - (max_len as i64 - len2 as i64);
+
+                                let val = if idx1 >= 0 && dims1[idx1 as usize] == *d_str {
+                                    self.resolve_dim(lhs, d_str, idx1 as usize)
+                                } else if idx2 >= 0 && dims2[idx2 as usize] == *d_str {
+                                    self.resolve_dim(rhs, d_str, idx2 as usize)
+                                } else {
+                                    let dest_const = self.func.next_value();
+                                    let c_val = d_str.parse::<i64>().unwrap_or(1);
+                                    self.add_instruction(InstructionKind::ConstInt(dest_const, c_val));
+                                    self.func.set_type(dest_const, Type::I64);
+                                    dest_const
+                                };
+                                target_dim_values.push(val);
+                            }
+
+                            let new_lhs = self.func.next_value();
+                            self.add_instruction(InstructionKind::TensorBroadcast(
+                                new_lhs,
+                                lhs,
+                                target_dim_values,
+                            ));
+                            self.func.set_type(
+                                new_lhs,
+                                Type::Tensor(t1.clone(), res_dims.clone()),
+                            );
+                            lhs = new_lhs;
+                        }
+
+                        if dims2 != res_dims {
+                            let mut target_dim_values = Vec::new();
+                            for (i, d_str) in res_dims.iter().enumerate() {
+                                let len1 = dims1.len();
+                                let len2 = dims2.len();
+                                let max_len = res_dims.len();
+                                let idx1 = i as i64 - (max_len as i64 - len1 as i64);
+                                let idx2 = i as i64 - (max_len as i64 - len2 as i64);
+
+                                let val = if idx1 >= 0 && dims1[idx1 as usize] == *d_str {
+                                    self.resolve_dim(lhs, d_str, idx1 as usize)
+                                } else if idx2 >= 0 && dims2[idx2 as usize] == *d_str {
+                                    self.resolve_dim(rhs, d_str, idx2 as usize)
+                                } else {
+                                    let dest_const = self.func.next_value();
+                                    let c_val = d_str.parse::<i64>().unwrap_or(1);
+                                    self.add_instruction(InstructionKind::ConstInt(dest_const, c_val));
+                                    self.func.set_type(dest_const, Type::I64);
+                                    dest_const
+                                };
+                                target_dim_values.push(val);
+                            }
+
+                            let new_rhs = self.func.next_value();
+                            self.add_instruction(InstructionKind::TensorBroadcast(
+                                new_rhs,
+                                rhs,
+                                target_dim_values,
+                            ));
+                            self.func.set_type(
+                                new_rhs,
+                                Type::Tensor(t2.clone(), res_dims.clone()),
+                            );
+                            rhs = new_rhs;
+                        }
+                        l_ty = Type::Tensor(t1, res_dims);
+                    } else {
+                        return Err(format!(
+                            "Tensor shape mismatch in element-wise operation: {:?} vs {:?}",
+                            dims1, dims2
+                        ));
+                    }
                 }
 
                 let kind = match op {
