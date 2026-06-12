@@ -1,5 +1,5 @@
 import unittest
-from lila.compiler import verify
+from lila import verify
 from lila.types import i64, SizedArray
 
 

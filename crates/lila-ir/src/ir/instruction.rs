@@ -1,0 +1,875 @@
+use super::types::{BlockId, SourceLocation, Type, Value};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[macro_export]
+macro_rules! lila_instructions {
+    ($mac:ident) => {
+        $mac! {
+            // Integer Arithmetic
+            Add(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = add {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Sub(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sub {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Mul(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = mul {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            SDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sdiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            UDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = udiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            SRem(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = srem {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            URem(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = urem {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Abs(dest: Value, src: Value) {
+                display: "{} = abs {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Neg(dest: Value, src: Value) {
+                display: "{} = neg {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Min(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = min {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Max(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = max {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Avg(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = avg {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            MatMult(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = matmult {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+
+            // Bitwise
+            And(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = and {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Or(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = or {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Xor(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = xor {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Shl(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = shl {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            LShr(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = lshr {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            AShr(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ashr {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Bitwise
+            },
+            Not(dest: Value, src: Value) {
+                display: "{} = not {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Bitwise
+            },
+
+            // Float Arithmetic
+            FAdd(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fadd {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FSub(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fsub {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FMul(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fmul {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fdiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FSqrt(dest: Value, src: Value) {
+                display: "{} = sqrt {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+
+            // SIMD
+            SIMDSplat(dest: Value, src: Value) {
+                display: "{} = splat {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: SIMD
+            },
+            SIMDExtractLane(dest: Value, vector: Value, lane: usize) {
+                display: "{} = extract_lane {}[{}]",
+                def: Some(*dest),
+                uses: [*vector],
+                side_effects: false,
+                category: SIMD
+            },
+            SIMDInsertLane(dest: Value, vector: Value, scalar: Value, lane: usize) {
+                display: "{} = insert_lane {}[{}] <- {}",
+                def: Some(*dest),
+                uses: [*vector, *scalar],
+                side_effects: false,
+                category: SIMD
+            },
+            FSin(dest: Value, src: Value) {
+                display: "{} = sin {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FCos(dest: Value, src: Value) {
+                display: "{} = cos {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FPow(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = pow {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+
+            // Comparisons
+            Eq(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = eq {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            Ne(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ne {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SLt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = slt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SLe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sle {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sgt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            SGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = sge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            ULt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ult {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            ULe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ule {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            UGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = ugt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            UGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = uge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FLt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = flt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FLe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fle {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FGt(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fgt {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+            FGe(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = fge {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Comparison
+            },
+
+            IToF(dest: Value, src: Value, ty: Type) {
+                display: "{} = itof {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+            FToI(dest: Value, src: Value, ty: Type) {
+                display: "{} = ftoi {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+            FConv(dest: Value, src: Value, ty: Type) {
+                display: "{} = fconv {} to {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Conversion
+            },
+
+            ConstInt(dest: Value, val: i64) {
+                display: "{} = const_int {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Constant
+            },
+            ConstFloat(dest: Value, val: f64) {
+                display: "{} = const_float {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Constant
+            },
+            Assign(dest: Value, src: Value) {
+                display: "{} = assign {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Arithmetic
+            },
+            Jump(target: BlockId) {
+                display: "jump {}",
+                def: None,
+                uses: [],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Branch(cond: Value, true_block: BlockId, false_block: BlockId) {
+                display: "br {}, {}, {}",
+                def: None,
+                uses: [*cond],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Return(val: Option<Value>) {
+                display: "ret",
+                def: None,
+                uses: [],
+                side_effects: true,
+                category: ControlFlow
+            },
+            Phi(dest: Value, mappings: HashMap<BlockId, Value>) {
+                display: "{} = phi",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: ControlFlow
+            },
+            Call(dest: Value, func: String, args: Vec<Value>) {
+                display: "{} = call {}(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: Arithmetic
+            },
+            ArrayLoad(dest: Value, arr: Value, idx: Value) {
+                display: "{} = load {}[{}]",
+                def: Some(*dest),
+                uses: [*arr, *idx],
+                side_effects: false,
+                category: Memory
+            },
+            ArrayStore(dest: Value, arr: Value, idx: Value, val: Value, ty: Type) {
+                display: "{} = store {}[{}] <- {} (as {})",
+                def: Some(*dest),
+                uses: [*arr, *idx, *val],
+                side_effects: true,
+                category: Memory
+            },
+            BufferLoad(dest: Value, buf: Value, idx: Value) {
+                display: "{} = bufload {}[{}]",
+                def: Some(*dest),
+                uses: [*buf, *idx],
+                side_effects: false,
+                category: Memory
+            },
+            BufferStore(dest: Value, buf: Value, idx: Value, val: Value, ty: Type) {
+                display: "{} = bufstore {}[{}] <- {} (as {})",
+                def: Some(*dest),
+                uses: [*buf, *idx, *val],
+                side_effects: true,
+                category: Memory
+            },
+            BufferLen(dest: Value, buf: Value) {
+                display: "{} = buflen {}",
+                def: Some(*dest),
+                uses: [*buf],
+                side_effects: false,
+                category: Memory
+            },
+            TensorLoad(dest: Value, tensor: Value, indices: Vec<Value>) {
+                display: "{} = tload {}[...] ",
+                def: Some(*dest),
+                uses: [*tensor],
+                side_effects: false,
+                category: Memory
+            },
+            TensorStore(dest: Value, tensor: Value, indices: Vec<Value>, val: Value) {
+                display: "{} = tstore {}[...] <- {}",
+                def: Some(*dest),
+                uses: [*tensor, *val],
+                side_effects: true,
+                category: Memory
+            },
+            TensorAdd(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = tadd {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorSub(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = tsub {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorMul(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = tmul {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorDiv(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = tdiv {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorScalarAdd(dest: Value, tensor: Value, scalar: Value) {
+                display: "{} = tsadd {}, {}",
+                def: Some(*dest),
+                uses: [*tensor, *scalar],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorScalarSub(dest: Value, tensor: Value, scalar: Value) {
+                display: "{} = tssub {}, {}",
+                def: Some(*dest),
+                uses: [*tensor, *scalar],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorScalarMul(dest: Value, tensor: Value, scalar: Value) {
+                display: "{} = tsmul {}, {}",
+                def: Some(*dest),
+                uses: [*tensor, *scalar],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorScalarDiv(dest: Value, tensor: Value, scalar: Value) {
+                display: "{} = tsdiv {}, {}",
+                def: Some(*dest),
+                uses: [*tensor, *scalar],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorSum(dest: Value, tensor: Value) {
+                display: "{} = tsum {}",
+                def: Some(*dest),
+                uses: [*tensor],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorMax(dest: Value, tensor: Value) {
+                display: "{} = tmax {}",
+                def: Some(*dest),
+                uses: [*tensor],
+                side_effects: false,
+                category: Arithmetic
+            },
+            TensorMin(dest: Value, tensor: Value) {
+                display: "{} = tmin {}",
+                def: Some(*dest),
+                uses: [*tensor],
+                side_effects: false,
+                category: Arithmetic
+            },
+            StructCreate(dest: Value, name: String, args: Vec<Value>) {
+                display: "{} = struct {} (...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Memory
+            },
+            StructLoad(dest: Value, obj: Value, offset: usize) {
+                display: "{} = load {} + {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Memory
+            },
+            StructOffset(dest: Value, obj: Value, offset: usize) {
+                display: "{} = offset {} + {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Memory
+            },
+            StructSet(dest: Value, obj: Value, offset: usize, val: Value, ty: Type) {
+                display: "{} = set {} + {} <- {} (as {})",
+                def: Some(*dest),
+                uses: [*obj, *val],
+                side_effects: true,
+                category: Memory
+            },
+
+            // Enums
+            EnumCreate(dest: Value, name: String, tag_idx: usize, payload: Option<Value>) {
+                display: "{} = enum {}::{}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Enum
+            },
+            EnumIsVariant(dest: Value, obj: Value, tag_idx: usize) {
+                display: "{} = is_variant {} == {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+            EnumAsVariant(dest: Value, obj: Value, tag_idx: usize) {
+                display: "{} = as_variant {} == {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+            EnumGetTag(dest: Value, obj: Value) {
+                display: "{} = get_tag {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+            EnumExtract(dest: Value, obj: Value, tag_idx: usize) {
+                display: "{} = extract_variant {} as {}",
+                def: Some(*dest),
+                uses: [*obj],
+                side_effects: false,
+                category: Enum
+            },
+
+            Match(selector: Value, cases: HashMap<usize, BlockId>, default: BlockId, is_strict: bool) {
+                display: "match {}",
+                def: None,
+                uses: [*selector],
+                side_effects: true,
+                category: ControlFlow
+            },
+
+            // Tuples
+            TupleCreate(dest: Value, elts: Vec<Value>) {
+                display: "{} = tuple(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Tuple
+            },
+            TupleExtract(dest: Value, tuple_val: Value, index: usize) {
+                display: "{} = extract {}[{}] (tuple)",
+                def: Some(*dest),
+                uses: [*tuple_val],
+                side_effects: false,
+                category: Tuple
+            },
+
+            // Heap
+            Alloc(dest: Value, ty: Type) {
+                display: "{} = alloc {}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: Memory
+            },
+            PointerLoad(dest: Value, ptr: Value) {
+                display: "{} = pload *{}",
+                def: Some(*dest),
+                uses: [*ptr],
+                side_effects: false,
+                category: Memory
+            },
+            PointerStore(ptr: Value, val: Value) {
+                display: "pstore *{} = {}",
+                def: None,
+                uses: [*ptr, *val],
+                side_effects: true,
+                category: Memory
+            },
+
+            Lambda(dest: Value, name: String, captures: Vec<Value>) {
+                display: "{} = lambda {}(...)",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: HigherOrder
+            },
+            IndirectCall(dest: Value, ptr: Value, args: Vec<Value>) {
+                display: "{} = icall {}(...)",
+                def: Some(*dest),
+                uses: [*ptr],
+                side_effects: true,
+                category: HigherOrder
+            },
+
+            ParallelFor(index_var: Value, start: Value, stop: Value, step: Value, body_block: BlockId, exit_block: BlockId, captures: Vec<Value>) {
+                display: "pfor",
+                def: None,
+                uses: [*start, *stop, *step],
+                side_effects: true,
+                category: Parallel
+            },
+            Nop() {
+                display: "nop",
+                def: None,
+                uses: [],
+                side_effects: false,
+                category: Arithmetic
+            }
+        }
+    }
+}
+
+macro_rules! generate_instruction_kind {
+    ($($name:ident($($arg_name:ident : $arg_ty:ty),*) { $($rest:tt)* }),* $(,)?) => {
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub enum InstructionKind {
+            $($name($($arg_ty),*)),*
+        }
+    }
+}
+
+lila_instructions!(generate_instruction_kind);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Instruction {
+    pub kind: InstructionKind,
+    pub location: Option<SourceLocation>,
+    pub constraints: Vec<String>,
+}
+
+impl Instruction {
+    pub fn new(kind: InstructionKind, location: Option<SourceLocation>) -> Self {
+        Self {
+            kind,
+            location,
+            constraints: Vec::new(),
+        }
+    }
+
+    pub fn with_constraints(mut self, constraints: Vec<String>) -> Self {
+        self.constraints = constraints;
+        self
+    }
+
+    pub fn add_constraint(&mut self, constraint: String) -> &mut Self {
+        self.constraints.push(constraint);
+        self
+    }
+
+    #[allow(unused_variables)]
+    pub fn get_def(&self) -> Option<Value> {
+        macro_rules! match_def {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => $def),*
+                }
+            }
+        }
+        lila_instructions!(match_def)
+    }
+
+    #[allow(unused_variables)]
+    pub fn get_uses(&self) -> Vec<Value> {
+        macro_rules! match_uses {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => {
+                        let mut operands = Vec::new();
+                        $(operands.push($uses);)*
+                        // Special handling for instructions with Vec<Value>
+                        match &self.kind {
+                            InstructionKind::Call(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::TensorLoad(_, _, indices) => {
+                                for v in indices { operands.push(*v); }
+                            }
+                            InstructionKind::TensorStore(_, _, indices, _) => {
+                                for v in indices { operands.push(*v); }
+                            }
+                            InstructionKind::TensorAdd(_, l, r)
+                            | InstructionKind::TensorSub(_, l, r)
+                            | InstructionKind::TensorMul(_, l, r)
+                            | InstructionKind::TensorDiv(_, l, r) => {
+                                operands.push(*l);
+                                operands.push(*r);
+                            }
+                            InstructionKind::TensorScalarAdd(_, t, s)
+                            | InstructionKind::TensorScalarSub(_, t, s)
+                            | InstructionKind::TensorScalarMul(_, t, s)
+                            | InstructionKind::TensorScalarDiv(_, t, s) => {
+                                operands.push(*t);
+                                operands.push(*s);
+                            }
+                            InstructionKind::StructCreate(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::TupleCreate(_, elts) => {
+                                for v in elts { operands.push(*v); }
+                            }
+                            InstructionKind::Lambda(_, _, captures) => {
+                                for v in captures { operands.push(*v); }
+                            }
+                            InstructionKind::IndirectCall(_, _, args) => {
+                                for v in args { operands.push(*v); }
+                            }
+                            InstructionKind::ParallelFor(_, _, _, _, _, _, captures) => {
+                                for v in captures { operands.push(*v); }
+                            }
+                            InstructionKind::EnumCreate(_, _, _, Some(v)) => {
+                                operands.push(*v);
+                            }
+                            InstructionKind::EnumExtract(_, obj, _) => {
+                                operands.push(*obj);
+                            }
+                            InstructionKind::EnumAsVariant(_, obj, _) => {
+                                operands.push(*obj);
+                            }
+                            InstructionKind::EnumIsVariant(_, obj, _) => {
+                                operands.push(*obj);
+                            }
+                            InstructionKind::EnumGetTag(_, obj) => {
+                                operands.push(*obj);
+                            }
+                            InstructionKind::Return(Some(v)) => {
+                                operands.push(*v);
+                            }
+                            _ => {}
+                        }
+                        operands
+                    }),*
+                }
+            }
+        }
+        lila_instructions!(match_uses)
+    }
+
+    #[allow(unused_variables)]
+    pub fn has_side_effects(&self) -> bool {
+        macro_rules! match_side_effects {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name(..) => $side_effects),*
+                }
+            }
+        }
+        lila_instructions!(match_side_effects)
+    }
+
+    #[allow(unused_variables)]
+    pub fn visit<V: InstructionVisitor<R>, R>(&self, visitor: &mut V) -> R {
+        macro_rules! match_visit {
+            ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+                display: $display:expr,
+                def: $def:expr,
+                uses: [$($uses:expr),*],
+                side_effects: $side_effects:expr,
+                category: $category:ident
+            }),* $(,)?) => {
+                match &self.kind {
+                    $(InstructionKind::$name($($arg_name),*) => visitor.$name($($arg_name),*)),*
+                }
+            }
+        }
+        lila_instructions!(match_visit)
+    }
+}
+
+macro_rules! define_visitor_methods {
+    ($($name:ident($($arg_name:ident : $arg_ty:ty),*) {
+        display: $display:expr,
+        def: $def:expr,
+        uses: [$($uses:expr),*],
+        side_effects: $side_effects:expr,
+        category: $category:ident
+    }),* $(,)?) => {
+        $(
+            #[allow(non_snake_case, clippy::ptr_arg, clippy::too_many_arguments)]
+            fn $name(&mut self, $($arg_name: &$arg_ty),*) -> R;
+        )*
+    }
+}
+
+pub trait InstructionVisitor<R> {
+    lila_instructions!(define_visitor_methods);
+}

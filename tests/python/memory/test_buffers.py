@@ -63,7 +63,7 @@ class TestBuffers(unittest.TestCase):
         self.assertEqual(get_val(data, 2), 30)
 
     def test_unsafe_bounds_fail(self):
-        from lila.compiler import VerificationError
+        from lila import VerificationError
 
         with self.assertRaises(VerificationError):
 

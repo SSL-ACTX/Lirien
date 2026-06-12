@@ -26,7 +26,7 @@ from .types import (
     Closure,
     Tensor,
 )
-from .compiler import (
+from .decorators import (
     verify,
     parallel_for,
     get_cpu_info,

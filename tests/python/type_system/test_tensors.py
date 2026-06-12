@@ -1,6 +1,6 @@
 import unittest
 from lila import verify, Tensor, f32, i64, Refined
-from lila.compiler import VerificationError
+from lila import VerificationError
 
 
 class TestTensors(unittest.TestCase):

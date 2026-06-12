@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from lila import verify, i64, Refined, Buffer, struct
-from lila.compiler import VerificationError
+from lila import VerificationError
 
 # --- Common Refinement Types ---
 Positive = Refined[i64, lambda x: x > 0]

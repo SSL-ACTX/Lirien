@@ -1,7 +1,7 @@
 import unittest
 import math
 from lila import verify, f64, i64, Refined
-from lila.compiler import VerificationError
+from lila import VerificationError
 
 NonNegative = Refined[f64, lambda x: x >= 0.0]
 Positive = Refined[f64, lambda x: x > 0.0]
