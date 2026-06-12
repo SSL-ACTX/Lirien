@@ -92,6 +92,30 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
+                "tensor" => {
+                    if let ast::Expr::Tuple(t) = &*s.slice {
+                        if t.elts.is_empty() {
+                            return Err("Tensor requires at least a base type".to_string());
+                        }
+                        let inner = parse_type(&t.elts[0], aliases)?;
+                        let mut dims = Vec::new();
+                        for dim_expr in t.elts.iter().skip(1) {
+                            if let ast::Expr::Constant(c) = dim_expr {
+                                if let ast::Constant::Str(s) = &c.value {
+                                    dims.push(s.to_string());
+                                } else {
+                                    return Err("Tensor dimensions must be strings (e.g., \"M\")".to_string());
+                                }
+                            } else {
+                                return Err("Tensor dimensions must be string constants".to_string());
+                            }
+                        }
+                        Ok(Type::Tensor(Box::new(inner), dims))
+                    } else {
+                        let inner = parse_type(&s.slice, aliases)?;
+                        Ok(Type::Tensor(Box::new(inner), Vec::new()))
+                    }
+                }
                 "literal" => {
                     if let ast::Expr::Constant(c) = &*s.slice {
                         if let ast::Constant::Int(i) = &c.value {
@@ -202,21 +226,41 @@ pub fn extract_refinement(
     expr: &ast::Expr,
     aliases: &HashMap<String, String>,
     struct_layouts: &HashMap<String, Vec<(String, Type)>>,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     match expr {
         ast::Expr::Subscript(s) => {
-            if let ast::Expr::Name(n) = &*s.value {
-                if n.id.as_str() == "Refined" {
-                    if let ast::Expr::Tuple(t) = &*s.slice {
-                        if t.elts.len() == 2 {
-                            let base_ty = parse_type(&t.elts[0], aliases).ok()?;
-                            return expr_to_string_internal(
-                                &t.elts[1],
-                                None,
-                                &base_ty,
-                                struct_layouts,
-                            )
-                            .ok();
+            let base_name = match &*s.value {
+                ast::Expr::Name(n) => n.id.as_str(),
+                _ => "",
+            };
+            if base_name == "Refined" || base_name == "Annotated" {
+                if let ast::Expr::Tuple(t) = &*s.slice {
+                    let base_ty = parse_type(&t.elts[0], aliases)?;
+                    for elt in t.elts.iter().skip(1) {
+                        match elt {
+                            ast::Expr::Constant(c) => {
+                                if let ast::Constant::Str(s) = &c.value {
+                                    let refinement_expr = ast::Expr::parse(s, "<refinement>")
+                                        .map_err(|e| e.to_string())?;
+                                    return Ok(Some(expr_to_string_internal(
+                                        &refinement_expr,
+                                        None,
+                                        &base_ty,
+                                        struct_layouts,
+                                    )?));
+                                }
+                            }
+                            _ => {
+                                // Try to extract from non-constant expression (e.g. lambda)
+                                if let Ok(s) = expr_to_string_internal(
+                                    elt,
+                                    None,
+                                    &base_ty,
+                                    struct_layouts,
+                                ) {
+                                    return Ok(Some(s));
+                                }
+                            }
                         }
                     }
                 }
@@ -231,7 +275,7 @@ pub fn extract_refinement(
         }
         _ => {}
     }
-    None
+    Ok(None)
 }
 
 fn expr_to_string_internal(
@@ -250,19 +294,34 @@ fn expr_to_string_internal(
             expr_to_string_internal(&l.body, name, base_ty, struct_layouts)
         }
         ast::Expr::Compare(c) => {
-            let left = expr_to_string_internal(&c.left, arg_name, base_ty, struct_layouts)?;
-            let op = match c.ops[0] {
-                ast::CmpOp::Eq => "=",
-                ast::CmpOp::NotEq => "!=",
-                ast::CmpOp::Lt => "<",
-                ast::CmpOp::LtE => "<=",
-                ast::CmpOp::Gt => ">",
-                ast::CmpOp::GtE => ">=",
-                _ => return Err("Unsupported operator in refinement".to_string()),
-            };
-            let right =
-                expr_to_string_internal(&c.comparators[0], arg_name, base_ty, struct_layouts)?;
-            Ok(format!("({} {} {})", op, left, right))
+            let mut left = expr_to_string_internal(&c.left, arg_name, base_ty, struct_layouts)?;
+            let mut parts = Vec::new();
+
+            for i in 0..c.ops.len() {
+                let op = match c.ops[i] {
+                    ast::CmpOp::Eq => "=",
+                    ast::CmpOp::NotEq => "!=",
+                    ast::CmpOp::Lt => "<",
+                    ast::CmpOp::LtE => "<=",
+                    ast::CmpOp::Gt => ">",
+                    ast::CmpOp::GtE => ">=",
+                    _ => return Err("Unsupported operator in refinement".to_string()),
+                };
+                let right = expr_to_string_internal(
+                    &c.comparators[i],
+                    arg_name,
+                    base_ty,
+                    struct_layouts,
+                )?;
+                parts.push(format!("({} {} {})", op, left, right));
+                left = right;
+            }
+
+            if parts.len() == 1 {
+                Ok(parts[0].clone())
+            } else {
+                Ok(format!("(and {})", parts.join(" ")))
+            }
         }
         ast::Expr::BinOp(b) => {
             let left = expr_to_string_internal(&b.left, arg_name, base_ty, struct_layouts)?;
@@ -314,6 +373,30 @@ fn expr_to_string_internal(
             let orelse = expr_to_string_internal(&i.orelse, arg_name, base_ty, struct_layouts)?;
             Ok(format!("(ite {} {} {})", test, body, orelse))
         }
+        ast::Expr::Call(c) => {
+            let (func_name, method_obj) = match &*c.func {
+                ast::Expr::Name(n) => (n.id.to_string(), None),
+                ast::Expr::Attribute(a) => {
+                    let obj = expr_to_string_internal(&a.value, arg_name, base_ty, struct_layouts)?;
+                    (a.attr.to_string(), Some(obj))
+                }
+                _ => return Err("Only named functions supported in refinements".to_string()),
+            };
+
+            let mut args = Vec::new();
+            if let Some(obj) = method_obj {
+                args.push(obj);
+            }
+            for arg in &c.args {
+                args.push(expr_to_string_internal(
+                    arg,
+                    arg_name,
+                    base_ty,
+                    struct_layouts,
+                )?);
+            }
+            Ok(format!("({} {})", func_name, args.join(" ")))
+        }
         ast::Expr::Attribute(s) => {
             if let ast::Expr::Name(n) = &*s.value {
                 if let Some(name) = arg_name {
@@ -340,9 +423,19 @@ fn expr_to_string_internal(
                     }
                 }
             }
-            Err("Unsupported attribute access in refinement".to_string())
+            // If it's not a direct attribute of the refined value, treat it as a symbolic name
+            let base = expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
+            Ok(format!("({} {})", s.attr, base))
+        }
+        ast::Expr::Subscript(s) => {
+            let base = expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
+            let slice = expr_to_string_internal(&s.slice, arg_name, base_ty, struct_layouts)?;
+            Ok(format!("(select {} {})", base, slice))
         }
         ast::Expr::Name(n) => {
+            if n.id.as_str() == "v" {
+                return Ok("{v}".to_string());
+            }
             if let Some(name) = arg_name {
                 if n.id.as_str() == name {
                     return Ok("{v}".to_string());
@@ -354,6 +447,7 @@ fn expr_to_string_internal(
             ast::Constant::Int(i) => Ok(i.to_string()),
             ast::Constant::Float(f) => Ok(f.to_string()),
             ast::Constant::Bool(b) => Ok(if *b { "true" } else { "false" }.to_string()),
+            ast::Constant::Str(s) => Ok(format!("\"{}\"", s)),
             _ => Err("Unsupported constant in refinement".to_string()),
         },
         _ => Err(format!(

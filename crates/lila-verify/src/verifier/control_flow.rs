@@ -81,7 +81,7 @@ pub fn translate<
                     // Prove that none_matched is impossible under path_cond
                     ctx.backend.push();
                     ctx.backend.assert(&default_cond);
-                    if ctx.backend.check() != Ok(false) {
+                    if ctx.backend.check()? {
                         let loc_info = inst
                             .location
                             .map(|l| format!(" at {}", l))

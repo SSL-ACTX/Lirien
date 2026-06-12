@@ -146,18 +146,33 @@ pub fn lower_instruction<M: Module>(
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::BufferLoad(_, _, _)
         | InstructionKind::BufferStore(_, _, _, _, _)
+        | InstructionKind::TensorLoad(_, _, _)
+        | InstructionKind::TensorStore(_, _, _, _)
+        | InstructionKind::TensorAdd(_, _, _)
+        | InstructionKind::TensorSub(_, _, _)
+        | InstructionKind::TensorMul(_, _, _)
+        | InstructionKind::TensorDiv(_, _, _)
+        | InstructionKind::TensorScalarAdd(_, _, _)
+        | InstructionKind::TensorScalarSub(_, _, _)
+        | InstructionKind::TensorScalarMul(_, _, _)
+        | InstructionKind::TensorScalarDiv(_, _, _)
+        | InstructionKind::TensorSum(_, _)
+        | InstructionKind::TensorMax(_, _)
+        | InstructionKind::TensorMin(_, _)
         | InstructionKind::BufferLen(_, _)
         | InstructionKind::StructCreate(_, _, _)
         | InstructionKind::StructLoad(_, _, _)
         | InstructionKind::StructOffset(_, _, _)
         | InstructionKind::StructSet(_, _, _, _, _)
         | InstructionKind::EnumCreate(_, _, _, _)
-        | InstructionKind::EnumIsVariant(_, _, _)
         | InstructionKind::EnumGetTag(_, _)
+        | InstructionKind::EnumIsVariant(_, _, _)
+        | InstructionKind::EnumAsVariant(_, _, _)
         | InstructionKind::EnumExtract(_, _, _)
         | InstructionKind::Alloc(_, _)
         | InstructionKind::PointerLoad(_, _)
         | InstructionKind::PointerStore(_, _) => memory::lower(ctx, &inst.kind),
+
 
         InstructionKind::TupleCreate(_, _) | InstructionKind::TupleExtract(_, _, _) => {
             tuples::lower(ctx, &inst.kind)
@@ -173,6 +188,41 @@ pub fn lower_instruction<M: Module>(
         InstructionKind::ParallelFor(index_var, start, ..) => {
             let cl_start = get_val(&ctx.values, start);
             ctx.values.insert(*index_var, cl_start);
+            Ok(())
+        }
+        InstructionKind::MatMult(dest, lhs, rhs) => {
+            let a_ptr = get_val(&ctx.values, lhs);
+            let b_ptr = get_val(&ctx.values, rhs);
+            
+            let l_dims = ctx.tensor_dims.get(lhs).expect("LHS tensor dims not found");
+            let r_dims = ctx.tensor_dims.get(rhs).expect("RHS tensor dims not found");
+            
+            let m = l_dims[0];
+            let n = l_dims[1];
+            let k = r_dims[1];
+
+            // Declare lila_matmul_alloc_f32 in Cranelift
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // a
+            sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // b
+            sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // m
+            sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // n
+            sig.params.push(cranelift::prelude::AbiParam::new(types::I64)); // k
+            sig.returns.push(cranelift::prelude::AbiParam::new(types::I64)); // c
+
+            let callee = ctx
+                .module
+                .declare_function("lila_matmul_alloc_f32", cranelift_module::Linkage::Import, &sig)
+                .map_err(|e| e.to_string())?;
+            let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
+            
+            let call = ctx.builder.ins().call(local_callee, &[a_ptr, b_ptr, m, n, k]);
+            let res_ptr = ctx.builder.inst_results(call)[0];
+            
+            ctx.values.insert(*dest, res_ptr);
+            
+            // Register dimensions for the returned tensor
+            ctx.tensor_dims.insert(*dest, vec![m, k]);
             Ok(())
         }
         InstructionKind::Nop() => Ok(()),

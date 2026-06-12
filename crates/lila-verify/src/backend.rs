@@ -6,6 +6,7 @@ pub trait SolverBackend {
     type Array: Clone;
 
     fn check(&mut self) -> Result<bool, String>;
+    fn set_timeout(&mut self, timeout_ms: u32);
     fn assert(&mut self, cond: &Self::Bool);
     fn assert_implies(&mut self, premise: &Self::Bool, conclusion: &Self::Bool);
     fn push(&mut self);

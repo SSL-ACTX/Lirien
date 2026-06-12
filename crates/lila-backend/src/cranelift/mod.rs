@@ -17,6 +17,7 @@ pub struct CodegenContext<'a, M: Module> {
     pub blocks: HashMap<SsaBlockId, Block>,
     pub values: HashMap<SsaValue, Value>,
     pub buffer_lengths: HashMap<SsaValue, Value>,
+    pub tensor_dims: HashMap<SsaValue, Vec<Value>>,
     pub is_tuple_return: bool,
     pub sret_ptr: Option<Value>,
 }
@@ -37,6 +38,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I64X2 => types::I64X2,
         SsaType::Array(_, _)
         | SsaType::Buffer(_)
+        | SsaType::Tensor(_, _)
         | SsaType::Struct(_)
         | SsaType::Enum(_)
         | SsaType::Pointer(_)
@@ -84,20 +86,91 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     extern "C" fn lila_sin(x: f64) -> f64 { x.sin() }
     extern "C" fn lila_cos(x: f64) -> f64 { x.cos() }
     extern "C" fn lila_pow(x: f64, y: f64) -> f64 { x.powf(y) }
+    
+    // Naive math kernel for testing dependent types execution
+    extern "C" fn lila_matmul_alloc_f32(a: *const f32, b: *const f32, m: usize, n: usize, k: usize) -> *mut f32 {
+        unsafe {
+            let c = malloc(m * k * 4) as *mut f32;
+            for i in 0..m {
+                for j in 0..k {
+                    let mut sum = 0.0;
+                    for l in 0..n {
+                        sum += (*a.add(i * n + l)) * (*b.add(l * k + j));
+                    }
+                    *c.add(i * k + j) = sum;
+                }
+            }
+            c
+        }
+    }
+
+    extern "C" fn lila_tensor_arith_f32(a: *const f32, b: *const f32, size: usize, op: u8) -> *mut f32 {
+        unsafe {
+            let c = malloc(size * 4) as *mut f32;
+            for i in 0..size {
+                let va = *a.add(i);
+                let vb = *b.add(i);
+                *c.add(i) = match op {
+                    0 => va + vb,
+                    1 => va - vb,
+                    2 => va * vb,
+                    3 => va / vb,
+                    _ => 0.0,
+                };
+            }
+            c
+        }
+    }
+
+    extern "C" fn lila_tensor_reduce_f32(a: *const f32, size: usize, op: u8) -> f32 {
+        unsafe {
+            if size == 0 { return 0.0; }
+            let mut res = *a;
+            for i in 1..size {
+                let v = *a.add(i);
+                res = match op {
+                    0 => res + v, // Sum
+                    1 => if v > res { v } else { res }, // Max
+                    2 => if v < res { v } else { res }, // Min
+                    _ => res,
+                };
+            }
+            res
+        }
+    }
+
+    extern "C" fn lila_tensor_scalar_arith_f32(a: *const f32, b: f32, size: usize, op: u8) -> *mut f32 {
+        unsafe {
+            let c = malloc(size * 4) as *mut f32;
+            for i in 0..size {
+                let va = *a.add(i);
+                *c.add(i) = match op {
+                    0 => va + b,
+                    1 => va - b,
+                    2 => va * b,
+                    3 => va / b,
+                    _ => 0.0,
+                };
+            }
+            c
+        }
+    }
 
     jit_builder.symbol("malloc", malloc as *const u8);
     jit_builder.symbol("memcpy", memcpy as *const u8);
     jit_builder.symbol("sin", lila_sin as *const u8);
     jit_builder.symbol("cos", lila_cos as *const u8);
     jit_builder.symbol("pow", lila_pow as *const u8);
+    jit_builder.symbol("lila_matmul_alloc_f32", lila_matmul_alloc_f32 as *const u8);
+    jit_builder.symbol("lila_tensor_arith_f32", lila_tensor_arith_f32 as *const u8);
+    jit_builder.symbol("lila_tensor_reduce_f32", lila_tensor_reduce_f32 as *const u8);
+    jit_builder.symbol("lila_tensor_scalar_arith_f32", lila_tensor_scalar_arith_f32 as *const u8);
 
     let mut module = JITModule::new(jit_builder);
     let mut ctx = module.make_context();
     let mut func_ctx = FunctionBuilderContext::new();
 
     let mut sig = module.make_signature();
-    let mut is_buffer = Vec::new();
-    let mut is_simd_arg = Vec::new();
     let mut is_ptr_return = false;
 
     if let SsaType::Tuple(_) = ssa_func.return_type {
@@ -110,19 +183,23 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
     for i in 0..ssa_func.arg_count {
         let ty = ssa_func.get_type(SsaValue(i));
-        if let SsaType::Buffer(_) = ty {
-            sig.params.push(AbiParam::new(types::I64)); // Ptr
-            sig.params.push(AbiParam::new(types::I64)); // Len
-            is_buffer.push(true);
-            is_simd_arg.push(false);
-        } else if ty.is_simd() {
-            sig.params.push(AbiParam::new(types::I64)); // Pass by pointer for interop
-            is_buffer.push(false);
-            is_simd_arg.push(true);
-        } else {
-            sig.params.push(AbiParam::new(translate_type(&ty)));
-            is_buffer.push(false);
-            is_simd_arg.push(false);
+        match ty {
+            SsaType::Buffer(_) => {
+                sig.params.push(AbiParam::new(types::I64)); // Ptr
+                sig.params.push(AbiParam::new(types::I64)); // Len
+            }
+            SsaType::Tensor(_, ref dims) => {
+                sig.params.push(AbiParam::new(types::I64)); // Ptr
+                for _ in 0..dims.len() {
+                    sig.params.push(AbiParam::new(types::I64)); // Dim length
+                }
+            }
+            _ if ty.is_simd() => {
+                sig.params.push(AbiParam::new(types::I64)); // Pass by pointer for interop
+            }
+            _ => {
+                sig.params.push(AbiParam::new(translate_type(&ty)));
+            }
         }
     }
 
@@ -204,6 +281,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             blocks,
             values,
             buffer_lengths,
+            tensor_dims: HashMap::new(),
             is_tuple_return: matches!(ssa_func.return_type, SsaType::Tuple(_)),
             sret_ptr: None,
         };
@@ -274,29 +352,35 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             if block_id == ssa_func.entry_block {
                 // 4.1. Initialize arguments in the entry block
                 let mut p_idx = param_idx; // SRet already handled
-                for (i, (&is_buf, &is_simd)) in is_buffer.iter().zip(is_simd_arg.iter()).enumerate()
-                {
+                for i in 0..ssa_func.arg_count {
                     let val = SsaValue(i);
                     let ty = ssa_func.get_type(val);
-                    if is_buf {
-                        cg_ctx
-                            .values
-                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
-                        cg_ctx
-                            .buffer_lengths
-                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx + 1]);
-                        p_idx += 2;
-                    } else if is_simd {
-                        let ptr = cg_ctx.builder.block_params(entry_block)[p_idx];
-                        p_idx += 1;
-                        let cl_ty = translate_type(&ty);
-                        let vec_val = cg_ctx.builder.ins().load(cl_ty, MemFlags::new(), ptr, 0);
-                        cg_ctx.values.insert(val, vec_val);
-                    } else {
-                        cg_ctx
-                            .values
-                            .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
-                        p_idx += 1;
+                    match ty {
+                        SsaType::Buffer(_) => {
+                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            cg_ctx.buffer_lengths.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx + 1]);
+                            p_idx += 2;
+                        }
+                        SsaType::Tensor(_, ref dims) => {
+                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            let mut dim_vals = Vec::new();
+                            for j in 0..dims.len() {
+                                dim_vals.push(cg_ctx.builder.block_params(entry_block)[p_idx + 1 + j]);
+                            }
+                            cg_ctx.tensor_dims.insert(val, dim_vals);
+                            p_idx += 1 + dims.len();
+                        }
+                        _ if ty.is_simd() => {
+                            let ptr = cg_ctx.builder.block_params(entry_block)[p_idx];
+                            p_idx += 1;
+                            let cl_ty = translate_type(&ty);
+                            let vec_val = cg_ctx.builder.ins().load(cl_ty, MemFlags::new(), ptr, 0);
+                            cg_ctx.values.insert(val, vec_val);
+                        }
+                        _ => {
+                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            p_idx += 1;
+                        }
                     }
                 }
             }

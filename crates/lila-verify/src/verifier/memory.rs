@@ -83,6 +83,27 @@ pub fn init_values<
                 64,
             );
             ctx.z3_arrays.insert(val, payload_val);
+        } else if let Type::Tensor(base_ty, dims) = &inner_ty {
+            let mut z3_dims = Vec::new();
+            let zero = ctx.backend.int_from_i64(0);
+            for dim_name in dims.iter() {
+                // Ensure unique name across different tensors sharing same dim name string
+                // Wait, if two tensors have "M", they MUST share the same size. 
+                // We should scope it globally per function.
+                let z3_dim = ctx.backend.int_const(dim_name);
+                let __tmp = ctx.backend.int_lt(&zero, &z3_dim);
+                ctx.backend.assert(&__tmp);
+                z3_dims.push(z3_dim);
+            }
+            ctx.z3_tensor_dims.insert(val, z3_dims);
+
+            let bit_width = base_ty.int_bit_width().unwrap_or(64);
+            let payload_val = ctx.backend.array_const(
+                &format!("{}_v{}_tensor_data_{}", ctx.func.name, i, ctx.uid),
+                base_ty.is_float(),
+                bit_width,
+            );
+            ctx.z3_arrays.insert(val, payload_val);
         } else if let Type::Buffer(_) = inner_ty {
             let z3_len = ctx
                 .backend
@@ -239,12 +260,145 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::TensorLoad(dest, tensor, indices) => {
+            let z3_tensor_data = ctx.z3_arrays.get(tensor).cloned().unwrap();
+            let dims = ctx
+                .z3_tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            // Calculate flat index in Z3
+            let mut z3_flat_idx = ctx.backend.bv_from_i64(0, 64);
+            let mut z3_stride = ctx.backend.bv_from_i64(1, 64);
+
+            for i in (0..indices.len()).rev() {
+                let idx_val = indices[i];
+                let z3_idx = ctx
+                    .z3_bvs
+                    .get(&idx_val)
+                    .cloned()
+                    .expect("Index not modeled");
+                let z3_dim_int = &dims[i];
+
+                check_symbolic_bounds(
+                    ctx,
+                    path_cond,
+                    &z3_idx,
+                    z3_dim_int,
+                    dest.0,
+                    inst.location,
+                )?;
+
+                let z3_dim_bv = ctx.backend.int_to_bv(z3_dim_int, 64);
+                let term = ctx.backend.bv_mul(&z3_idx, &z3_stride);
+                z3_flat_idx = ctx.backend.bv_add(&z3_flat_idx, &term);
+
+                if i > 0 {
+                    z3_stride = ctx.backend.bv_mul(&z3_stride, &z3_dim_bv);
+                }
+            }
+
+            let z3_idx_int = ctx.backend.bv_to_int(&z3_flat_idx, true);
+
+            if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
+                let res = ctx.backend.array_select_bv(&z3_tensor_data, &z3_idx_int);
+                let __inner = ctx.backend.bv_eq(&z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
+                let res = ctx
+                    .backend
+                    .array_select_float(&z3_tensor_data, &z3_idx_int);
+                let __inner = ctx.backend.float_eq(&z3_dest, &res);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::TensorStore(dest, tensor, indices, val) => {
+            let z3_dest_data = ctx.z3_arrays.get(dest).cloned().unwrap();
+            let z3_tensor_data = ctx.z3_arrays.get(tensor).cloned().unwrap();
+            let dims = ctx
+                .z3_tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            // Calculate flat index in Z3
+            let mut z3_flat_idx = ctx.backend.bv_from_i64(0, 64);
+            let mut z3_stride = ctx.backend.bv_from_i64(1, 64);
+
+            for i in (0..indices.len()).rev() {
+                let idx_val = indices[i];
+                let z3_idx = ctx
+                    .z3_bvs
+                    .get(&idx_val)
+                    .cloned()
+                    .expect("Index not modeled");
+                let z3_dim_int = &dims[i];
+
+                check_symbolic_bounds(
+                    ctx,
+                    path_cond,
+                    &z3_idx,
+                    z3_dim_int,
+                    dest.0,
+                    inst.location,
+                )?;
+
+                let z3_dim_bv = ctx.backend.int_to_bv(z3_dim_int, 64);
+                let term = ctx.backend.bv_mul(&z3_idx, &z3_stride);
+                z3_flat_idx = ctx.backend.bv_add(&z3_flat_idx, &term);
+
+                if i > 0 {
+                    z3_stride = ctx.backend.bv_mul(&z3_stride, &z3_dim_bv);
+                }
+            }
+
+            let z3_idx_int = ctx.backend.bv_to_int(&z3_flat_idx, true);
+
+            if let Some(z3_val) = ctx.z3_bvs.get(val).cloned() {
+                let stored = ctx
+                    .backend
+                    .array_store_bv(&z3_tensor_data, &z3_idx_int, &z3_val);
+                let __inner = ctx.backend.array_eq(&z3_dest_data, &stored);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
+                let stored = ctx
+                    .backend
+                    .array_store_float(&z3_tensor_data, &z3_idx_int, &z3_val);
+                let __inner = ctx.backend.array_eq(&z3_dest_data, &stored);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                ctx.backend.assert(&__tmp);
+            }
+
+            // Propagate dimensions
+            ctx.z3_tensor_dims.insert(*dest, dims.clone());
+        }
         InstructionKind::BufferLoad(dest, buf, idx) => {
             let z3_idx = ctx.z3_bvs.get(idx).cloned().unwrap();
             let z3_len = ctx.z3_bvs.get(buf).cloned().unwrap();
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
         }
-        InstructionKind::BufferStore(dest, buf, idx, _val, _ty) => {
+        InstructionKind::TensorSum(dest, tensor)
+        | InstructionKind::TensorMax(dest, tensor)
+        | InstructionKind::TensorMin(dest, tensor) => {
+            if !ctx.z3_tensor_dims.contains_key(tensor) {
+                let loc_info = inst
+                    .location
+                    .map(|l| format!(" at {}", l))
+                    .unwrap_or_default();
+                return Err(format!(
+                    "Invalid reduction: v{} is not a tensor{}",
+                    tensor.0, loc_info
+                ));
+            }
+            // Reduction results in a scalar (rank 0)
+            ctx.z3_tensor_dims.insert(*dest, Vec::new());
+        }
+        InstructionKind::BufferStore(dest, buf, idx, _val, _) => {
+
             let z3_idx = ctx.z3_bvs.get(idx).cloned().unwrap();
             let z3_len = ctx.z3_bvs.get(buf).cloned().unwrap();
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
@@ -499,7 +653,7 @@ fn check_bounds<
     ctx.backend.assert(path_cond);
     let __tmp = ctx.backend.bv_slt(idx, &zero);
     ctx.backend.assert(&__tmp);
-    if ctx.backend.check() != Ok(false) {
+    if ctx.backend.check()? {
         let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
             "Potential out-of-bounds access (negative index) at v{}{}",
@@ -513,7 +667,54 @@ fn check_bounds<
     let check_len = ctx.backend.bv_from_i64(size, bit_width);
     let __tmp2 = ctx.backend.bv_sge(idx, &check_len);
     ctx.backend.assert(&__tmp2);
-    if ctx.backend.check() != Ok(false) {
+    if ctx.backend.check()? {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
+        return Err(format!(
+            "Potential out-of-bounds access (index >= length) at v{}{}",
+            dest_id, loc_info
+        ));
+    }
+    ctx.backend.pop(1);
+    Ok(())
+}
+
+fn check_symbolic_bounds<
+    B: crate::backend::SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    ctx: &mut TranslationContext<'_, B>,
+    path_cond: &B::Bool,
+    idx: &B::BV,
+    size: &B::Int,
+    dest_id: usize,
+    location: Option<lila_ir::ir::SourceLocation>,
+) -> Result<(), String> {
+    let idx_int = ctx.backend.bv_to_int(idx, true);
+    let zero = ctx.backend.int_from_i64(0);
+
+    ctx.backend.push();
+    ctx.backend.assert(path_cond);
+    let __tmp = ctx.backend.int_lt(&idx_int, &zero);
+    ctx.backend.assert(&__tmp);
+    if ctx.backend.check()? {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
+        return Err(format!(
+            "Potential out-of-bounds access (negative index) at v{}{}",
+            dest_id, loc_info
+        ));
+    }
+    ctx.backend.pop(1);
+
+    ctx.backend.push();
+    ctx.backend.assert(path_cond);
+    let __tmp2 = ctx.backend.int_ge(&idx_int, size);
+    ctx.backend.assert(&__tmp2);
+    if ctx.backend.check()? {
         let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
             "Potential out-of-bounds access (index >= length) at v{}{}",
@@ -551,7 +752,7 @@ fn check_buffer_bounds<
     ctx.backend.assert(path_cond);
     let __tmp = ctx.backend.bv_slt(idx, &zero);
     ctx.backend.assert(&__tmp);
-    if ctx.backend.check() != Ok(false) {
+    if ctx.backend.check()? {
         let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
             "Potential out-of-bounds buffer access (index < 0) at v{}{}",
@@ -565,7 +766,7 @@ fn check_buffer_bounds<
 
     let __tmp2 = ctx.backend.bv_sge(idx, len);
     ctx.backend.assert(&__tmp2);
-    if ctx.backend.check() != Ok(false) {
+    if ctx.backend.check()? {
         let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
             "Potential out-of-bounds buffer access (index >= len) at v{}{}",

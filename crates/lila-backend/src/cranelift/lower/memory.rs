@@ -68,6 +68,235 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let len = get_len(&ctx.buffer_lengths, buf);
             ctx.values.insert(*dest, len);
         }
+        InstructionKind::TensorLoad(dest, tensor, indices) => {
+            let tensor_ptr = get_val(&ctx.values, tensor);
+            let dims = ctx
+                .tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found");
+
+            // Calculate flat index: indices[0] * stride[0] + indices[1] * stride[1] + ...
+            // where stride[i] = product(dims[i+1..])
+            let mut flat_idx = get_val(&ctx.values, &indices[indices.len() - 1]);
+            let mut stride = ctx.builder.ins().iconst(types::I64, 1);
+
+            for i in (0..indices.len() - 1).rev() {
+                let dim_val = dims[i + 1];
+                stride = ctx.builder.ins().imul(stride, dim_val);
+                let idx_val = get_val(&ctx.values, &indices[i]);
+                let term = ctx.builder.ins().imul(idx_val, stride);
+                flat_idx = ctx.builder.ins().iadd(flat_idx, term);
+            }
+
+            let dest_ty = ctx.ssa_func.get_type(*dest);
+            let elem_size = match &ctx.ssa_func.get_type(*tensor) {
+                SsaType::Tensor(inner, _) => inner.size(&ctx.ssa_func.struct_layouts),
+                _ => 4, // Default to float (4 bytes)
+            };
+
+            let offset = ctx.builder.ins().imul_imm(flat_idx, elem_size as i64);
+            let addr = ctx.builder.ins().iadd(tensor_ptr, offset);
+
+            if dest_ty.is_composite() {
+                ctx.values.insert(*dest, addr);
+            } else {
+                let cl_ty = translate_type(&dest_ty);
+                let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
+                ctx.values.insert(*dest, res);
+            }
+        }
+        InstructionKind::TensorStore(dest, tensor, indices, val) => {
+            let tensor_ptr = get_val(&ctx.values, tensor);
+            let dims = ctx
+                .tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            // Calculate flat index
+            let mut flat_idx = get_val(&ctx.values, &indices[indices.len() - 1]);
+            let mut stride = ctx.builder.ins().iconst(types::I64, 1);
+            for i in (0..indices.len() - 1).rev() {
+                let dim_val = dims[i + 1];
+                stride = ctx.builder.ins().imul(stride, dim_val);
+                let idx_val = get_val(&ctx.values, &indices[i]);
+                let term = ctx.builder.ins().imul(idx_val, stride);
+                flat_idx = ctx.builder.ins().iadd(flat_idx, term);
+            }
+
+            let val_val = get_val(&ctx.values, val);
+            let (inner_ty, _dims_strings) = match &ctx.ssa_func.get_type(*tensor) {
+                SsaType::Tensor(inner, d) => (inner.clone(), d.clone()),
+                _ => (Box::new(SsaType::F32), Vec::new()),
+            };
+            let elem_size = inner_ty.size(&ctx.ssa_func.struct_layouts);
+
+            let offset = ctx.builder.ins().imul_imm(flat_idx, elem_size as i64);
+            let addr = ctx.builder.ins().iadd(tensor_ptr, offset);
+
+            if inner_ty.is_composite() {
+                let size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
+                ctx.builder
+                    .call_memcpy(ctx.module.target_config(), addr, val_val, size_val);
+            } else {
+                let cl_ty = translate_type(&inner_ty);
+                let val_to_store = if ctx.builder.func.dfg.value_type(val_val) != cl_ty {
+                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(val_val).is_int() {
+                        ctx.builder.ins().ireduce(cl_ty, val_val)
+                    } else {
+                        val_val
+                    }
+                } else {
+                    val_val
+                };
+                ctx.builder
+                    .ins()
+                    .store(MemFlags::new(), val_to_store, addr, 0);
+            }
+
+            ctx.values.insert(*dest, tensor_ptr);
+            // Re-register dimensions for the new tensor value
+            ctx.tensor_dims.insert(*dest, dims);
+        }
+        InstructionKind::TensorAdd(dest, lhs, rhs)
+        | InstructionKind::TensorSub(dest, lhs, rhs)
+        | InstructionKind::TensorMul(dest, lhs, rhs)
+        | InstructionKind::TensorDiv(dest, lhs, rhs) => {
+            let l_ptr = get_val(&ctx.values, lhs);
+            let r_ptr = get_val(&ctx.values, rhs);
+            let dims = ctx
+                .tensor_dims
+                .get(lhs)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            // Calculate total size
+            let mut total_size = dims[0];
+            for &dim in dims.iter().skip(1) {
+                total_size = ctx.builder.ins().imul(total_size, dim);
+            }
+
+            let op_code = match kind {
+                InstructionKind::TensorAdd(..) => 0,
+                InstructionKind::TensorSub(..) => 1,
+                InstructionKind::TensorMul(..) => 2,
+                InstructionKind::TensorDiv(..) => 3,
+                _ => unreachable!(),
+            };
+            let op_val = ctx.builder.ins().iconst(types::I8, op_code as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::I64)); // b
+            sig.params.push(AbiParam::new(types::I64)); // size
+            sig.params.push(AbiParam::new(types::I8)); // op
+            sig.returns.push(AbiParam::new(types::I64)); // result ptr
+
+            // Wait, I should use the symbol name
+            let func_id = ctx
+                .module
+                .declare_function("lila_tensor_arith_f32", Linkage::Import, &sig)
+                .expect("Failed to declare lila_tensor_arith_f32");
+            let local_func = ctx.module.declare_func_in_func(func_id, ctx.builder.func);
+
+            let call = ctx
+                .builder
+                .ins()
+                .call(local_func, &[l_ptr, r_ptr, total_size, op_val]);
+            let res_ptr = ctx.builder.inst_results(call)[0];
+
+            ctx.values.insert(*dest, res_ptr);
+            ctx.tensor_dims.insert(*dest, dims);
+        }
+        InstructionKind::TensorSum(dest, tensor)
+        | InstructionKind::TensorMax(dest, tensor)
+        | InstructionKind::TensorMin(dest, tensor) => {
+            let t_ptr = get_val(&ctx.values, tensor);
+            let dims = ctx
+                .tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found");
+
+            let mut total_size = dims[0];
+            for &dim in dims.iter().skip(1) {
+                total_size = ctx.builder.ins().imul(total_size, dim);
+            }
+
+            let op_code = match kind {
+                InstructionKind::TensorSum(..) => 0,
+                InstructionKind::TensorMax(..) => 1,
+                InstructionKind::TensorMin(..) => 2,
+                _ => unreachable!(),
+            };
+            let op_val = ctx.builder.ins().iconst(types::I8, op_code as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::I64)); // size
+            sig.params.push(AbiParam::new(types::I8)); // op
+            sig.returns.push(AbiParam::new(types::F32)); // result
+
+            let func_id = ctx
+                .module
+                .declare_function("lila_tensor_reduce_f32", Linkage::Import, &sig)
+                .expect("Failed to declare lila_tensor_reduce_f32");
+            let local_func = ctx.module.declare_func_in_func(func_id, ctx.builder.func);
+
+            let call = ctx
+                .builder
+                .ins()
+                .call(local_func, &[t_ptr, total_size, op_val]);
+            let res = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res);
+        }
+        InstructionKind::TensorScalarAdd(dest, tensor, scalar)
+        | InstructionKind::TensorScalarSub(dest, tensor, scalar)
+        | InstructionKind::TensorScalarMul(dest, tensor, scalar)
+        | InstructionKind::TensorScalarDiv(dest, tensor, scalar) => {
+            let t_ptr = get_val(&ctx.values, tensor);
+            let s_val = get_val(&ctx.values, scalar);
+            let dims = ctx
+                .tensor_dims
+                .get(tensor)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            let mut total_size = dims[0];
+            for &dim in dims.iter().skip(1) {
+                total_size = ctx.builder.ins().imul(total_size, dim);
+            }
+
+            let op_code = match kind {
+                InstructionKind::TensorScalarAdd(..) => 0,
+                InstructionKind::TensorScalarSub(..) => 1,
+                InstructionKind::TensorScalarMul(..) => 2,
+                InstructionKind::TensorScalarDiv(..) => 3,
+                _ => unreachable!(),
+            };
+            let op_val = ctx.builder.ins().iconst(types::I8, op_code as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // a
+            sig.params.push(AbiParam::new(types::F32)); // b (scalar)
+            sig.params.push(AbiParam::new(types::I64)); // size
+            sig.params.push(AbiParam::new(types::I8)); // op
+            sig.returns.push(AbiParam::new(types::I64)); // result ptr
+
+            let func_id = ctx
+                .module
+                .declare_function("lila_tensor_scalar_arith_f32", Linkage::Import, &sig)
+                .expect("Failed to declare lila_tensor_scalar_arith_f32");
+            let local_func = ctx.module.declare_func_in_func(func_id, ctx.builder.func);
+
+            let call = ctx
+                .builder
+                .ins()
+                .call(local_func, &[t_ptr, s_val, total_size, op_val]);
+            let res_ptr = ctx.builder.inst_results(call)[0];
+
+            ctx.values.insert(*dest, res_ptr);
+            ctx.tensor_dims.insert(*dest, dims);
+        }
         InstructionKind::ArrayLoad(dest, arr, idx) => {
             let arr_ptr = get_val(&ctx.values, arr);
             let idx_val = get_val(&ctx.values, idx);

@@ -172,14 +172,6 @@ impl Type {
         }
     }
 
-    pub fn is_tensor(&self) -> bool {
-        match self {
-            Type::Tensor(_, _) => true,
-            Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_tensor(),
-            _ => false,
-        }
-    }
-
     pub fn is_composite(&self) -> bool {
         match self {
             Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
@@ -826,83 +818,6 @@ macro_rules! lila_instructions {
                 side_effects: true,
                 category: Memory
             },
-            TensorAdd(dest: Value, lhs: Value, rhs: Value) {
-                display: "{} = tadd {}, {}",
-                def: Some(*dest),
-                uses: [*lhs, *rhs],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorSub(dest: Value, lhs: Value, rhs: Value) {
-                display: "{} = tsub {}, {}",
-                def: Some(*dest),
-                uses: [*lhs, *rhs],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorMul(dest: Value, lhs: Value, rhs: Value) {
-                display: "{} = tmul {}, {}",
-                def: Some(*dest),
-                uses: [*lhs, *rhs],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorDiv(dest: Value, lhs: Value, rhs: Value) {
-                display: "{} = tdiv {}, {}",
-                def: Some(*dest),
-                uses: [*lhs, *rhs],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorScalarAdd(dest: Value, tensor: Value, scalar: Value) {
-                display: "{} = tsadd {}, {}",
-                def: Some(*dest),
-                uses: [*tensor, *scalar],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorScalarSub(dest: Value, tensor: Value, scalar: Value) {
-                display: "{} = tssub {}, {}",
-                def: Some(*dest),
-                uses: [*tensor, *scalar],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorScalarMul(dest: Value, tensor: Value, scalar: Value) {
-                display: "{} = tsmul {}, {}",
-                def: Some(*dest),
-                uses: [*tensor, *scalar],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorScalarDiv(dest: Value, tensor: Value, scalar: Value) {
-                display: "{} = tsdiv {}, {}",
-                def: Some(*dest),
-                uses: [*tensor, *scalar],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorSum(dest: Value, tensor: Value) {
-                display: "{} = tsum {}",
-                def: Some(*dest),
-                uses: [*tensor],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorMax(dest: Value, tensor: Value) {
-                display: "{} = tmax {}",
-                def: Some(*dest),
-                uses: [*tensor],
-                side_effects: false,
-                category: Arithmetic
-            },
-            TensorMin(dest: Value, tensor: Value) {
-                display: "{} = tmin {}",
-                def: Some(*dest),
-                uses: [*tensor],
-                side_effects: false,
-                category: Arithmetic
-            },
             StructCreate(dest: Value, name: String, args: Vec<Value>) {
                 display: "{} = struct {} (...)",
                 def: Some(*dest),
@@ -942,13 +857,6 @@ macro_rules! lila_instructions {
             },
             EnumIsVariant(dest: Value, obj: Value, tag_idx: usize) {
                 display: "{} = is_variant {} == {}",
-                def: Some(*dest),
-                uses: [*obj],
-                side_effects: false,
-                category: Enum
-            },
-            EnumAsVariant(dest: Value, obj: Value, tag_idx: usize) {
-                display: "{} = as_variant {} == {}",
                 def: Some(*dest),
                 uses: [*obj],
                 side_effects: false,
@@ -1129,20 +1037,6 @@ impl Instruction {
                             InstructionKind::TensorStore(_, _, indices, _) => {
                                 for v in indices { operands.push(*v); }
                             }
-                            InstructionKind::TensorAdd(_, l, r)
-                            | InstructionKind::TensorSub(_, l, r)
-                            | InstructionKind::TensorMul(_, l, r)
-                            | InstructionKind::TensorDiv(_, l, r) => {
-                                operands.push(*l);
-                                operands.push(*r);
-                            }
-                            InstructionKind::TensorScalarAdd(_, t, s)
-                            | InstructionKind::TensorScalarSub(_, t, s)
-                            | InstructionKind::TensorScalarMul(_, t, s)
-                            | InstructionKind::TensorScalarDiv(_, t, s) => {
-                                operands.push(*t);
-                                operands.push(*s);
-                            }
                             InstructionKind::StructCreate(_, _, args) => {
                                 for v in args { operands.push(*v); }
                             }
@@ -1160,18 +1054,6 @@ impl Instruction {
                             }
                             InstructionKind::EnumCreate(_, _, _, Some(v)) => {
                                 operands.push(*v);
-                            }
-                            InstructionKind::EnumExtract(_, obj, _) => {
-                                operands.push(*obj);
-                            }
-                            InstructionKind::EnumAsVariant(_, obj, _) => {
-                                operands.push(*obj);
-                            }
-                            InstructionKind::EnumIsVariant(_, obj, _) => {
-                                operands.push(*obj);
-                            }
-                            InstructionKind::EnumGetTag(_, obj) => {
-                                operands.push(*obj);
                             }
                             InstructionKind::Return(Some(v)) => {
                                 operands.push(*v);
@@ -1545,61 +1427,6 @@ impl fmt::Display for Instruction {
                     constraints_str
                 )
             }
-            InstructionKind::TensorAdd(d, l, r) => write!(
-                f,
-                "  {} = tadd {}, {}{}{}",
-                d, l, r, loc_str, constraints_str
-            ),
-            InstructionKind::TensorSub(d, l, r) => write!(
-                f,
-                "  {} = tsub {}, {}{}{}",
-                d, l, r, loc_str, constraints_str
-            ),
-            InstructionKind::TensorMul(d, l, r) => write!(
-                f,
-                "  {} = tmul {}, {}{}{}",
-                d, l, r, loc_str, constraints_str
-            ),
-            InstructionKind::TensorDiv(d, l, r) => write!(
-                f,
-                "  {} = tdiv {}, {}{}{}",
-                d, l, r, loc_str, constraints_str
-            ),
-            InstructionKind::TensorScalarAdd(d, t, s) => write!(
-                f,
-                "  {} = tsadd {}, {}{}{}",
-                d, t, s, loc_str, constraints_str
-            ),
-            InstructionKind::TensorScalarSub(d, t, s) => write!(
-                f,
-                "  {} = tssub {}, {}{}{}",
-                d, t, s, loc_str, constraints_str
-            ),
-            InstructionKind::TensorScalarMul(d, t, s) => write!(
-                f,
-                "  {} = tsmul {}, {}{}{}",
-                d, t, s, loc_str, constraints_str
-            ),
-            InstructionKind::TensorScalarDiv(d, t, s) => write!(
-                f,
-                "  {} = tsdiv {}, {}{}{}",
-                d, t, s, loc_str, constraints_str
-            ),
-            InstructionKind::TensorSum(d, t) => write!(
-                f,
-                "  {} = tsum {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
-            InstructionKind::TensorMax(d, t) => write!(
-                f,
-                "  {} = tmax {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
-            InstructionKind::TensorMin(d, t) => write!(
-                f,
-                "  {} = tmin {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
             InstructionKind::StructCreate(d, name, args) => {
                 let args_str: Vec<String> = args.iter().map(|v| v.to_string()).collect();
                 write!(
@@ -1645,11 +1472,6 @@ impl fmt::Display for Instruction {
             InstructionKind::EnumIsVariant(d, e, tag_idx) => write!(
                 f,
                 "  {} = is_variant {} == {}{}{}",
-                d, e, tag_idx, loc_str, constraints_str
-            ),
-            InstructionKind::EnumAsVariant(d, e, tag_idx) => write!(
-                f,
-                "  {} = as_variant {} == {}{}{}",
                 d, e, tag_idx, loc_str, constraints_str
             ),
             InstructionKind::EnumGetTag(d, o) => {

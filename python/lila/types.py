@@ -346,6 +346,80 @@ class Tensor(Generic[T]):
     Usage: a: Tensor[f32, "M", "N"]
     """
 
+    def __init__(self, data, shape: tuple, base_cty=ctypes.c_float):
+        self.shape = shape
+        self.__data = data  # Internal ctypes array
+        self.__base_cty = base_cty
+
+        self.size = 1
+        for dim in shape:
+            self.size *= dim
+
+        # Ensure contiguous buffer
+        if isinstance(data, ctypes.Array):
+            self.ptr = ctypes.addressof(data)
+        else:
+            # Handle list/nested list initialization
+            arr = (base_cty * self.size)()
+
+            def flatten(l):
+                for item in l:
+                    if isinstance(item, (list, tuple)):
+                        yield from flatten(item)
+                    else:
+                        yield item
+
+            for i, val in enumerate(flatten(data)):
+                arr[i] = val
+            self.__data = arr
+            self.ptr = ctypes.addressof(arr)
+
+    @classmethod
+    def alloc(cls, shape: tuple, base_type=f32):
+        item_cty = ctypes.c_float
+        if getattr(base_type, "__lila_struct__", False):
+            item_cty = base_type.__lila_ctypes__
+        else:
+            item_ty_str = str(base_type).lower()
+            for name, cty in TYPE_MAP.items():
+                if name in item_ty_str:
+                    item_cty = cty
+                    break
+
+        size = 1
+        for dim in shape:
+            size *= dim
+        arr = (item_cty * size)()
+        return cls(arr, shape, item_cty)
+
+    def __getitem__(self, idxs):
+        if not isinstance(idxs, tuple):
+            idxs = (idxs,)
+
+        flat_idx = 0
+        stride = 1
+        for i in reversed(range(len(self.shape))):
+            flat_idx += idxs[i] * stride
+            stride *= self.shape[i]
+
+        return self.__data[flat_idx]
+
+    def __setitem__(self, idxs, val):
+        if not isinstance(idxs, tuple):
+            idxs = (idxs,)
+
+        flat_idx = 0
+        stride = 1
+        for i in reversed(range(len(self.shape))):
+            flat_idx += idxs[i] * stride
+            stride *= self.shape[i]
+
+        self.__data[flat_idx] = val
+
+    @property
+    def __lila_ptr__(self):
+        return self.ptr
+
     def __class_getitem__(cls, params):
         if not isinstance(params, tuple) or len(params) < 2:
             raise TypeError("Tensor requires [type, *shape]")
@@ -355,7 +429,8 @@ class Tensor(Generic[T]):
 
         from typing import Annotated
 
-        return Annotated[cls, (base_type, shape)]
+        anno = Annotated[cls, (base_type, shape)]
+        return anno
 
 
 class Array(Generic[T]):

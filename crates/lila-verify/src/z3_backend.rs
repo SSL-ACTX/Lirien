@@ -1,6 +1,6 @@
 use crate::backend::SolverBackend;
 use z3::ast::{Array, Ast, Bool, Float, Int, RoundingMode, BV};
-use z3::{Context, SatResult, Solver};
+use z3::{Context, Params, SatResult, Solver};
 
 pub struct Z3Backend<'ctx> {
     ctx: &'ctx Context,
@@ -24,8 +24,17 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         match self.solver.check() {
             SatResult::Sat => Ok(true),
             SatResult::Unsat => Ok(false),
-            SatResult::Unknown => Err("Z3 returned Unknown".to_string()),
+            SatResult::Unknown => {
+                let reason = self.solver.get_reason_unknown().unwrap_or_else(|| "unknown".to_string());
+                Err(format!("Z3 returned Unknown: {}", reason))
+            }
         }
+    }
+
+    fn set_timeout(&mut self, timeout_ms: u32) {
+        let mut params = Params::new();
+        params.set_u32("timeout", timeout_ms);
+        self.solver.set_params(&params);
     }
 
     fn assert(&mut self, cond: &Self::Bool) {

@@ -124,6 +124,116 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
+        InstructionKind::MatMult(_dest, lhs, rhs) => {
+            if let (Some(l_dims), Some(r_dims)) = (
+                ctx.z3_tensor_dims.get(lhs),
+                ctx.z3_tensor_dims.get(rhs),
+            ) {
+                if l_dims.len() == 2 && r_dims.len() == 2 {
+                    let inner_dim_l = &l_dims[1];
+                    let inner_dim_r = &r_dims[0];
+                    
+                    let eq = ctx.backend.int_eq(inner_dim_l, inner_dim_r);
+                    let not_eq = ctx.backend.bool_not(&eq);
+                    
+                    ctx.backend.push();
+                    ctx.backend.assert(path_cond);
+                    ctx.backend.assert(&not_eq);
+                    if ctx.backend.check()? {
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Matrix multiplication dimension mismatch: inner dimensions must be equal{}",
+                            loc_info
+                        ));
+                    }
+                    ctx.backend.pop(1);
+
+                    // Propagate dimensions: (M, N) @ (N, K) -> (M, K)
+                    let res_dims = vec![l_dims[0].clone(), r_dims[1].clone()];
+                    ctx.z3_tensor_dims.insert(*_dest, res_dims);
+                }
+            }
+        }
+        InstructionKind::TensorAdd(dest, lhs, rhs)
+        | InstructionKind::TensorSub(dest, lhs, rhs)
+        | InstructionKind::TensorMul(dest, lhs, rhs)
+        | InstructionKind::TensorDiv(dest, lhs, rhs) => {
+            if let (Some(l_dims), Some(r_dims)) = (
+                ctx.z3_tensor_dims.get(lhs).cloned(),
+                ctx.z3_tensor_dims.get(rhs).cloned(),
+            ) {
+                if l_dims.len() != r_dims.len() {
+                    return Err(format!(
+                        "Tensor rank mismatch in element-wise operation at v{}",
+                        dest.0
+                    ));
+                }
+
+                for i in 0..l_dims.len() {
+                    ctx.backend.push();
+                    ctx.backend.assert(path_cond);
+                    let eq = ctx.backend.int_eq(&l_dims[i], &r_dims[i]);
+                    let not_eq = ctx.backend.bool_not(&eq);
+                    ctx.backend.assert(&not_eq);
+
+                    if ctx.backend.check()? {
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Tensor shape mismatch in element-wise operation (dimension {} mismatch){}",
+                            i, loc_info
+                        ));
+                    }
+                    ctx.backend.pop(1);
+                }
+
+                // Result has same shape
+                ctx.z3_tensor_dims.insert(*dest, l_dims.clone());
+
+                // Create a new Z3 array for the result
+                let l_ty = ctx.func.get_type(*lhs);
+                let (inner_ty, _) = match l_ty {
+                    lila_ir::ir::Type::Tensor(inner, dims) => (inner, dims),
+                    _ => unreachable!(),
+                };
+
+                let bit_width = inner_ty.int_bit_width().unwrap_or(64);
+                let res_array = ctx.backend.array_const(
+                    &format!("{}_v{}_tensor_res_{}", ctx.func.name, dest.0, ctx.uid),
+                    inner_ty.is_float(),
+                    bit_width,
+                );
+                ctx.z3_arrays.insert(*dest, res_array);
+            }
+        }
+        InstructionKind::TensorScalarAdd(dest, tensor, _scalar)
+        | InstructionKind::TensorScalarSub(dest, tensor, _scalar)
+        | InstructionKind::TensorScalarMul(dest, tensor, _scalar)
+        | InstructionKind::TensorScalarDiv(dest, tensor, _scalar) => {
+            if let Some(dims) = ctx.z3_tensor_dims.get(tensor).cloned() {
+                // Result has same shape as input tensor
+                ctx.z3_tensor_dims.insert(*dest, dims);
+
+                let t_ty = ctx.func.get_type(*tensor);
+                let (inner_ty, _) = match t_ty {
+                    lila_ir::ir::Type::Tensor(inner, _) => (inner, ()),
+                    _ => unreachable!(),
+                };
+
+                let bit_width = inner_ty.int_bit_width().unwrap_or(64);
+                let res_array = ctx.backend.array_const(
+                    &format!("{}_v{}_tensor_scalar_res_{}", ctx.func.name, dest.0, ctx.uid),
+                    inner_ty.is_float(),
+                    bit_width,
+                );
+                ctx.z3_arrays.insert(*dest, res_array);
+            }
+        }
         InstructionKind::SDiv(dest, lhs, rhs) | InstructionKind::SRem(dest, lhs, rhs) => {
             if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
                 ctx.z3_bvs.get(dest),
@@ -145,7 +255,7 @@ pub fn translate<
                     ctx.backend.push();
                     ctx.backend.assert(path_cond);
                     ctx.backend.assert(&is_zero);
-                    if ctx.backend.check() != Ok(false) {
+                    if ctx.backend.check()? {
                         let loc_info = inst
                             .location
                             .map(|l| format!(" at {}", l))
@@ -197,7 +307,7 @@ pub fn translate<
                     ctx.backend.assert(path_cond);
                     let __tmp = ctx.backend.float_eq(z3_r, &zero);
                     ctx.backend.assert(&__tmp);
-                    if ctx.backend.check() != Ok(false) {
+                    if ctx.backend.check()? {
                         let loc_info = inst
                             .location
                             .map(|l| format!(" at {}", l))
@@ -519,7 +629,7 @@ pub fn translate<
                                 ctx.backend.assert(path_cond);
                                 let __tmp = ctx.backend.float_lt(z3_src, &zero);
                                 ctx.backend.assert(&__tmp);
-                                if ctx.backend.check() != Ok(false) {
+                                if ctx.backend.check()? {
                                     let loc_info = inst
                                         .location
                                         .map(|l| format!(" at {}", l))
@@ -570,7 +680,7 @@ pub fn translate<
                     let domain_err = ctx.backend.bool_or(&[&a1, &is_base_negative]);
 
                     ctx.backend.assert(&domain_err);
-                    if ctx.backend.check() != Ok(false) {
+                    if ctx.backend.check()? {
                         let loc_info = inst
                             .location
                             .map(|l| format!(" at {}", l))

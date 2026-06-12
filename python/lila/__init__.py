@@ -24,6 +24,7 @@ from .types import (
     FnPointer,
     Callable,
     Closure,
+    Tensor,
 )
 from .compiler import (
     verify,

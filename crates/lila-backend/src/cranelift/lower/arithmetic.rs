@@ -89,12 +89,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().extractlane(v, *lane as u8);
             ctx.values.insert(*dest, res);
         }
-        InstructionKind::SIMDInsertLane(dest, vec, src, lane) => {
+        InstructionKind::SIMDInsertLane(dest, vec, val, lane) => {
             let v = get_val(&ctx.values, vec);
-            let s = get_val(&ctx.values, src);
+            let s = get_val(&ctx.values, val);
             let res = ctx.builder.ins().insertlane(v, s, *lane as u8);
             ctx.values.insert(*dest, res);
         }
+
         InstructionKind::And(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);

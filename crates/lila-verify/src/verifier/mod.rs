@@ -87,6 +87,7 @@ pub struct TranslationContext<'a, B: SolverBackend> {
     pub z3_floats: HashMap<Value, B::Float>,
     pub z3_bvs: HashMap<Value, B::BV>,
     pub z3_arrays: HashMap<Value, B::Array>,
+    pub z3_tensor_dims: HashMap<Value, Vec<B::Int>>,
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
     pub block_conditions: HashMap<BlockId, B::Bool>,
     pub edge_conditions: HashMap<(BlockId, BlockId), B::Bool>,
@@ -117,6 +118,7 @@ pub fn verify_with_context<
         z3_floats: HashMap::new(),
         z3_bvs: HashMap::new(),
         z3_arrays: HashMap::new(),
+        z3_tensor_dims: HashMap::new(),
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
@@ -141,7 +143,7 @@ pub fn verify_with_context<
         tracing::info!(target: "lila::verify::verifier", "Skipping final consistency check for '{}' (no refinements).", func.name);
     } else {
         tracing::info!(target: "lila::verify::verifier", "Performing final consistency check for '{}'...", func.name);
-        if t_ctx.backend.check() == Ok(false) {
+        if !t_ctx.backend.check()? {
             return Err("Formal verification failed: Logical contradiction detected.".to_string());
         }
     }
@@ -396,6 +398,7 @@ fn translate_instructions<
                 | InstructionKind::UDiv(..)
                 | InstructionKind::SRem(..)
                 | InstructionKind::URem(..)
+                | InstructionKind::MatMult(..)
                 | InstructionKind::FAdd(..)
                 | InstructionKind::FSub(..)
                 | InstructionKind::FMul(..)
@@ -446,16 +449,31 @@ fn translate_instructions<
                 | InstructionKind::ArrayStore(..)
                 | InstructionKind::BufferLoad(..)
                 | InstructionKind::BufferStore(..)
+                | InstructionKind::TensorLoad(..)
+                | InstructionKind::TensorStore(..)
                 | InstructionKind::BufferLen(..)
+                | InstructionKind::TensorAdd(..)
+                | InstructionKind::TensorSub(..)
+                | InstructionKind::TensorMul(..)
+                | InstructionKind::TensorDiv(..)
+                | InstructionKind::TensorScalarAdd(..)
+                | InstructionKind::TensorScalarSub(..)
+                | InstructionKind::TensorScalarMul(..)
+                | InstructionKind::TensorScalarDiv(..)
+                | InstructionKind::TensorSum(..)
+                | InstructionKind::TensorMax(..)
+                | InstructionKind::TensorMin(..)
                 | InstructionKind::StructCreate(..)
                 | InstructionKind::StructLoad(..)
                 | InstructionKind::StructOffset(..)
                 | InstructionKind::StructSet(..)
                 | InstructionKind::EnumCreate(..)
-                | InstructionKind::EnumIsVariant(..)
                 | InstructionKind::EnumGetTag(..)
+                | InstructionKind::EnumIsVariant(..)
+                | InstructionKind::EnumAsVariant(..)
                 | InstructionKind::EnumExtract(..)
                 | InstructionKind::Alloc(..)
+
                 | InstructionKind::PointerLoad(..)
                 | InstructionKind::PointerStore(..) => {
                     memory::translate(t_ctx, inst, &path_cond)?;
@@ -566,12 +584,39 @@ fn verify_return_refinements<
 >(
     t_ctx: &mut TranslationContext<'_, B>,
 ) -> Result<(), String> {
-    // 8. Verify Return Refinements
-    if let Some(ret_ref) = &t_ctx.func.ret_refinement {
-        for block in &t_ctx.func.blocks {
-            let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
-            for inst in &block.instructions {
-                if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
+    // 8. Verify Return Refinements & Shapes
+    let ret_ty = t_ctx.func.return_type.clone();
+    for block in &t_ctx.func.blocks {
+        let path_cond = t_ctx.block_conditions.get(&block.id).unwrap();
+        for inst in &block.instructions {
+            if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
+                let actual_ty = t_ctx.func.get_type(*ret_val);
+                
+                // Shape verification
+                if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&actual_ty, &ret_ty) {
+                    if src_dims.len() != target_dims.len() {
+                        let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                        return Err(format!("Tensor rank mismatch in return: expected {} dims, got {}{}", target_dims.len(), src_dims.len(), loc_info));
+                    }
+                    if let Some(src_z3_dims) = t_ctx.z3_tensor_dims.get(ret_val) {
+                        for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
+                            let target_z3_dim = t_ctx.backend.int_const(target_dim_name);
+                            t_ctx.backend.push();
+                            t_ctx.backend.assert(path_cond);
+                            let eq = t_ctx.backend.int_eq(&src_z3_dims[dim_idx], &target_z3_dim);
+                            let not_eq = t_ctx.backend.bool_not(&eq);
+                            t_ctx.backend.assert(&not_eq);
+                            
+                            if t_ctx.backend.check()? {
+                                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                return Err(format!("Tensor shape mismatch in return: dimension '{}' (idx {}) does not match{}", target_dim_name, dim_idx, loc_info));
+                            }
+                            t_ctx.backend.pop(1);
+                        }
+                    }
+                }
+
+                if let Some(ret_ref) = &t_ctx.func.ret_refinement {
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
@@ -589,7 +634,7 @@ fn verify_return_refinements<
                         t_ctx.backend.assert(path_cond);
                         let __tmp = t_ctx.backend.bool_not(&expr);
                         t_ctx.backend.assert(&__tmp);
-                        if t_ctx.backend.check() != Ok(false) {
+                        if t_ctx.backend.check()? {
                             let loc_info = inst
                                 .location
                                 .map(|l| format!(" at {}", l))
@@ -650,7 +695,39 @@ fn verify_call_arguments<
                 };
 
                 if let Some(sig) = sig {
+                    let mut call_dim_map: std::collections::HashMap<String, B::Int> = std::collections::HashMap::new();
                     for (i, arg_val) in args.iter().enumerate() {
+                        let arg_ty = t_ctx.func.get_type(*arg_val);
+                        if i < sig.arg_types.len() {
+                            let target_ty = &sig.arg_types[i];
+                            if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&arg_ty, target_ty) {
+                                if src_dims.len() != target_dims.len() {
+                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    return Err(format!("Tensor rank mismatch in call to '{}': expected {} dims, got {}{}", target_name, target_dims.len(), src_dims.len(), loc_info));
+                                }
+                                if let Some(src_z3_dims) = t_ctx.z3_tensor_dims.get(arg_val) {
+                                    for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
+                                        let src_z3_dim = &src_z3_dims[dim_idx];
+                                        if let Some(bound_z3_dim) = call_dim_map.get(target_dim_name) {
+                                            t_ctx.backend.push();
+                                            t_ctx.backend.assert(path_cond);
+                                            let eq = t_ctx.backend.int_eq(src_z3_dim, bound_z3_dim);
+                                            let not_eq = t_ctx.backend.bool_not(&eq);
+                                            t_ctx.backend.assert(&not_eq);
+                                            
+                                            if t_ctx.backend.check()? {
+                                                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                                return Err(format!("Tensor shape mismatch in call to '{}': dimension '{}' (idx {}) does not match previously bound value{}", target_name, target_dim_name, dim_idx, loc_info));
+                                            }
+                                            t_ctx.backend.pop(1);
+                                        } else {
+                                            call_dim_map.insert(target_dim_name.clone(), src_z3_dim.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if let Some(ref_str) = sig.arg_refinements.get(&i) {
                             let arg_ty = t_ctx.func.get_type(*arg_val);
                             let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(arg_val) {
@@ -673,7 +750,7 @@ fn verify_call_arguments<
                                 t_ctx.backend.assert(path_cond);
                                 let __tmp = t_ctx.backend.bool_not(&expr);
                                 t_ctx.backend.assert(&__tmp);
-                                if t_ctx.backend.check() != Ok(false) {
+                                if t_ctx.backend.check()? {
                                     let loc_info = inst
                                         .location
                                         .map(|l| format!(" at {}", l))

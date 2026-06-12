@@ -3,8 +3,9 @@ pub mod refinement_parser;
 pub mod verifier;
 pub mod z3_backend;
 
+use self::backend::SolverBackend;
 use self::verifier::verify_with_context;
-use ::z3::{Context, Params, Solver};
+use ::z3::{Context, Solver};
 use lila_ir::analysis::{interval, liveness};
 use lila_ir::ir::Function;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,12 +31,10 @@ pub fn verify(func: &Function) -> Result<(), String> {
     let ctx = Context::thread_local();
     let solver = Solver::new();
 
-    // Set a 5-second timeout for the entire verification process
-    let mut params = Params::new();
-    params.set_u32("timeout", 5000);
-    solver.set_params(&params);
-
     let mut backend = z3_backend::Z3Backend::new(&ctx, &solver);
+
+    // Set a 5-second timeout for the entire verification process
+    backend.set_timeout(5000);
 
     verify_with_context(&mut backend, func, &analysis_results, liveness, uid)
 }

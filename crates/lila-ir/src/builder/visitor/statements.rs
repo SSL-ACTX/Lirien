@@ -13,7 +13,7 @@ impl CFGBuilder {
         if let Some(returns) = &s.returns {
             self.func.return_type = parse_type(returns, &self.type_aliases)?;
             self.func.ret_refinement =
-                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts);
+                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts)?;
         }
 
         for arg in s.args.args {
@@ -22,7 +22,7 @@ impl CFGBuilder {
                 let ty = parse_type(annotation, &self.type_aliases)?;
                 self.func.set_type(val, ty);
                 if let Some(refinement) =
-                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts)
+                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts)?
                 {
                     self.func.set_refinement(val, refinement);
                 }
@@ -306,7 +306,7 @@ impl CFGBuilder {
                         0
                     };
 
-                    if step_c != 0 && trip_count >= 0 && trip_count <= 128 {
+                    if step_c != 0 && (0..=128).contains(&trip_count) {
                         // UNROLL SAFETY: Check for total unrolled complexity
                         let body_stmt_count = s.body.len();
                         if trip_count as usize * body_stmt_count > 1024 {

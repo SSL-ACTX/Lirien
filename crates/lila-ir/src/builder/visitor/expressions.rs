@@ -257,49 +257,83 @@ impl CFGBuilder {
             }
             ast::Expr::Subscript(s) => {
                 let arr = self.visit_expr(*s.value)?;
-                let mut idx = self.visit_expr(*s.slice)?;
-                idx = self.auto_load(idx);
+                let arr_ty = self.func.get_type(arr);
                 let dest = self.func.next_value();
-                match self.func.get_type(arr) {
-                    Type::Buffer(inner) => {
-                        self.add_instruction(InstructionKind::BufferLoad(dest, arr, idx));
-                        self.func.set_type(dest, *inner);
-                    }
-                    Type::Array(inner, _) => {
-                        self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));
-                        self.func.set_type(dest, *inner);
-                    }
-                    Type::Tuple(elt_types) => {
-                        // Find the constant index
-                        let mut idx_val = None;
-                        for block in &self.func.blocks {
-                            for inst in &block.instructions {
-                                if let InstructionKind::ConstInt(v, val) = inst.kind {
-                                    if v == idx {
-                                        idx_val = Some(val as usize);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
 
-                        if let Some(i) = idx_val {
-                            if i < elt_types.len() {
-                                let elt_ty = elt_types[i].clone();
-                                self.add_instruction(InstructionKind::TupleExtract(dest, arr, i));
-                                self.func.set_type(dest, elt_ty);
-                            } else {
-                                return Err(format!("Tuple index out of bounds: {}", i));
+                match arr_ty {
+                    Type::Tensor(inner, dims) => {
+                        let mut indices = Vec::new();
+                        if let ast::Expr::Tuple(t) = &*s.slice {
+                            for elt_expr in &t.elts {
+                                let mut idx = self.visit_expr(elt_expr.clone())?;
+                                idx = self.auto_load(idx);
+                                indices.push(idx);
                             }
                         } else {
-                            return Err("Tuple index must be a constant".to_string());
+                            let mut idx = self.visit_expr(*s.slice.clone())?;
+                            idx = self.auto_load(idx);
+                            indices.push(idx);
                         }
+
+                        if indices.len() != dims.len() {
+                            return Err(format!(
+                                "Tensor indexing rank mismatch: expected {} indices, got {}",
+                                dims.len(),
+                                indices.len()
+                            ));
+                        }
+
+                        self.add_instruction(InstructionKind::TensorLoad(dest, arr, indices));
+                        self.func.set_type(dest, *inner);
+                        Ok(dest)
                     }
                     _ => {
-                        self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));
+                        let mut idx = self.visit_expr(*s.slice)?;
+                        idx = self.auto_load(idx);
+                        match arr_ty {
+                            Type::Buffer(inner) => {
+                                self.add_instruction(InstructionKind::BufferLoad(dest, arr, idx));
+                                self.func.set_type(dest, *inner);
+                            }
+                            Type::Array(inner, _) => {
+                                self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));
+                                self.func.set_type(dest, *inner);
+                            }
+                            Type::Tuple(elt_types) => {
+                                // Find the constant index
+                                let mut idx_val = None;
+                                for block in &self.func.blocks {
+                                    for inst in &block.instructions {
+                                        if let InstructionKind::ConstInt(v, val) = inst.kind {
+                                            if v == idx {
+                                                idx_val = Some(val as usize);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some(i) = idx_val {
+                                    if i < elt_types.len() {
+                                        let elt_ty = elt_types[i].clone();
+                                        self.add_instruction(InstructionKind::TupleExtract(
+                                            dest, arr, i,
+                                        ));
+                                        self.func.set_type(dest, elt_ty);
+                                    } else {
+                                        return Err(format!("Tuple index out of bounds: {}", i));
+                                    }
+                                } else {
+                                    return Err("Tuple index must be a constant".to_string());
+                                }
+                            }
+                            _ => {
+                                self.add_instruction(InstructionKind::ArrayLoad(dest, arr, idx));
+                            }
+                        }
+                        Ok(dest)
                     }
                 }
-                Ok(dest)
             }
             ast::Expr::Tuple(t) => {
                 let mut elts = Vec::new();
@@ -340,6 +374,8 @@ impl CFGBuilder {
                                     (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                                 } else if let Type::Enum(enum_name) = curr_ty {
                                     (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
+                                } else if let Type::Tensor(..) = curr_ty {
+                                    (attr.attr.to_string(), Some(obj), false)
                                 } else {
                                     return Err(format!(
                                         "Cannot call method '{}' on non-struct/enum type {:?}",
@@ -356,6 +392,8 @@ impl CFGBuilder {
                                 (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                             } else if let Type::Enum(enum_name) = curr_ty {
                                 (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
+                            } else if let Type::Tensor(..) = curr_ty {
+                                (attr.attr.to_string(), Some(obj), false)
                             } else {
                                 return Err(format!(
                                     "Cannot call method '{}' on non-struct/enum type {:?}",
@@ -489,7 +527,8 @@ impl CFGBuilder {
 
                 // Check for Enum Methods (is_Variant, as_Variant)
                 if let Some(obj) = method_obj {
-                    if let Type::Enum(enum_name) = self.func.get_type(obj) {
+                    let obj_ty = self.func.get_type(obj);
+                    if let Type::Enum(enum_name) = obj_ty {
                         let method = func_name.strip_prefix(&format!("{}_", enum_name)).unwrap();
                         if method.starts_with("is_") {
                             let variant_name = method.strip_prefix("is_").unwrap();
@@ -529,6 +568,17 @@ impl CFGBuilder {
                             self.func.set_type(dest, payload_ty);
                             return Ok(dest);
                         }
+                    } else if let Type::Tensor(inner, _) = obj_ty {
+                        let dest = self.func.next_value();
+                        let kind = match func_name.as_str() {
+                            "sum" => InstructionKind::TensorSum(dest, obj),
+                            "max" => InstructionKind::TensorMax(dest, obj),
+                            "min" => InstructionKind::TensorMin(dest, obj),
+                            _ => return Err(format!("Unknown Tensor method: {}", func_name)),
+                        };
+                        self.add_instruction(kind);
+                        self.func.set_type(dest, *inner);
+                        return Ok(dest);
                     }
                 }
 
@@ -1004,6 +1054,57 @@ impl CFGBuilder {
 
         let is_float = l_ty.is_float() || r_ty.is_float();
 
+        if let (Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (&l_ty, &r_ty) {
+            if op != ast::Operator::MatMult {
+                if t1 != t2 {
+                    return Err("Tensor arithmetic requires same base types".to_string());
+                }
+                if dims1 != dims2 {
+                    return Err(format!(
+                        "Tensor shape mismatch in element-wise operation: {:?} vs {:?}",
+                        dims1, dims2
+                    ));
+                }
+
+                let kind = match op {
+                    ast::Operator::Add => InstructionKind::TensorAdd(dest, lhs, rhs),
+                    ast::Operator::Sub => InstructionKind::TensorSub(dest, lhs, rhs),
+                    ast::Operator::Mult => InstructionKind::TensorMul(dest, lhs, rhs),
+                    ast::Operator::Div => InstructionKind::TensorDiv(dest, lhs, rhs),
+                    _ => return Err(format!("Operator {:?} not supported for Tensors", op)),
+                };
+                self.func.set_type(dest, l_ty.clone());
+                return Ok(kind);
+            }
+        }
+
+        if let Type::Tensor(_inner, _) = &l_ty {
+            if !r_ty.is_tensor() {
+                // Tensor-Scalar arithmetic
+                let kind = match op {
+                    ast::Operator::Add => InstructionKind::TensorScalarAdd(dest, lhs, rhs),
+                    ast::Operator::Sub => InstructionKind::TensorScalarSub(dest, lhs, rhs),
+                    ast::Operator::Mult => InstructionKind::TensorScalarMul(dest, lhs, rhs),
+                    ast::Operator::Div => InstructionKind::TensorScalarDiv(dest, lhs, rhs),
+                    _ => return Err(format!("Operator {:?} not supported for Tensor-Scalar", op)),
+                };
+                self.func.set_type(dest, l_ty.clone());
+                return Ok(kind);
+            }
+        } else if let Type::Tensor(_inner, _) = &r_ty {
+            if !l_ty.is_tensor() {
+                // Scalar-Tensor arithmetic (e.g. 5.0 + tensor)
+                // For Add and Mul, it's commutative
+                let kind = match op {
+                    ast::Operator::Add => InstructionKind::TensorScalarAdd(dest, rhs, lhs),
+                    ast::Operator::Mult => InstructionKind::TensorScalarMul(dest, rhs, lhs),
+                    _ => return Err(format!("Operator {:?} not supported for Scalar-Tensor", op)),
+                };
+                self.func.set_type(dest, r_ty.clone());
+                return Ok(kind);
+            }
+        }
+
         let kind = match op {
             ast::Operator::Add => {
                 if is_float {
@@ -1026,6 +1127,7 @@ impl CFGBuilder {
                     InstructionKind::Mul(dest, lhs, rhs)
                 }
             }
+            ast::Operator::MatMult => InstructionKind::MatMult(dest, lhs, rhs),
             ast::Operator::Div => InstructionKind::FDiv(dest, lhs, rhs),
             ast::Operator::FloorDiv => InstructionKind::SDiv(dest, lhs, rhs),
             ast::Operator::Mod => InstructionKind::SRem(dest, lhs, rhs),
@@ -1037,7 +1139,17 @@ impl CFGBuilder {
             _ => return Err(format!("Operator {:?} not yet supported", op)),
         };
 
-        if l_ty.is_simd() {
+        if let (ast::Operator::MatMult, Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (op, &l_ty, &r_ty) {
+            if t1 != t2 {
+                return Err("Matrix multiplication requires tensors of the same base type".to_string());
+            }
+            if dims1.len() != 2 || dims2.len() != 2 {
+                return Err("Matrix multiplication currently requires exactly 2D tensors".to_string());
+            }
+            // Resulting shape: [M, K] from [M, N] @ [N, K]
+            let new_dims = vec![dims1[0].clone(), dims2[1].clone()];
+            self.func.set_type(dest, Type::Tensor(t1.clone(), new_dims));
+        } else if l_ty.is_simd() {
             self.func.set_type(dest, l_ty);
         } else if is_float {
             self.func.set_type(

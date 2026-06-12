@@ -350,6 +350,10 @@ def _map_ctypes_arguments(
             or "buffer" in ann_str
         )
 
+        is_tensor = (
+            isinstance(origin, type) and issubclass(origin, Tensor)
+        ) or "tensor" in ann_str
+
         is_ptr_wrapper = False
         if isinstance(origin, type) and issubclass(
             origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor)
@@ -395,6 +399,16 @@ def _map_ctypes_arguments(
                         item_size = ctypes.sizeof(cty)
                         break
             arg_map.append(("buffer", len(c_args) - 2, item_size))
+        elif is_tensor:
+            c_args.append(ctypes.c_void_p)
+            dim_count = 2  # default to 2D
+            if origin is Annotated and hasattr(actual_ann, "__metadata__"):
+                metadata = actual_ann.__metadata__[0]
+                if isinstance(metadata, tuple) and len(metadata) > 1:
+                    dim_count = len(metadata[1])  # length of the shape tuple
+            for _ in range(dim_count):
+                c_args.append(ctypes.c_int64)
+            arg_map.append(("tensor", len(c_args) - 1 - dim_count, dim_count))
         elif (
             is_ptr_wrapper
             or getattr(actual_ann, "__lila_struct__", False)
@@ -645,6 +659,11 @@ def _prepare_runtime_args(
                     anchors.append(c_buf)
                 except Exception as e:
                     raise TypeError(f"Argument {i} failed buffer conversion: {e}")
+        elif arg_type == "tensor":
+            dim_count = arg_info[2]
+            processed_args.append(ctypes.c_void_p(arg.ptr))
+            for j in range(dim_count):
+                processed_args.append(ctypes.c_int64(arg.shape[j]))
         elif arg_type == "pointer":
             if hasattr(arg, "_ctypes_obj"):
                 processed_args.append(ctypes.addressof(arg._ctypes_obj))
@@ -725,18 +744,90 @@ def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
         if i < len(args):
             ann = param.annotation
             if hasattr(ann, "predicate") and ann.predicate:
-                if not ann.predicate(args[i]):
-                    raise ValueError(
-                        f"Runtime Refinement Violation for argument '{param.name}': "
-                        f"Value {args[i]} does not satisfy the predicate."
-                    )
+                if callable(ann.predicate):
+                    if not ann.predicate(args[i]):
+                        raise ValueError(
+                            f"Runtime Refinement Violation for argument '{param.name}': "
+                            f"Value {args[i]} does not satisfy the predicate."
+                        )
+                # If predicate is a string, it's a symbolic refinement for the verifier,
+                # we skip it at runtime.
 
 
 def _wrap_return_value(
-    res: Any, ret_ann: Any, type_mapping: Dict[str, str] = None
+    res: Any,
+    ret_ann: Any,
+    type_mapping: Dict[str, str] = None,
+    sig: inspect.Signature = None,
+    args: Tuple = None,
 ) -> Any:
-    """Wrap the JIT return value if it represents a higher-order function."""
-    from .types import FnPointer, Closure, i64
+    """Wrap the JIT return value if it represents a higher-order function or Tensor."""
+    from .types import FnPointer, Closure, i64, Tensor
+    from typing import get_origin
+
+    actual_ann = getattr(ret_ann, "base_type", ret_ann)
+    origin = get_origin(actual_ann) or actual_ann
+    is_tensor = (
+        isinstance(origin, type) and issubclass(origin, Tensor)
+    ) or "tensor" in str(ret_ann).lower()
+
+    if is_tensor and sig and args:
+        # Build symbol table for dimensions
+        sym_table = {}
+        for i, param in enumerate(sig.parameters.values()):
+            if i < len(args):
+                p_ann = param.annotation
+                p_orig = get_origin(p_ann) or p_ann
+                is_p_tensor = (
+                    isinstance(p_orig, type) and issubclass(p_orig, Tensor)
+                ) or "tensor" in str(p_ann).lower()
+                if is_p_tensor:
+                    if hasattr(p_ann, "__metadata__"):
+                        p_meta = p_ann.__metadata__[0]
+                        if isinstance(p_meta, tuple) and len(p_meta) > 1:
+                            p_shape = p_meta[1]
+                            arg_val = args[i]
+                            if hasattr(arg_val, "shape"):
+                                for dim_name, actual_size in zip(
+                                    p_shape, arg_val.shape
+                                ):
+                                    sym_table[dim_name] = actual_size
+
+        # Determine return shape
+        ret_shape = []
+        if hasattr(actual_ann, "__metadata__"):
+            ret_meta = actual_ann.__metadata__[0]
+            if isinstance(ret_meta, tuple) and len(ret_meta) > 1:
+                for dim_name in ret_meta[1]:
+                    ret_shape.append(
+                        sym_table.get(dim_name, 1)
+                    )  # Default 1 if not found
+
+        import ctypes
+
+        # We assume the returned pointer is a ctypes.c_void_p or int
+        ptr_val = res
+        if not isinstance(ptr_val, int):
+            ptr_val = ctypes.cast(ptr_val, ctypes.c_void_p).value
+
+        # Reconstruct the Tensor
+        # Since we just have a raw pointer, we wrap it in a ctypes array of the correct size
+        item_ty_str = (
+            str(ret_meta[0]).lower() if hasattr(actual_ann, "__metadata__") else "f32"
+        )
+        item_cty = ctypes.c_float
+        for name, cty in TYPE_MAP.items():
+            if name in item_ty_str:
+                item_cty = cty
+                break
+
+        total_size = 1
+        for d in ret_shape:
+            total_size *= d
+
+        ArrayType = item_cty * total_size
+        c_buf = ArrayType.from_address(ptr_val)
+        return Tensor(c_buf, tuple(ret_shape))
 
     ret_ann_str = _get_type_name(ret_ann, type_mapping).lower()
     if (
@@ -780,6 +871,18 @@ def _get_ctypes_return_type(ret_ann: Any, type_mapping: Dict[str, str] = None) -
         or "none" in ret_ann_str
     ):
         return None
+
+    from typing import get_origin
+    from .types import Tensor, Buffer
+
+    origin = get_origin(actual_ann) or actual_ann
+    if (
+        (isinstance(origin, type) and issubclass(origin, (Tensor, Buffer)))
+        or "tensor" in ret_ann_str
+        or "buffer" in ret_ann_str
+    ):
+        return ctypes.c_int64
+
     return _get_ctypes_type(ret_ann_str)
 
 
@@ -824,7 +927,7 @@ def _create_wrapper(
                 # SIMD Return
                 return ret_struct
 
-        return _wrap_return_value(res, sig.return_annotation, type_mapping)
+        return _wrap_return_value(res, sig.return_annotation, type_mapping, sig, args)
 
     print(f"[Lila] JIT compiled '{func.__name__}' successfully.")
     wrapper.__lila_jit__ = True

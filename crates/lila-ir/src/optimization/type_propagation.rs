@@ -253,30 +253,45 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, Type::Bool);
                         }
                     }
-                    InstructionKind::EnumGetTag(d, _) => {
+                    InstructionKind::BufferLen(d, _) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
-                            new_types.insert(*d, Type::U8);
+                            new_types.insert(*d, Type::I64);
                         }
                     }
-                    InstructionKind::SIMDSplat(d, s) => {
+                    InstructionKind::TensorLoad(d, tensor, _) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
-                            let s_ty = func.get_type(*s);
-                            match s_ty {
-                                Type::F32 => {
-                                    new_types.insert(*d, Type::F32X4);
-                                }
-                                Type::I32 => {
-                                    new_types.insert(*d, Type::I32X4);
-                                }
-                                Type::F64 => {
-                                    new_types.insert(*d, Type::F64X2);
-                                }
-                                Type::I64 => {
-                                    new_types.insert(*d, Type::I64X2);
-                                }
-                                _ => {}
+                            let tensor_ty = match func.get_type(*tensor) {
+                                Type::Refined(inner, _) => *inner,
+                                other => other,
+                            };
+                            if let Type::Tensor(inner, _) = tensor_ty {
+                                new_types.insert(*d, *inner);
+                            }
+                        }
+                    }
+                    InstructionKind::TensorStore(d, tensor, _, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, func.get_type(*tensor));
+                        }
+                    }
+                    InstructionKind::TensorAdd(d, lhs, _)
+                    | InstructionKind::TensorSub(d, lhs, _)
+                    | InstructionKind::TensorMul(d, lhs, _)
+                    | InstructionKind::TensorDiv(d, lhs, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, func.get_type(*lhs));
+                        }
+                    }
+                    InstructionKind::ArrayLoad(d, arr, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let arr_ty = func.get_type(*arr);
+                            if let Type::Array(inner, _) = arr_ty {
+                                new_types.insert(*d, *inner);
                             }
                         }
                     }

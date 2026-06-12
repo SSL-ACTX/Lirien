@@ -19,10 +19,8 @@ def sum_points(data: Buffer[Point3D]) -> i64:
 
 class TestBufferStruct(unittest.TestCase):
     def test_buffer_struct(self):
-        # We need a way to create an array of Point3D.
-
-        ArrayType = Point3D.__lila_ctypes__ * 10
-        arr = ArrayType()
+        # Use Lila's native Buffer allocation
+        arr = Buffer[Point3D].alloc(10)
         for i in range(10):
             arr[i].x = 1
             arr[i].y = 2

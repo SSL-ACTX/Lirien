@@ -14,38 +14,71 @@ impl CFGBuilder {
             }
             ast::Expr::Subscript(sub) => {
                 let arr = self.visit_expr(*sub.value.clone())?;
-                let idx = self.visit_expr(*sub.slice.clone())?;
-                let dest_arr = self.func.next_value();
                 let arr_ty = self.func.get_type(arr);
+                let dest_arr = self.func.next_value();
+
                 match arr_ty {
-                    Type::Buffer(inner) => {
-                        self.add_instruction(InstructionKind::BufferStore(
-                            dest_arr,
-                            arr,
-                            idx,
-                            value,
-                            *inner.clone(),
+                    Type::Tensor(inner, dims) => {
+                        let mut indices = Vec::new();
+                        if let ast::Expr::Tuple(t) = &*sub.slice {
+                            for elt_expr in &t.elts {
+                                let mut idx = self.visit_expr(elt_expr.clone())?;
+                                idx = self.auto_load(idx);
+                                indices.push(idx);
+                            }
+                        } else {
+                            let mut idx = self.visit_expr(*sub.slice.clone())?;
+                            idx = self.auto_load(idx);
+                            indices.push(idx);
+                        }
+
+                        if indices.len() != dims.len() {
+                            return Err(format!(
+                                "Tensor indexing rank mismatch: expected {} indices, got {}",
+                                dims.len(),
+                                indices.len()
+                            ));
+                        }
+
+                        self.add_instruction(InstructionKind::TensorStore(
+                            dest_arr, arr, indices, value,
                         ));
-                        self.func.set_type(dest_arr, Type::Buffer(inner));
-                    }
-                    Type::Array(inner, size) => {
-                        self.add_instruction(InstructionKind::ArrayStore(
-                            dest_arr,
-                            arr,
-                            idx,
-                            value,
-                            *inner.clone(),
-                        ));
-                        self.func.set_type(dest_arr, Type::Array(inner, size));
+                        self.func.set_type(dest_arr, Type::Tensor(inner, dims));
                     }
                     _ => {
-                        self.add_instruction(InstructionKind::ArrayStore(
-                            dest_arr,
-                            arr,
-                            idx,
-                            value,
-                            Type::Unknown,
-                        ));
+                        let mut idx = self.visit_expr(*sub.slice.clone())?;
+                        idx = self.auto_load(idx);
+                        match arr_ty {
+                            Type::Buffer(inner) => {
+                                self.add_instruction(InstructionKind::BufferStore(
+                                    dest_arr,
+                                    arr,
+                                    idx,
+                                    value,
+                                    *inner.clone(),
+                                ));
+                                self.func.set_type(dest_arr, Type::Buffer(inner));
+                            }
+                            Type::Array(inner, size) => {
+                                self.add_instruction(InstructionKind::ArrayStore(
+                                    dest_arr,
+                                    arr,
+                                    idx,
+                                    value,
+                                    *inner.clone(),
+                                ));
+                                self.func.set_type(dest_arr, Type::Array(inner, size));
+                            }
+                            _ => {
+                                self.add_instruction(InstructionKind::ArrayStore(
+                                    dest_arr,
+                                    arr,
+                                    idx,
+                                    value,
+                                    Type::Unknown,
+                                ));
+                            }
+                        }
                     }
                 }
 

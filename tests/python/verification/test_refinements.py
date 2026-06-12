@@ -3,10 +3,21 @@ import numpy as np
 from lila import verify, i64, Refined, Buffer, struct
 from lila.compiler import VerificationError
 
+# --- Common Refinement Types ---
 Positive = Refined[i64, lambda x: x > 0]
 InRange = Refined[i64, lambda x: (x >= 0) & (x < 100)]
+Even = Refined[i64, lambda x: (x & 1) == 0]
+# if x > 0 then x < 10 else x > -10
+Bounded = Refined[i64, lambda x: x < 10 if x > 0 else x > -10]
 
 
+@struct
+class Point:
+    x: i64
+    y: i64
+
+
+# --- Helper Functions for Interprocedural Tests ---
 @verify
 def divide_verified(n: i64, d: Positive) -> i64:
     return n // d
@@ -17,13 +28,19 @@ def divide_unsafe(n: i64, d: i64) -> i64:
     return n // d
 
 
-@struct
-class Point:
-    x: i64
-    y: i64
+@verify
+def pass_even(x: Even) -> i64:
+    return x
+
+
+@verify
+def take_bounded(x: Bounded) -> i64:
+    return x
 
 
 class TestRefinements(unittest.TestCase):
+    # --- Basic Refinements ---
+
     def test_safe_division(self):
         res = divide_verified(100, 10)
         self.assertEqual(res, 10)
@@ -94,6 +111,151 @@ class TestRefinements(unittest.TestCase):
 
         p = Point(10, 20)
         self.assertEqual(get_inverse_x(p), 10)
+
+    # --- Interprocedural Refinements (from test_advanced_refinements.py) ---
+
+    def test_interprocedural_violation(self):
+        with self.assertRaises(VerificationError) as cm:
+
+            @verify
+            def call_even_illegal() -> i64:
+                return pass_even(3)  # This should FAIL verification
+
+        self.assertIn("Argument refinement violation", str(cm.exception))
+        self.assertIn("pass_even", str(cm.exception))
+
+    def test_interprocedural_success(self):
+        @verify
+        def call_even_safe() -> i64:
+            return pass_even(2)
+
+        self.assertEqual(call_even_safe(), 2)
+
+    # --- Return Refinements (from test_return_refinement.py) ---
+
+    def test_return_refinement_fails(self):
+        with self.assertRaises(VerificationError) as ctx:
+
+            @verify
+            def should_fail_return(x: i64) -> Positive:
+                return x
+
+        self.assertIn("Return refinement", str(ctx.exception))
+        self.assertIn("may be violated", str(ctx.exception))
+
+    def test_return_refinement_succeeds(self):
+        @verify
+        def should_succeed_return(x: i64) -> Positive:
+            if x > 0:
+                return x
+            return 1
+
+        self.assertEqual(should_succeed_return(5), 5)
+        self.assertEqual(should_succeed_return(-5), 1)
+
+    # --- ITE Refinements (from test_ite_refinement.py) ---
+
+    def test_bounded_ok(self):
+        @verify
+        def call_bounded_ok() -> i64:
+            return take_bounded(5) + take_bounded(-5)
+
+        self.assertEqual(call_bounded_ok(), 0)
+
+    def test_bounded_bad_pos(self):
+        with self.assertRaises(VerificationError) as cm:
+
+            @verify
+            def call_bounded_bad_pos() -> i64:
+                return take_bounded(15)  # Fails x < 10
+
+        self.assertIn("Argument refinement violation", str(cm.exception))
+
+    def test_bounded_bad_neg(self):
+        with self.assertRaises(VerificationError) as cm:
+
+            @verify
+            def call_bounded_bad_neg() -> i64:
+                return take_bounded(-15)  # Fails x > -10
+
+        self.assertIn("Argument refinement violation", str(cm.exception))
+
+    # --- Bitwise Refinements (from test_bitwise_refinement.py) ---
+
+    def test_mask_success(self):
+        Masked = Refined[i64, lambda x: (x & 0xFF) == 0xAA]
+
+        @verify
+        def check_mask(x: Masked) -> i64:
+            return x
+
+        self.assertEqual(check_mask(0xAA), 170)
+
+    def test_mask_failure(self):
+        Masked = Refined[i64, lambda x: (x & 0xFF) == 0xAA]
+
+        @verify
+        def check_mask(x: Masked) -> i64:
+            return x
+
+        with self.assertRaises(ValueError) as cm:
+            check_mask(0xBB)
+        self.assertIn("Runtime Refinement Violation", str(cm.exception))
+
+    def test_pow2_success(self):
+        PowerOfTwo = Refined[i64, lambda x: x > 0 and (x & (x - 1)) == 0]
+
+        @verify
+        def is_pow2(x: PowerOfTwo) -> i64:
+            return x
+
+        self.assertEqual(is_pow2(1024), 1024)
+
+    def test_bitwise_compilation_failure(self):
+        Masked = Refined[i64, lambda x: (x & 0xFF) == 0xAA]
+
+        @verify
+        def pass_masked(x: Masked) -> i64:
+            return x
+
+        with self.assertRaises(VerificationError) as cm:
+
+            @verify
+            def call_masked_bad() -> i64:
+                return pass_masked(0xBB)
+
+        self.assertIn("Argument refinement violation", str(cm.exception))
+
+    # --- Path-Aware and Transitive Refinements ---
+
+    def test_transitive_refinement(self):
+        # x > 5 implies x > 0
+        StrictPositive = Refined[i64, lambda x: x > 5]
+
+        @verify
+        def test_transitive(x: StrictPositive) -> i64:
+            return divide_verified(100, x)
+
+        self.assertEqual(test_transitive(10), 10)
+
+    def test_path_sensitive_inference(self):
+        @verify
+        def path_sensitive(x: i64) -> i64:
+            if x > 10:
+                # x > 10 implies x > 0
+                return divide_verified(100, x)
+            return 0
+
+        self.assertEqual(path_sensitive(20), 5)
+        self.assertEqual(path_sensitive(5), 0)
+
+    def test_arithmetic_property_proof(self):
+        @verify
+        def sum_positives(a: Positive, b: Positive) -> Positive:
+            # Lila should be able to prove that a + b > 0 if a > 0 and b > 0
+            return a + b
+
+        self.assertEqual(sum_positives(10, 20), 30)
 
 
 if __name__ == "__main__":
