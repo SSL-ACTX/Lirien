@@ -23,9 +23,12 @@ Lila exists to break this dichotomy. It takes Python's "hints" and turns them in
 
 ### Key Features
 *   **Mathematical Soundness:** Liquid Types and Z3-backed formal verification prove the absence of crashes, out-of-bounds, and logic errors.
+*   **Verified Tensors:** Formally verified element-wise arithmetic and reductions with Z3 shape-aware validation.
 *   **Bare-Metal Performance:** Bypasses the CPython interpreter and GIL entirely using the Cranelift JIT.
+*   **Flat Value Types:** Stack-allocated, non-boxed structs (`@value`) for zero-overhead data processing and cache-efficient layouts.
+*   **Runtime Monomorphization:** Specialized JIT compilation for generic functions using Python `TypeVar` for zero-overhead abstractions.
 *   **Native SIMD:** Direct access to CPU vector registers (`f32x4`, `i32x4`, etc.) from within Python.
-*   **Zero-Cost Abstractions:** Recursive ADTs, optimized pattern matching, and memory-mapped structs with C-ABI compatibility.
+*   **Verified Loop Unrolling:** Compile-time constant tracking and CFG unrolling for optimized execution using `Literal` types.
 *   **AOT Caching:** Near-zero latency startup by caching verified IR to disk.
 
 ## Table of Contents
@@ -102,6 +105,38 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
     parallel_for(range(len(vec)), body)
 ```
 
+#### Runtime Monomorphization
+Lila uses Python's `typing.TypeVar` to implement zero-overhead generics. Functions are lazily specialized and JIT-compiled for specific types at the first call site, similar to C++ templates.
+```python
+from typing import TypeVar
+from lila import verify, i64, f64
+
+T = TypeVar("T", i64, f64)
+
+@verify
+def identity(x: T) -> T:
+    return x
+
+# Lila generates specialized machine code for each variant
+res_int = identity(42)    # specialized for i64
+res_flt = identity(3.14)  # specialized for f64
+```
+
+#### Verified Loop Unrolling
+By using `typing.Literal`, Lila can track compile-time constants and perform robust loop unrolling. This eliminates loop overhead and provides Z3 with exact induction values for indexing proofs.
+```python
+from typing import Literal
+from lila import verify, i64
+
+@verify
+def unrolled_sum(limit: Literal[5]) -> i64:
+    total = 0
+    # Lila unrolls this loop completely into 5 discrete blocks
+    for i in range(limit):
+        total += i
+    return total
+```
+
 #### Ahead-of-Time (AOT) IR Caching
 Lila caches its proven Intermediate Representation (IR) to disk in a fast binary format. If the Python source code, memory layouts, and compiler version remain unchanged, subsequent executions completely bypass AST parsing and the computationally expensive Z3 formal verification phase. The pre-verified IR is fed directly to Cranelift for near-instant execution startup times.
 
@@ -121,19 +156,52 @@ def add_vectors(a: f32x4, b: f32x4) -> f32x4:
 ### Verified Data Structures
 
 #### Memory-Mapped Structs
-Define zero-overhead, C-compatible structures that exist outside the CPython heap.
+Define zero-overhead, C-compatible structures that exist outside the CPython heap. Lila supports **Nested Refinements**, allowing you to prove properties deep within a structure's hierarchy.
 ```python
-from lila import struct, f64, i32
+from lila import struct, f64, i32, Refined
 
 @struct
 class Point:
     x: f64
     y: f64
+
+@struct
+class Trace:
+    p: Point
     id: i32
 
-    def move_by(self, dx: f64, dy: f64):
-        self.x += dx
-        self.y += dy
+# Formally prove properties of nested fields
+SafeTrace = Refined[Trace, lambda t: t.p.x > 0]
+```
+
+#### Flat Value Types
+Lila supports stack-allocated, non-boxed structs (`@value`) that provide zero-overhead data processing. Unlike heap-allocated `@struct`, `@value` types have value semantics and are laid out contiguously in memory, making them ideal for high-performance buffer operations.
+```python
+from lila import value, i64, Buffer, verify
+
+@value
+class Point3D:
+    x: i64
+    y: i64
+    z: i64
+
+@verify
+def process_points(data: Buffer[Point3D]) -> None:
+    # Lila optimizes this to raw pointer arithmetic with zero boxing overhead
+    for i in range(len(data)):
+        total = data[i].x + 1
+```
+
+#### Verified Tensors
+Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches and mathematical violations.
+```python
+from lila import verify, Tensor, f32
+
+@verify
+def tensor_compute(a: Tensor[f32, "M", "N"], b: Tensor[f32, "M", "N"]) -> f32:
+    # Lila proves M and N match at compile-time; prevents shape-mismatch crashes
+    res = (a + b) * 2.0
+    return res.sum() # Verified reduction
 ```
 
 #### Recursive ADTs: Formally Verified Linked Lists
@@ -266,15 +334,16 @@ graph TD
 | :--- | :--- |
 | **Core Architecture** | Multi-crate Rust Workspace (`lila-core`, `lila-ir`, `lila-verify`, `lila-backend`, `lila-bridge`) |
 | **Numeric Types** | `i8` through `u64`, `f32`, `f64`, `SIMD (f32x4, etc.)` |
+| **Generics** | Runtime Monomorphization (`TypeVar`) |
 | **Functional Types**| `FnPointer`, `Closure`, `Callable` |
-| **Complex Types** | Structs, Tagged Unions (ADTs), Tuples, Boxed Types |
+| **Complex Types** | Structs, Tensors, Tagged Unions (ADTs), Tuples, Boxed Types |
 | **Concurrency** | GIL-less multi-threading (`parallel_for`) |
 | **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **AOT Caching** | Binary IR Serialization (`bincode`, `seahash`) |
 | **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |
 | **Diagnostics** | Source-level visual highlights, Centralized Granular Tracing |
-| **Optimization Passes**| SSA-DCE, Constant Folding, Type Propagation, Jump Table Opt |
+| **Optimization Passes**| SSA-DCE, Constant Folding, Verified Loop Unrolling, Type Propagation |
 
 ---
 
@@ -306,9 +375,7 @@ To maintain mathematical soundness, Lila imposes strict constraints:
 *   Functions must have explicit type annotations.
 
 ### Future Research
-1. **Transition to Aeneas and F*:** Moving from Z3 to Aeneas and F* would allow for **Absolute Formal Proof**, shifting the project from "highly likely safe" to "mathematically certain".
-2. **Automated Loop Invariant Synthesis:** Researching Abstract Interpretation to automatically derive loop invariants.
-3. **Flat Value Types (`@value`):** Researching stack-allocated, non-boxed structs to reduce heap pressure and pointer chasing.
+1. **Automated Loop Invariant Synthesis:** Researching Abstract Interpretation to automatically derive loop invariants.
 
 ---
 
