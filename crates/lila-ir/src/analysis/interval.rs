@@ -410,6 +410,60 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                             false
                         }
                     }
+                    InstructionKind::Neg(d, s) => {
+                        let si = block_narrowing
+                            .get(&(*s, block.id))
+                            .or_else(|| intervals.get(s));
+                        if let Some(si) = si {
+                            let mut res = Interval {
+                                low: match si.high {
+                                    Bound::Finite(h) => Bound::Finite(-h),
+                                    Bound::PosInf => Bound::NegInf,
+                                    Bound::NegInf => Bound::PosInf,
+                                },
+                                high: match si.low {
+                                    Bound::Finite(l) => Bound::Finite(-l),
+                                    Bound::NegInf => Bound::PosInf,
+                                    Bound::PosInf => Bound::NegInf,
+                                },
+                            };
+                            res.clamp(func.get_type(*d));
+                            update_interval(&mut intervals, *d, res)
+                        } else {
+                            false
+                        }
+                    }
+                    InstructionKind::Abs(d, s) => {
+                        let si = block_narrowing
+                            .get(&(*s, block.id))
+                            .or_else(|| intervals.get(s));
+                        if let Some(si) = si {
+                            let low = if si.low >= Bound::Finite(0.0) {
+                                si.low
+                            } else if si.high <= Bound::Finite(0.0) {
+                                match si.high {
+                                    Bound::Finite(h) => Bound::Finite(-h),
+                                    _ => Bound::Finite(0.0), // Should not happen if high <= 0
+                                }
+                            } else {
+                                Bound::Finite(0.0)
+                            };
+
+                            let high = match (si.low, si.high) {
+                                (Bound::Finite(l), Bound::Finite(h)) => Bound::Finite(l.abs().max(h.abs())),
+                                (Bound::NegInf, _) | (_, Bound::PosInf) => Bound::PosInf,
+                                (Bound::Finite(l), _) => Bound::Finite(l.abs()),
+                                (_, Bound::Finite(h)) => Bound::Finite(h.abs()),
+                                (Bound::PosInf, Bound::NegInf) => Bound::Finite(0.0), // Invalid interval
+                            };
+
+                            let mut res = Interval { low, high };
+                            res.clamp(func.get_type(*d));
+                            update_interval(&mut intervals, *d, res)
+                        } else {
+                            false
+                        }
+                    }
                     InstructionKind::Phi(d, mappings) => {
                         let mut joined: Option<Interval> = None;
                         for (pred_id, src_val) in mappings {

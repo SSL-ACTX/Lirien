@@ -13,7 +13,7 @@ use tracing::info;
 
 static VERIFY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-pub fn verify(func: &Function, timeout_ms: u32) -> Result<(), String> {
+pub fn verify(func: &Function, timeout_ms: u32) -> Result<Option<String>, String> {
     info!(target: "lila::verify", "Verifying function '{}'...", func.name);
 
     let uid = VERIFY_COUNT.fetch_add(1, Ordering::SeqCst);

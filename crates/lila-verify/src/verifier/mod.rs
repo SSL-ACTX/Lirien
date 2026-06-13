@@ -108,7 +108,7 @@ pub fn verify_with_context<
     analysis: &IntervalAnalysisResults,
     _liveness: lila_ir::analysis::liveness::LivenessAnalysisResults,
     uid: usize,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let mut t_ctx = TranslationContext {
         backend,
         func,
@@ -148,8 +148,73 @@ pub fn verify_with_context<
         }
     }
 
-    tracing::info!(target: "lila::verify::verifier", "Proof successful for '{}'", func.name);
-    Ok(())
+    let inferred = if func.ret_refinement == Some("...".to_string()) {
+        infer_return_refinement(&t_ctx)?
+    } else {
+        None
+    };
+
+    tracing::info!(target: "lila::verify::verifier", "Proof successful for '{}' (inferred: {:?})", func.name, inferred);
+    Ok(inferred)
+}
+
+fn infer_return_refinement<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &TranslationContext<'_, B>,
+) -> Result<Option<String>, String> {
+    use lila_ir::analysis::interval::{Bound, Interval};
+    let mut combined_interval: Option<Interval> = None;
+
+    for block in &t_ctx.func.blocks {
+        for inst in &block.instructions {
+            if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
+                let interval = t_ctx.analysis.block_narrowing.get(&(*ret_val, block.id))
+                    .or_else(|| t_ctx.analysis.intervals.get(ret_val));
+                
+                if let Some(interval) = interval {
+                    combined_interval = match combined_interval {
+                        Some(j) => Some(j.join(interval)),
+                        None => Some(interval.clone()),
+                    };
+                }
+            }
+        }
+    }
+
+    if let Some(interval) = combined_interval {
+        let mut parts = Vec::new();
+        if let Bound::Finite(low) = interval.low {
+            if t_ctx.func.return_type.is_float() {
+                parts.push(format!("(>= {{v}} {})", low));
+            } else {
+                parts.push(format!("(>= {{v}} {})", low as i64));
+            }
+        }
+        if let Bound::Finite(high) = interval.high {
+            if t_ctx.func.return_type.is_float() {
+                parts.push(format!("(<= {{v}} {})", high));
+            } else {
+                parts.push(format!("(<= {{v}} {})", high as i64));
+            }
+        }
+
+        if parts.is_empty() {
+            Ok(None)
+        } else if parts.len() == 1 {
+            Ok(Some(parts[0].clone()))
+        } else {
+            Ok(Some(format!("(and {})", parts.join(" "))))
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 fn assert_derived_intervals<
@@ -602,29 +667,79 @@ fn verify_return_refinements<
                 
                 // Shape verification
                 if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&actual_ty, &ret_ty) {
-                    if src_dims.len() != target_dims.len() {
+                    let has_ellipsis = target_dims.iter().any(|d| d == "...");
+                    if !has_ellipsis && src_dims.len() != target_dims.len() {
                         let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
                         return Err(format!("Tensor rank mismatch in return: expected {} dims, got {}{}", target_dims.len(), src_dims.len(), loc_info));
                     }
+                    
                     if let Some(src_z3_dims) = t_ctx.z3_tensor_dims.get(ret_val) {
-                        for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
-                            let target_z3_dim = t_ctx.backend.int_const(target_dim_name);
-                            t_ctx.backend.push();
-                            t_ctx.backend.assert(path_cond);
-                            let eq = t_ctx.backend.int_eq(&src_z3_dims[dim_idx], &target_z3_dim);
-                            let not_eq = t_ctx.backend.bool_not(&eq);
-                            t_ctx.backend.assert(&not_eq);
-                            
-                            if t_ctx.backend.check()? {
+                        if has_ellipsis {
+                            let ellipsis_pos = target_dims.iter().position(|d| d == "...").unwrap();
+                            let num_fixed_before = ellipsis_pos;
+                            let num_fixed_after = target_dims.len() - ellipsis_pos - 1;
+
+                            if src_dims.len() < num_fixed_before + num_fixed_after {
                                 let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                                return Err(format!("Tensor shape mismatch in return: dimension '{}' (idx {}) does not match{}", target_dim_name, dim_idx, loc_info));
+                                return Err(format!("Tensor rank too small for polymorphic target: expected at least {} dims, got {}{}", num_fixed_before + num_fixed_after, src_dims.len(), loc_info));
                             }
-                            t_ctx.backend.pop(1);
+
+                            // Check fixed dims before ellipsis
+                            for i in 0..num_fixed_before {
+                                let target_dim_name = &target_dims[i];
+                                let target_z3_dim = t_ctx.backend.int_const(target_dim_name);
+                                t_ctx.backend.push();
+                                t_ctx.backend.assert(path_cond);
+                                let eq = t_ctx.backend.int_eq(&src_z3_dims[i], &target_z3_dim);
+                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                t_ctx.backend.assert(&not_eq);
+                                if t_ctx.backend.check()? {
+                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    return Err(format!("Tensor shape mismatch in return (prefix): dimension '{}' (idx {}) does not match{}", target_dim_name, i, loc_info));
+                                }
+                                t_ctx.backend.pop(1);
+                            }
+
+                            // Check fixed dims after ellipsis
+                            for i in 0..num_fixed_after {
+                                let src_idx = src_dims.len() - num_fixed_after + i;
+                                let target_idx = ellipsis_pos + 1 + i;
+                                let target_dim_name = &target_dims[target_idx];
+                                let target_z3_dim = t_ctx.backend.int_const(target_dim_name);
+                                t_ctx.backend.push();
+                                t_ctx.backend.assert(path_cond);
+                                let eq = t_ctx.backend.int_eq(&src_z3_dims[src_idx], &target_z3_dim);
+                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                t_ctx.backend.assert(&not_eq);
+                                if t_ctx.backend.check()? {
+                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    return Err(format!("Tensor shape mismatch in return (suffix): dimension '{}' (idx {}) does not match{}", target_dim_name, src_idx, loc_info));
+                                }
+                                t_ctx.backend.pop(1);
+                            }
+                        } else {
+                            for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
+                                let target_z3_dim = t_ctx.backend.int_const(target_dim_name);
+                                t_ctx.backend.push();
+                                t_ctx.backend.assert(path_cond);
+                                let eq = t_ctx.backend.int_eq(&src_z3_dims[dim_idx], &target_z3_dim);
+                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                t_ctx.backend.assert(&not_eq);
+                                
+                                if t_ctx.backend.check()? {
+                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    return Err(format!("Tensor shape mismatch in return: dimension '{}' (idx {}) does not match{}", target_dim_name, dim_idx, loc_info));
+                                }
+                                t_ctx.backend.pop(1);
+                            }
                         }
                     }
                 }
 
                 if let Some(ret_ref) = &t_ctx.func.ret_refinement {
+                    if ret_ref == "..." {
+                        continue;
+                    }
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
@@ -709,27 +824,81 @@ fn verify_call_arguments<
                         if i < sig.arg_types.len() {
                             let target_ty = &sig.arg_types[i];
                             if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&arg_ty, target_ty) {
-                                if src_dims.len() != target_dims.len() {
+                                let has_ellipsis = target_dims.iter().any(|d| d == "...");
+                                if !has_ellipsis && src_dims.len() != target_dims.len() {
                                     let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
                                     return Err(format!("Tensor rank mismatch in call to '{}': expected {} dims, got {}{}", target_name, target_dims.len(), src_dims.len(), loc_info));
                                 }
                                 if let Some(src_z3_dims) = t_ctx.z3_tensor_dims.get(arg_val) {
-                                    for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
-                                        let src_z3_dim = &src_z3_dims[dim_idx];
-                                        if let Some(bound_z3_dim) = call_dim_map.get(target_dim_name) {
-                                            t_ctx.backend.push();
-                                            t_ctx.backend.assert(path_cond);
-                                            let eq = t_ctx.backend.int_eq(src_z3_dim, bound_z3_dim);
-                                            let not_eq = t_ctx.backend.bool_not(&eq);
-                                            t_ctx.backend.assert(&not_eq);
-                                            
-                                            if t_ctx.backend.check()? {
-                                                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                                                return Err(format!("Tensor shape mismatch in call to '{}': dimension '{}' (idx {}) does not match previously bound value{}", target_name, target_dim_name, dim_idx, loc_info));
+                                    if has_ellipsis {
+                                        let ellipsis_pos = target_dims.iter().position(|d| d == "...").unwrap();
+                                        let num_fixed_before = ellipsis_pos;
+                                        let num_fixed_after = target_dims.len() - ellipsis_pos - 1;
+
+                                        if src_dims.len() < num_fixed_before + num_fixed_after {
+                                            let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                            return Err(format!("Tensor rank too small for polymorphic target in call to '{}': expected at least {} dims, got {}{}", target_name, num_fixed_before + num_fixed_after, src_dims.len(), loc_info));
+                                        }
+
+                                        // Check fixed dims before ellipsis
+                                        for i in 0..num_fixed_before {
+                                            let target_dim_name = &target_dims[i];
+                                            let src_z3_dim = &src_z3_dims[i];
+                                            if let Some(bound_z3_dim) = call_dim_map.get(target_dim_name) {
+                                                t_ctx.backend.push();
+                                                t_ctx.backend.assert(path_cond);
+                                                let eq = t_ctx.backend.int_eq(src_z3_dim, bound_z3_dim);
+                                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                                t_ctx.backend.assert(&not_eq);
+                                                if t_ctx.backend.check()? {
+                                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                                    return Err(format!("Tensor shape mismatch in call to '{}' (prefix): dimension '{}' (idx {}) does not match previously bound value{}", target_name, target_dim_name, i, loc_info));
+                                                }
+                                                t_ctx.backend.pop(1);
+                                            } else {
+                                                call_dim_map.insert(target_dim_name.clone(), src_z3_dim.clone());
                                             }
-                                            t_ctx.backend.pop(1);
-                                        } else {
-                                            call_dim_map.insert(target_dim_name.clone(), src_z3_dim.clone());
+                                        }
+
+                                        // Check fixed dims after ellipsis
+                                        for i in 0..num_fixed_after {
+                                            let src_idx = src_dims.len() - num_fixed_after + i;
+                                            let target_idx = ellipsis_pos + 1 + i;
+                                            let target_dim_name = &target_dims[target_idx];
+                                            let src_z3_dim = &src_z3_dims[src_idx];
+                                            if let Some(bound_z3_dim) = call_dim_map.get(target_dim_name) {
+                                                t_ctx.backend.push();
+                                                t_ctx.backend.assert(path_cond);
+                                                let eq = t_ctx.backend.int_eq(src_z3_dim, bound_z3_dim);
+                                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                                t_ctx.backend.assert(&not_eq);
+                                                if t_ctx.backend.check()? {
+                                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                                    return Err(format!("Tensor shape mismatch in call to '{}' (suffix): dimension '{}' (idx {}) does not match previously bound value{}", target_name, target_dim_name, src_idx, loc_info));
+                                                }
+                                                t_ctx.backend.pop(1);
+                                            } else {
+                                                call_dim_map.insert(target_dim_name.clone(), src_z3_dim.clone());
+                                            }
+                                        }
+                                    } else {
+                                        for (dim_idx, target_dim_name) in target_dims.iter().enumerate() {
+                                            let src_z3_dim = &src_z3_dims[dim_idx];
+                                            if let Some(bound_z3_dim) = call_dim_map.get(target_dim_name) {
+                                                t_ctx.backend.push();
+                                                t_ctx.backend.assert(path_cond);
+                                                let eq = t_ctx.backend.int_eq(src_z3_dim, bound_z3_dim);
+                                                let not_eq = t_ctx.backend.bool_not(&eq);
+                                                t_ctx.backend.assert(&not_eq);
+                                                
+                                                if t_ctx.backend.check()? {
+                                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                                    return Err(format!("Tensor shape mismatch in call to '{}': dimension '{}' (idx {}) does not match previously bound value{}", target_name, target_dim_name, dim_idx, loc_info));
+                                                }
+                                                t_ctx.backend.pop(1);
+                                            } else {
+                                                call_dim_map.insert(target_dim_name.clone(), src_z3_dim.clone());
+                                            }
                                         }
                                     }
                                 }

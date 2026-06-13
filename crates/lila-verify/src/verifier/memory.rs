@@ -139,7 +139,7 @@ pub fn init_values<
             );
             ctx.z3_arrays.insert(val, payload_val);
         } else if inner_ty.is_float() {
-            let is_f32 = matches!(inner_ty, Type::F32);
+            let is_f32 = inner_ty.is_float32();
             let z3_val = ctx
                 .backend
                 .float_const(&format!("{}_v{}_{}", ctx.func.name, i, ctx.uid), is_f32);

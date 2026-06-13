@@ -49,7 +49,7 @@ Lila exists to break this dichotomy. It takes Python's "hints" and turns them in
 ### Mathematical Safety & Logic
 
 #### Liquid Types: Provable Logical Invariants
-Lila uses refinement types to prove that operations are mathematically safe before they ever execute.
+Lila uses refinement types to prove that operations are mathematically safe before they ever execute. It can also **infer postconditions** using `...`, automatically deriving the strongest possible predicates via interval analysis.
 ```python
 from lila import verify, i64, Refined
 
@@ -60,6 +60,13 @@ Positive = Refined[i64, lambda x: x > 0]
 def divide_verified(n: i64, d: Positive) -> i64:
     # Z3 proves d > 0. Runtime ZeroDivisionError is mathematically impossible.
     return n // d
+
+@verify
+def infer_bounds(x: i64) -> Refined[i64, ...]:
+    # Lila automatically infers the return postcondition: (and (>= {v} 1) (<= {v} 10))
+    if x > 10: return 10
+    if x < 1: return 1
+    return x
 ```
 
 #### Inductive Reasoning: Recursive Functions
@@ -106,10 +113,10 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
 ```
 
 #### Runtime Monomorphization
-Lila uses Python's `typing.TypeVar` to implement zero-overhead generics. Functions are lazily specialized and JIT-compiled for specific types at the first call site, similar to C++ templates.
+Lila uses Python's `typing.TypeVar` and `Ellipsis` to implement zero-overhead generics and rank-polymorphism. Functions are lazily specialized and JIT-compiled for specific types and tensor ranks at the first call site, similar to C++ templates.
 ```python
 from typing import TypeVar
-from lila import verify, i64, f64
+from lila import verify, i64, f64, Tensor
 
 T = TypeVar("T", i64, f64)
 
@@ -120,6 +127,10 @@ def identity(x: T) -> T:
 # Lila generates specialized machine code for each variant
 res_int = identity(42)    # specialized for i64
 res_flt = identity(3.14)  # specialized for f64
+
+@verify
+def first_elt(a: Tensor[f64, ...]) -> f64:
+    return a[0, 0] # Specialized for the specific rank at runtime
 ```
 
 #### Verified Loop Unrolling
@@ -194,15 +205,16 @@ def process_points(data: Buffer[Point3D]) -> None:
 ```
 
 #### Verified Tensors
-Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches and mathematical violations.
+Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches and mathematical violations. It supports **Rank-Polymorphism** using `...`, allowing a single function to operate on tensors of any rank that satisfy a suffix shape.
 ```python
 from lila import verify, Tensor, f32
 
 @verify
-def tensor_compute(a: Tensor[f32, "M", "N"], b: Tensor[f32, "M", "N"]) -> f32:
-    # Lila proves M and N match at compile-time; prevents shape-mismatch crashes
+def rank_poly_compute(a: Tensor[f32, ..., "N"], b: Tensor[f32, ..., "N"]) -> f32:
+    # Lila proves that 'a' and 'b' have the same rank and that their 
+    # last dimensions match 'N' at runtime via monomorphization.
     res = (a + b) * 2.0
-    return res.sum() # Verified reduction
+    return res.sum()
 ```
 
 #### Recursive ADTs: Formally Verified Linked Lists

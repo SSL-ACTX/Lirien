@@ -48,7 +48,7 @@ impl Type {
 
     pub fn is_float32(&self) -> bool {
         match self {
-            Type::F32 | Type::F32X4 => true,
+            Type::F32 => true,
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_float32(),
             _ => false,
         }

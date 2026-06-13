@@ -153,6 +153,26 @@ def _prepare_source_and_name(
     return source, target_func_name
 
 
+def _has_ellipsis(ann):
+    """Check if a type annotation contains an Ellipsis (...)."""
+    if ann is Ellipsis:
+        return True
+    # Tensor shape is in metadata[0][1]
+    if hasattr(ann, "__metadata__"):
+        metadata = ann.__metadata__
+        if metadata and isinstance(metadata[0], tuple):
+            if any(_has_ellipsis(m) for m in metadata[0]):
+                return True
+            if len(metadata[0]) > 1 and isinstance(metadata[0][1], (list, tuple)):
+                if any(m is Ellipsis for m in metadata[0][1]):
+                    return True
+    if hasattr(ann, "__args__"):
+        return any(_has_ellipsis(arg) for arg in ann.__args__)
+    if isinstance(ann, (list, tuple)):
+        return any(_has_ellipsis(arg) for arg in ann)
+    return False
+
+
 class MonomorphizedFunction:
     """Handles lazy monomorphization of generic functions using TypeVars."""
 
@@ -178,7 +198,9 @@ class MonomorphizedFunction:
         self.cache = {}
         self.sig = inspect.signature(func)
 
-    def _match_typevars(self, annotation: Any, val: Any, mapping: Dict[str, str]):
+    def _match_typevars(
+        self, annotation: Any, val: Any, mapping: Dict[str, Any], param_name: str = None
+    ):
         """Recursively match TypeVars in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
         if isinstance(annotation, TypeVar):
@@ -197,13 +219,32 @@ class MonomorphizedFunction:
             # Buffer[T] -> Annotated[Buffer, T]
             if actual_origin is Buffer:
                 if metadata:
-                    self._match_typevars(metadata[0], val, mapping)
+                    self._match_typevars(metadata[0], val, mapping, param_name)
                 return
 
             # Tensor[T, shape] -> Annotated[Tensor, (T, shape)]
             if actual_origin is Tensor:
                 if metadata and isinstance(metadata[0], tuple) and len(metadata[0]) > 0:
-                    self._match_typevars(metadata[0][0], val, mapping)
+                    base_ty, shape = metadata[0]
+                    self._match_typevars(base_ty, val, mapping, param_name)
+
+                    if any(s is Ellipsis for s in shape):
+                        actual_shape = getattr(val, "shape", ())
+                        if param_name:
+                            # Match ellipsis
+                            try:
+                                ellipsis_idx = shape.index(Ellipsis)
+                                num_before = ellipsis_idx
+                                num_after = len(shape) - ellipsis_idx - 1
+                                if len(actual_shape) >= num_before + num_after:
+                                    ellipsis_part = actual_shape[
+                                        num_before : len(actual_shape) - num_after
+                                    ]
+                                    mapping[f"__ellipsis_{param_name}"] = list(
+                                        ellipsis_part
+                                    )
+                            except ValueError:
+                                pass
                 return
 
             # Box[T] -> Annotated[Box, T]
@@ -211,7 +252,7 @@ class MonomorphizedFunction:
                 if metadata:
                     # Look inside the Box if val is a Box instance
                     inner_val = val.value if isinstance(val, Box) else val
-                    self._match_typevars(metadata[0], inner_val, mapping)
+                    self._match_typevars(metadata[0], inner_val, mapping, param_name)
                 return
 
             # SizedArray[T, size] -> Annotated[SizedLilaArray, (T, size)]
@@ -220,7 +261,7 @@ class MonomorphizedFunction:
                 and "SizedLilaArray" in actual_origin.__name__
             ):
                 if metadata and isinstance(metadata[0], tuple) and len(metadata[0]) > 0:
-                    self._match_typevars(metadata[0][0], val, mapping)
+                    self._match_typevars(metadata[0][0], val, mapping, param_name)
                 return
 
         # 3. Handle standard generics (Tuples)
@@ -228,17 +269,14 @@ class MonomorphizedFunction:
             args = get_args(annotation)
             if isinstance(val, (list, tuple)) and len(val) == len(args):
                 for arg_ann, arg_val in zip(args, val):
-                    self._match_typevars(arg_ann, arg_val, mapping)
+                    self._match_typevars(arg_ann, arg_val, mapping, param_name)
             return
 
         # 4. Recurse for other generic types if needed (e.g. List[T])
         args = get_args(annotation)
         if args:
             for arg in args:
-                # We don't know how to destructure 'val' for unknown generics,
-                # but we can at least try to find TypeVars in them.
-                # If they are linked to other arguments, they might be resolved elsewhere.
-                self._match_typevars(arg, val, mapping)
+                self._match_typevars(arg, val, mapping, param_name)
 
     def __call__(self, *args, **kwargs):
         bound = self.sig.bind(*args, **kwargs)
@@ -247,10 +285,18 @@ class MonomorphizedFunction:
         mapping = {}
         for param_name, val in bound.arguments.items():
             param = self.sig.parameters[param_name]
-            self._match_typevars(param.annotation, val, mapping)
+            self._match_typevars(param.annotation, val, mapping, param_name)
+
+        # Match return annotation if it has TypeVars or Ellipsis
+        # (Though matching against 'None' won't do much unless we have return-type inference)
+        self._match_typevars(self.sig.return_annotation, None, mapping, "return")
 
         # Create a stable cache key
-        cache_key = tuple(sorted(mapping.items()))
+        cache_key = tuple(
+            sorted(
+                (k, tuple(v) if isinstance(v, list) else v) for k, v in mapping.items()
+            )
+        )
 
         if cache_key not in self.cache:
             self.cache[cache_key] = self._specialize(mapping)
@@ -263,13 +309,76 @@ class MonomorphizedFunction:
         )
 
         # Specialized function name to avoid collisions
-        specialized_name = (
-            target_name + "_" + "_".join(v for k, v in sorted(mapping.items()))
-        )
+        suffix_parts = []
+        for k, v in sorted(mapping.items()):
+            if k.startswith("__ellipsis_"):
+                suffix_parts.append("rank" + str(len(v)))
+            else:
+                suffix_parts.append(str(v))
+
+        specialized_name = target_name + "_" + "_".join(suffix_parts)
 
         tree = ast.parse(source)
         tree.body[0].name = specialized_name
-        transformer = TypeSubstitutor(mapping)
+
+        # Expand Ellipsis in AST
+        class EllipsisExpander(ast.NodeTransformer):
+            def __init__(self, mapping):
+                self.mapping = mapping
+                self.current_param = None
+
+            def visit_arg(self, node):
+                old_param = self.current_param
+                self.current_param = node.arg
+                node.annotation = (
+                    self.visit(node.annotation) if node.annotation else None
+                )
+                self.current_param = old_param
+                return node
+
+            def visit_FunctionDef(self, node):
+                # Visit args manually to set current_param
+                node.args = self.visit(node.args)
+
+                # Visit return annotation
+                old_param = self.current_param
+                self.current_param = "return"
+                if node.returns:
+                    node.returns = self.visit(node.returns)
+                self.current_param = old_param
+
+                # Visit body
+                node.body = [self.visit(stmt) for stmt in node.body]
+                return node
+
+            def visit_Subscript(self, node):
+                self.generic_visit(node)
+                if isinstance(node.value, ast.Name) and node.value.id == "Tensor":
+                    if isinstance(node.slice, ast.Tuple):
+                        new_elts = []
+                        for elt in node.slice.elts:
+                            if isinstance(elt, ast.Constant) and elt.value is Ellipsis:
+                                ellipsis_key = f"__ellipsis_{self.current_param}"
+                                if ellipsis_key in self.mapping:
+                                    for dim in self.mapping[ellipsis_key]:
+                                        new_elts.append(ast.Constant(value=dim))
+                                else:
+                                    # Fallback to first ellipsis found if mapping by name fails
+                                    for k, v in self.mapping.items():
+                                        if k.startswith("__ellipsis_"):
+                                            for dim in v:
+                                                new_elts.append(ast.Constant(value=dim))
+                                            break
+                            else:
+                                new_elts.append(elt)
+                        node.slice.elts = new_elts
+                return node
+
+        tree = EllipsisExpander(mapping).visit(tree)
+
+        transformer = TypeSubstitutor(
+            {k: v for k, v in mapping.items() if not k.startswith("__ellipsis_")}
+        )
         tree = transformer.visit(tree)
         specialized_source = ast.unparse(tree)
 
@@ -352,8 +461,11 @@ def verify(
     def decorator(func: T) -> T:
         sig = inspect.signature(func)
         typevars = _get_all_typevars(sig)
+        has_ellipsis = any(
+            _has_ellipsis(p.annotation) for p in sig.parameters.values()
+        ) or _has_ellipsis(sig.return_annotation)
 
-        if typevars:
+        if typevars or has_ellipsis:
             return MonomorphizedFunction(
                 func,
                 typevars,

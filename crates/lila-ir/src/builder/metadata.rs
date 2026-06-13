@@ -109,13 +109,14 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                         let mut dims = Vec::new();
                         for dim_expr in t.elts.iter().skip(1) {
                             if let ast::Expr::Constant(c) = dim_expr {
-                                if let ast::Constant::Str(s) = &c.value {
-                                    dims.push(s.to_string());
-                                } else {
-                                    return Err("Tensor dimensions must be strings (e.g., \"M\")".to_string());
+                                match &c.value {
+                                    ast::Constant::Str(s) => dims.push(s.to_string()),
+                                    ast::Constant::Int(i) => dims.push(i.to_string()),
+                                    ast::Constant::Ellipsis => dims.push("...".to_string()),
+                                    _ => return Err("Tensor dimensions must be strings (e.g., \"M\"), integers, or Ellipsis (...)".to_string()),
                                 }
                             } else {
-                                return Err("Tensor dimensions must be string constants".to_string());
+                                return Err("Tensor dimensions must be string constants or Ellipsis".to_string());
                             }
                         }
                         Ok(Type::Tensor(Box::new(inner), dims))
@@ -247,15 +248,22 @@ pub fn extract_refinement(
                     for elt in t.elts.iter().skip(1) {
                         match elt {
                             ast::Expr::Constant(c) => {
-                                if let ast::Constant::Str(s) = &c.value {
-                                    let refinement_expr = ast::Expr::parse(s, "<refinement>")
-                                        .map_err(|e| e.to_string())?;
-                                    return Ok(Some(expr_to_string_internal(
-                                        &refinement_expr,
-                                        None,
-                                        &base_ty,
-                                        struct_layouts,
-                                    )?.0));
+                                match &c.value {
+                                    ast::Constant::Str(s) => {
+                                        let refinement_expr = ast::Expr::parse(s, "<refinement>")
+                                            .map_err(|e| e.to_string())?;
+                                        return Ok(Some(
+                                            expr_to_string_internal(
+                                                &refinement_expr,
+                                                None,
+                                                &base_ty,
+                                                struct_layouts,
+                                            )?
+                                            .0,
+                                        ));
+                                    }
+                                    ast::Constant::Ellipsis => return Ok(Some("...".to_string())),
+                                    _ => {}
                                 }
                             }
                             _ => {

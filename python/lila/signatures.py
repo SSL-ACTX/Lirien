@@ -57,7 +57,8 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
         if "tensor" in origin_str:
             base_ty, shape = inner
             shape_str = ", ".join(
-                f'"{s}"' if isinstance(s, str) else str(s) for s in shape
+                f'"{s}"' if isinstance(s, str) else ("..." if s is Ellipsis else str(s))
+                for s in shape
             )
             return f"Tensor[{_get_type_name(base_ty, type_mapping)}, {shape_str}]"
 

@@ -163,26 +163,11 @@ pub fn propagate_types(func: &mut Function) {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
                             let mut base_ty = Type::Unknown;
-                            if l_ty == Type::F64 || r_ty == Type::F64 {
-                                base_ty = Type::F64;
-                            } else if l_ty == Type::F32 || r_ty == Type::F32 {
-                                base_ty = Type::F32;
-                            } else {
-                                if let Type::Refined(inner, _) = &l_ty {
-                                    if **inner == Type::F64 {
-                                        base_ty = Type::F64;
-                                    } else if **inner == Type::F32 {
-                                        base_ty = Type::F32;
-                                    }
-                                }
-                                if base_ty == Type::Unknown {
-                                    if let Type::Refined(inner, _) = &r_ty {
-                                        if **inner == Type::F64 {
-                                            base_ty = Type::F64;
-                                        } else if **inner == Type::F32 {
-                                            base_ty = Type::F32;
-                                        }
-                                    }
+                            if l_ty.is_float() || r_ty.is_float() {
+                                if (l_ty.is_float() && !l_ty.is_float32()) || (r_ty.is_float() && !r_ty.is_float32()) {
+                                    base_ty = if l_ty.is_float() && !l_ty.is_float32() { l_ty.clone() } else { r_ty.clone() };
+                                } else if l_ty.is_float32() || r_ty.is_float32() {
+                                    base_ty = if l_ty.is_float32() { l_ty.clone() } else { r_ty.clone() };
                                 }
                             }
 

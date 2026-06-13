@@ -41,7 +41,7 @@ pub fn verify_and_compile(
 
         debug!(target: "lila::bridge", "AST parsed successfully. Starting SSA transformation...");
 
-        let funcs = lila_ir::transform(
+        let mut funcs = lila_ir::transform(
             func_name.clone(),
             ast,
             struct_layouts,
@@ -57,12 +57,18 @@ pub fn verify_and_compile(
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
         })?;
 
-        for ssa in &funcs {
+        for ssa in &mut funcs {
             info!(target: "lila::bridge", "Processing SSA for '{}'...", ssa.name);
-            if let Err(e) = lila_verify::verify(ssa, timeout_ms) {
-
-                cache::invalidate(cache_hash);
-                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+            match lila_verify::verify(ssa, timeout_ms) {
+                Ok(inferred) => {
+                    if let Some(inf) = inferred {
+                        ssa.ret_refinement = Some(inf);
+                    }
+                }
+                Err(e) => {
+                    cache::invalidate(cache_hash);
+                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
+                }
             }
             info!(target: "lila::bridge", "Verification complete for '{}'", ssa.name);
         }

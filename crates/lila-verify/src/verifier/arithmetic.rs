@@ -152,7 +152,12 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
-                let zero = ctx.backend.float_from_f64(0.0);
+                let ty = ctx.func.get_type(*src);
+                let zero = if ty.is_float32() {
+                    ctx.backend.float_from_f32(0.0)
+                } else {
+                    ctx.backend.float_from_f64(0.0)
+                };
                 let res = ctx.backend.float_sub(&zero, z3_s);
                 let __inner = ctx.backend.float_eq(z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
@@ -170,7 +175,12 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
-                let zero = ctx.backend.float_from_f64(0.0);
+                let ty = ctx.func.get_type(*src);
+                let zero = if ty.is_float32() {
+                    ctx.backend.float_from_f32(0.0)
+                } else {
+                    ctx.backend.float_from_f64(0.0)
+                };
                 let is_neg = ctx.backend.float_lt(z3_s, &zero);
                 let neg_val = ctx.backend.float_sub(&zero, z3_s);
                 let res = ctx.backend.float_ite(&is_neg, &neg_val, z3_s);
