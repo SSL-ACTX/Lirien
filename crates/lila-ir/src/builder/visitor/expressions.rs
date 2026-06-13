@@ -633,6 +633,11 @@ impl CFGBuilder {
                         self.add_instruction(InstructionKind::BufferLen(dest, arg));
                         self.func.set_type(dest, Type::I64);
                         return Ok(dest);
+                    } else if let Type::Array(_, Some(size)) = ty {
+                        let dest = self.func.next_value();
+                        self.add_instruction(InstructionKind::ConstInt(dest, size as i64));
+                        self.func.set_type(dest, Type::I64);
+                        return Ok(dest);
                     }
                 } else if func_name == "parallel_for" {
                     if s.args.len() != 2 {

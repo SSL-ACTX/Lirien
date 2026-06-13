@@ -13,7 +13,7 @@ from typing import (
     Annotated,
 )
 from . import lila_bridge
-from .types import Buffer, Box, Tensor
+from .types import Buffer, Box, Tensor, SizedArray
 from .signatures import (
     _get_type_name,
     _discover_types,
@@ -256,12 +256,15 @@ class MonomorphizedFunction:
                 return
 
             # SizedArray[T, size] -> Annotated[SizedLilaArray, (T, size)]
-            if (
+            if actual_origin is SizedArray or (
                 hasattr(actual_origin, "__name__")
                 and "SizedLilaArray" in actual_origin.__name__
             ):
                 if metadata and isinstance(metadata[0], tuple) and len(metadata[0]) > 0:
                     self._match_typevars(metadata[0][0], val, mapping, param_name)
+                    if len(metadata[0]) > 1 and metadata[0][1] is Ellipsis:
+                        if hasattr(val, "__len__") and param_name:
+                            mapping[f"__ellipsis_{param_name}"] = [len(val)]
                 return
 
         # 3. Handle standard generics (Tuples)
@@ -353,7 +356,10 @@ class MonomorphizedFunction:
 
             def visit_Subscript(self, node):
                 self.generic_visit(node)
-                if isinstance(node.value, ast.Name) and node.value.id == "Tensor":
+                if isinstance(node.value, ast.Name) and node.value.id in (
+                    "Tensor",
+                    "SizedArray",
+                ):
                     if isinstance(node.slice, ast.Tuple):
                         new_elts = []
                         for elt in node.slice.elts:

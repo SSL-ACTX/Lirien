@@ -1,8 +1,22 @@
 import unittest
-from lila import verify, Tensor, f32, f64, i64, Refined
+from lila import verify, Tensor, f32, f64, i64, Refined, SizedArray
 
 
 class TestEllipsis(unittest.TestCase):
+    def test_sized_array_inference(self):
+        @verify
+        def sum_array(arr: SizedArray[i64, ...]) -> i64:
+            s = 0
+            for i in range(len(arr)):
+                s += arr[i]
+            return s
+
+        data5 = SizedArray[i64, 5]([1, 2, 3, 4, 5])
+        self.assertEqual(sum_array(data5), 15)
+
+        data3 = SizedArray[i64, 3]([10, 20, 30])
+        self.assertEqual(sum_array(data3), 60)
+
     def test_rank_polymorphism_tensor(self):
         @verify
         def get_first(a: Tensor[f32, ...]) -> f32:

@@ -341,6 +341,12 @@ class SizedArray(Generic[T]):
             raise TypeError("SizedArray requires [type, size]")
 
         base_type, size = params
+
+        from typing import Annotated
+
+        if size is Ellipsis:
+            return Annotated[cls, (base_type, size)]
+
         base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()
 
         # Default to i64
