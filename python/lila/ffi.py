@@ -396,7 +396,12 @@ def _prepare_runtime_args(
                 processed_args.append(ctypes.c_int64(arg.shape[j]))
         elif arg_type == "pointer":
             if hasattr(arg, "_ctypes_obj"):
-                processed_args.append(ctypes.addressof(arg._ctypes_obj))
+                # If it's already a pointer or c_void_p, pass it directly.
+                # Otherwise, take the address of the struct.
+                if isinstance(arg._ctypes_obj, (ctypes.c_void_p, ctypes._Pointer)):
+                    processed_args.append(arg._ctypes_obj)
+                else:
+                    processed_args.append(ctypes.addressof(arg._ctypes_obj))
             elif isinstance(arg, Box):
                 if hasattr(arg.value, "_ctypes_obj"):
                     processed_args.append(ctypes.addressof(arg.value._ctypes_obj))

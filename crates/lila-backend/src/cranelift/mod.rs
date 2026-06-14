@@ -44,6 +44,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         | SsaType::Struct(_)
         | SsaType::Enum(_)
         | SsaType::Pointer(_)
+        | SsaType::NullablePointer(_)
         | SsaType::Tuple(_) => {
             types::I64 // Pointer
         }

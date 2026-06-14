@@ -141,6 +141,13 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     let inner = parse_type(&s.slice, aliases)?;
                     Ok(Type::Pointer(Box::new(inner)))
                 }
+                "nullable" => {
+                    let inner = parse_type(&s.slice, aliases)?;
+                    match inner {
+                        Type::Pointer(p) => Ok(Type::NullablePointer(p)),
+                        other => Ok(Type::NullablePointer(Box::new(other))),
+                    }
+                }
                 "fnpointer" | "callable" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.len() == 2 {
@@ -209,6 +216,38 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                     }
                     parse_type(&s.slice, aliases)
                 }
+                "optional" => {
+                    let inner = parse_type(&s.slice, aliases)?;
+                    match inner {
+                        Type::Pointer(p) => Ok(Type::NullablePointer(p)),
+                        other => Ok(Type::NullablePointer(Box::new(other))),
+                    }
+                }
+                "union" => {
+                    if let ast::Expr::Tuple(t) = &*s.slice {
+                        if t.elts.len() == 2 {
+                            let mut inner_ty = None;
+                            let mut has_none = false;
+                            for elt in &t.elts {
+                                if let ast::Expr::Constant(c) = elt {
+                                    if matches!(c.value, ast::Constant::None) {
+                                        has_none = true;
+                                        continue;
+                                    }
+                                }
+                                inner_ty = Some(parse_type(elt, aliases)?);
+                            }
+                            if has_none && inner_ty.is_some() {
+                                let inner = inner_ty.unwrap();
+                                return match inner {
+                                    Type::Pointer(p) => Ok(Type::NullablePointer(p)),
+                                    other => Ok(Type::NullablePointer(Box::new(other))),
+                                };
+                            }
+                        }
+                    }
+                    Err("Only Union[T, None] is supported".to_string())
+                }
                 _ => Err(format!(
                     "Unsupported generic type: '{}' (lowered: '{}')",
                     base,
@@ -226,6 +265,24 @@ pub fn parse_type(expr: &ast::Expr, aliases: &HashMap<String, String>) -> Result
                 types.push(parse_type(elt, aliases)?);
             }
             Ok(Type::Tuple(types))
+        }
+        ast::Expr::BinOp(b) if matches!(b.op, ast::Operator::BitOr) => {
+            let lhs = parse_type(&b.left, aliases)?;
+            let rhs = parse_type(&b.right, aliases)?;
+
+            let (inner, has_none) = match (&lhs, &rhs) {
+                (Type::Unknown, other) | (other, Type::Unknown) => (other.clone(), true),
+                _ => (Type::Unknown, false),
+            };
+
+            if has_none && inner != Type::Unknown {
+                match inner {
+                    Type::Pointer(p) => Ok(Type::NullablePointer(p)),
+                    other => Ok(Type::NullablePointer(Box::new(other))),
+                }
+            } else {
+                Err("Only T | None is supported for unions".to_string())
+            }
         }
         _ => Err(format!("Invalid type annotation: {:?}", expr)),
     }

@@ -30,6 +30,7 @@ pub enum Type {
     Enum(String),
     Tuple(Vec<Type>),
     Pointer(Box<Type>),
+    NullablePointer(Box<Type>),
     FnPointer(Vec<Type>, Box<Type>),
     Closure(String, Vec<Type>, Box<Type>),
     Refined(Box<Type>, String),
@@ -123,6 +124,7 @@ impl Type {
             Type::Buffer(_)
             | Type::Array(_, _)
             | Type::Pointer(_)
+            | Type::NullablePointer(_)
             | Type::FnPointer(_, _)
             | Type::Closure(_, _, _) => true,
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_pointer_like(),
@@ -170,7 +172,7 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool => 1,
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
-            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
+            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) | Type::NullablePointer(_) => 8,
             Type::F32X4
             | Type::I32X4
             | Type::F64X2
@@ -249,7 +251,7 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool => 1,
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
-            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) => 8,
+            Type::I64 | Type::U64 | Type::F64 | Type::Pointer(_) | Type::NullablePointer(_) => 8,
             Type::F32X4
             | Type::I32X4
             | Type::F64X2

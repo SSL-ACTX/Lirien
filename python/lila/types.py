@@ -307,6 +307,10 @@ TYPE_MAP = {
     "u8x16": u8x16,
     "i16x8": i16x8,
     "u16x8": u16x8,
+    "box": ctypes.c_void_p,
+    "pointer": ctypes.c_void_p,
+    "nullable": ctypes.c_void_p,
+    "optional": ctypes.c_void_p,
 }
 
 
@@ -456,6 +460,20 @@ class Box:
 
     def __init__(self, value):
         self.value = value
+        if value is not None:
+            if hasattr(value, "_ctypes_obj"):
+                # For Lila structs, get the pointer to the underlying ctypes object
+                ptr = ctypes.pointer(value._ctypes_obj)
+                self._ctypes_obj = ctypes.cast(ptr, ctypes.c_void_p)
+            else:
+                # For primitive types boxed
+                from .signatures import _value_to_lila_type
+
+                c_ty = TYPE_MAP.get(_value_to_lila_type(value), ctypes.c_int64)
+                ptr = ctypes.pointer(c_ty(value))
+                self._ctypes_obj = ctypes.cast(ptr, ctypes.c_void_p)
+        else:
+            self._ctypes_obj = None  # Null pointer
 
     def __class_getitem__(cls, base_type):
         return Annotated[cls, base_type]

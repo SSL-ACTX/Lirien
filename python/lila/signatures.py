@@ -1,11 +1,17 @@
 import inspect
 import ast
+import sys
+import types
 from typing import (
     Any,
     Callable,
     Dict,
     Tuple,
     TypeVar,
+    Union,
+    get_origin,
+    get_args,
+    Annotated,
 )
 from .types import Box
 
@@ -105,6 +111,34 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
 
     # Handle standard Tuples
     origin = getattr(ty, "__origin__", None)
+    # Handle Union types (including Optional)
+    origin = get_origin(ty)
+    if (
+        origin is Union
+        or (
+            hasattr(sys.modules.get("typing"), "_UnionGenericAlias")
+            and isinstance(ty, sys.modules.get("typing")._UnionGenericAlias)
+        )
+        or (sys.version_info >= (3, 10) and origin is types.UnionType)
+    ):
+        args = get_args(ty)
+        # Check for Box[T] | None (Optional[Box[T]])
+        if len(args) == 2:
+            box_ty = None
+            has_none = False
+            for arg in args:
+                arg_origin = get_origin(arg)
+                if arg_origin is Annotated:
+                    inner_args = get_args(arg)
+                    if inner_args and inner_args[0] is Box:
+                        box_ty = arg
+                elif arg is type(None) or arg is None:
+                    has_none = True
+
+            if box_ty and has_none:
+                inner_name = _get_type_name(box_ty, type_mapping)
+                return f"Nullable[{inner_name}]"
+
     if origin:
         origin_str = str(origin)
         if "Literal" in origin_str:

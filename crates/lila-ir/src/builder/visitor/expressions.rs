@@ -123,8 +123,8 @@ impl CFGBuilder {
                     matches!(l_ty, Type::F32 | Type::F64) || matches!(r_ty, Type::F32 | Type::F64);
 
                 let (kind, op_str) = match s.ops[0] {
-                    ast::CmpOp::Eq => (InstructionKind::Eq(dest, lhs, rhs), "="),
-                    ast::CmpOp::NotEq => (InstructionKind::Ne(dest, lhs, rhs), "!="),
+                    ast::CmpOp::Eq | ast::CmpOp::Is => (InstructionKind::Eq(dest, lhs, rhs), "="),
+                    ast::CmpOp::NotEq | ast::CmpOp::IsNot => (InstructionKind::Ne(dest, lhs, rhs), "!="),
                     ast::CmpOp::Lt => {
                         if is_float {
                             (InstructionKind::FLt(dest, lhs, rhs), "<")
@@ -184,72 +184,85 @@ impl CFGBuilder {
                         inst.add_constraint(format!("(= {} {})", val, b));
                         self.func.set_type(val, Type::Bool);
                     }
+                    ast::Constant::None => {
+                        self.add_instruction(InstructionKind::ConstInt(val, 0));
+                        self.func.set_type(val, Type::I64);
+                    }
                     _ => return Err("Unsupported constant type".to_string()),
                 }
                 Ok(val)
             }
             ast::Expr::Name(n) => self.read_variable(n.id.to_string(), self.current_block),
             ast::Expr::Attribute(s) => {
-                let obj = self.visit_expr(*s.value.clone())?;
-                let orig_ty = self.func.get_type(obj);
-                let curr_ty = orig_ty.clone();
+                let mut obj = self.visit_expr(*s.value.clone())?;
+                let mut curr_ty = self.func.get_type(obj);
 
-                // Handle .val or .value unwrap for Refined/Box types (no-op in IR)
-                if (s.attr.as_str() == "val" || s.attr.as_str() == "value")
-                    && !matches!(curr_ty, Type::Struct(_))
-                {
-                    if let Type::Pointer(inner) = curr_ty {
-                        let deref_val = self.func.next_value();
-                        self.add_instruction(InstructionKind::PointerLoad(deref_val, obj));
-                        self.func.set_type(deref_val, *inner);
-                        return Ok(deref_val);
-                    }
-                    return Ok(obj);
-                }
-
-                if let Type::Struct(struct_name) = curr_ty {
-                    let field_offset = self
-                        .get_field_offset(&struct_name, s.attr.as_str())
-                        .ok_or_else(|| {
-                            format!("Field '{}' not found in struct '{}'", s.attr, struct_name)
-                        })?;
-
-                    let fields = self.func.struct_layouts.get(&struct_name).unwrap();
-                    let field_ty = fields
-                        .iter()
-                        .find(|(f, _)| f == s.attr.as_str())
-                        .unwrap()
-                        .1
-                        .clone();
-
-                    if matches!(field_ty, Type::Unknown) {
-                        return Err(format!(
-                            "Field '{}' has unknown type in struct '{}'",
-                            s.attr, struct_name
-                        ));
+                loop {
+                    // Handle .val or .value unwrap for Refined/Box types
+                    if s.attr.as_str() == "val" || s.attr.as_str() == "value"
+                    {
+                        if let Type::Pointer(inner) | Type::NullablePointer(inner) = &curr_ty {
+                            if !matches!(**inner, Type::Struct(_)) {
+                                let deref_val = self.func.next_value();
+                                self.add_instruction(InstructionKind::PointerLoad(deref_val, obj));
+                                self.func.set_type(deref_val, (**inner).clone());
+                                return Ok(deref_val);
+                            }
+                            // If it's a pointer to a struct, we fall through to auto-deref in the match.
+                        } else if !matches!(curr_ty, Type::Struct(_)) {
+                            // .val on a primitive is a no-op in IR (it's already the value)
+                            return Ok(obj);
+                        }
                     }
 
-                    let dest = self.func.next_value();
-                    self.update_location(expr_offset);
+                    match curr_ty {
+                        Type::Struct(struct_name) => {
+                            let field_offset = self.get_field_offset(&struct_name, s.attr.as_str()).ok_or_else(|| {
+                                format!("Field '{}' not found in struct '{}'", s.attr, struct_name)
+                            })?;
 
-                    if field_ty.is_composite() {
-                        self.add_instruction(InstructionKind::StructOffset(
-                            dest,
-                            obj,
-                            field_offset,
-                        ));
-                    } else {
-                        self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
+                            let fields = self.func.struct_layouts.get(&struct_name).unwrap();
+                            let field_ty = fields
+                                .iter()
+                                .find(|(f, _)| f == s.attr.as_str())
+                                .unwrap()
+                                .1
+                                .clone();
+
+                            if matches!(field_ty, Type::Unknown) {
+                                return Err(format!(
+                                    "Field '{}' has unknown type in struct '{}'",
+                                    s.attr, struct_name
+                                ));
+                            }
+
+                            let dest = self.func.next_value();
+                            self.update_location(expr_offset);
+
+                            if field_ty.is_composite() {
+                                self.add_instruction(InstructionKind::StructOffset(dest, obj, field_offset));
+                            } else {
+                                self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
+                            }
+
+                            self.func.set_type(dest, field_ty);
+                            return Ok(dest);
+                        }
+                        Type::Pointer(inner) | Type::NullablePointer(inner) => {
+                            // Auto-dereference for attribute access
+                            let deref_val = self.func.next_value();
+                            self.add_instruction(InstructionKind::PointerLoad(deref_val, obj));
+                            self.func.set_type(deref_val, (*inner).clone());
+                            obj = deref_val;
+                            curr_ty = (*inner).clone();
+                        }
+                        _ => {
+                            return Err(format!(
+                                "Cannot resolve attribute '{}' on non-struct type {:?}",
+                                s.attr, curr_ty
+                            ));
+                        }
                     }
-
-                    self.func.set_type(dest, field_ty);
-                    Ok(dest)
-                } else {
-                    Err(format!(
-                        "Cannot resolve attribute '{}' on non-struct type {:?}",
-                        s.attr,
-                        self.func.get_type(obj)
-                    ))
                 }
             }
             ast::Expr::Subscript(s) => {

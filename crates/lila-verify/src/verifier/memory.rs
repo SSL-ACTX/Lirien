@@ -126,10 +126,19 @@ pub fn init_values<
                 ctx.z3_ints.insert(val, z3_int);
             }
             ctx.z3_bvs.insert(val, z3_len);
-        } else if let Type::Pointer(_) = inner_ty {
+        } else if let Type::Pointer(_) | Type::NullablePointer(_) = inner_ty {
             let addr_val = ctx
                 .backend
                 .bv_const(&format!("{}_v{}_ptr_{}", ctx.func.name, i, ctx.uid), 64);
+            
+            // For standard Pointer (non-nullable), assert it's not null at init
+            if let Type::Pointer(_) = inner_ty {
+                let zero = ctx.backend.bv_from_i64(0, 64);
+                let is_null = ctx.backend.bv_eq(&addr_val, &zero);
+                let is_not_null = ctx.backend.bool_not(&is_null);
+                ctx.backend.assert(&is_not_null);
+            }
+            
             ctx.z3_bvs.insert(val, addr_val);
 
             let payload_val = ctx.backend.array_const(
@@ -632,6 +641,20 @@ pub fn translate<
             ctx.backend.assert(&__tmp);
         }
         InstructionKind::PointerLoad(dest, ptr) => {
+            // Null check
+            let ptr_val = ctx.z3_bvs.get(ptr).cloned().unwrap();
+            let zero = ctx.backend.bv_from_i64(0, 64);
+            let is_null = ctx.backend.bv_eq(&ptr_val, &zero);
+            
+            ctx.backend.push();
+            ctx.backend.assert(path_cond);
+            ctx.backend.assert(&is_null);
+            if ctx.backend.check()? {
+                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                return Err(format!("Potential null pointer dereference at v{}{}", ptr.0, loc_info));
+            }
+            ctx.backend.pop(1);
+
             let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
             let dest_ty = ctx.func.get_type(*dest);
             if dest_ty.is_composite() {
@@ -644,8 +667,8 @@ pub fn translate<
                 if dest_ty.is_float() {
                     // Floats not yet supported in heap model
                 } else if let Some(dest_bv) = ctx.z3_bvs.get(dest).cloned() {
-                    let zero = ctx.backend.int_from_i64(0);
-                    let res = ctx.backend.array_select_bv(&ptr_payload, &zero);
+                    let zero_idx = ctx.backend.int_from_i64(0);
+                    let res = ctx.backend.array_select_bv(&ptr_payload, &zero_idx);
                     let __inner = ctx.backend.bv_eq(&dest_bv, &res);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                     ctx.backend.assert(&__tmp);
@@ -653,6 +676,20 @@ pub fn translate<
             }
         }
         InstructionKind::PointerStore(ptr, val) => {
+            // Null check
+            let ptr_val = ctx.z3_bvs.get(ptr).cloned().unwrap();
+            let zero = ctx.backend.bv_from_i64(0, 64);
+            let is_null = ctx.backend.bv_eq(&ptr_val, &zero);
+            
+            ctx.backend.push();
+            ctx.backend.assert(path_cond);
+            ctx.backend.assert(&is_null);
+            if ctx.backend.check()? {
+                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                return Err(format!("Potential null pointer dereference (store) at v{}{}", ptr.0, loc_info));
+            }
+            ctx.backend.pop(1);
+
             let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
             let val_ty = ctx.func.get_type(*val);
             if val_ty.is_composite() {
@@ -665,8 +702,8 @@ pub fn translate<
                 if val_ty.is_float() {
                     // Floats not yet supported in heap model
                 } else if let Some(val_bv) = ctx.z3_bvs.get(val).cloned() {
-                    let zero = ctx.backend.int_from_i64(0);
-                    let new_payload = ctx.backend.array_store_bv(&ptr_payload, &zero, &val_bv);
+                    let zero_idx = ctx.backend.int_from_i64(0);
+                    let new_payload = ctx.backend.array_store_bv(&ptr_payload, &zero_idx, &val_bv);
                     // We need to update the ptr_payload mapping.
                     ctx.z3_arrays.insert(*ptr, new_payload);
                 }
