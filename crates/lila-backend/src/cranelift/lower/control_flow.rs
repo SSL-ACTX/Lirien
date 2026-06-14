@@ -1,4 +1,4 @@
-use super::{get_len, get_val, CodegenContext};
+use super::{get_all_cl_values, get_val, CodegenContext};
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lila_ir::ir::{BlockId as SsaBlockId, InstructionKind, Type as SsaType};
@@ -17,12 +17,9 @@ pub fn lower<M: Module>(
             for ssa_block_iter in &ctx.ssa_func.blocks {
                 if ssa_block_iter.id == *target {
                     for inst_iter in &ssa_block_iter.instructions {
-                        if let InstructionKind::Phi(dest_val, mappings) = &inst_iter.kind {
+                        if let InstructionKind::Phi(_, mappings) = &inst_iter.kind {
                             if let Some(src_val) = mappings.get(&current_ssa_block_id) {
-                                args.push(get_val(&ctx.values, src_val));
-                                if let SsaType::Buffer(_) = ctx.ssa_func.get_type(*dest_val) {
-                                    args.push(get_len(&ctx.buffer_lengths, src_val));
-                                }
+                                args.extend(get_all_cl_values(ctx, src_val));
                             }
                         }
                     }
@@ -41,24 +38,18 @@ pub fn lower<M: Module>(
             for ssa_block_iter in &ctx.ssa_func.blocks {
                 if ssa_block_iter.id == *t {
                     for inst_iter in &ssa_block_iter.instructions {
-                        if let InstructionKind::Phi(dest_val, mappings) = &inst_iter.kind {
+                        if let InstructionKind::Phi(_, mappings) = &inst_iter.kind {
                             if let Some(src_val) = mappings.get(&current_ssa_block_id) {
-                                t_args.push(get_val(&ctx.values, src_val));
-                                if let SsaType::Buffer(_) = ctx.ssa_func.get_type(*dest_val) {
-                                    t_args.push(get_len(&ctx.buffer_lengths, src_val));
-                                }
+                                t_args.extend(get_all_cl_values(ctx, src_val));
                             }
                         }
                     }
                 }
                 if ssa_block_iter.id == *f {
                     for inst_iter in &ssa_block_iter.instructions {
-                        if let InstructionKind::Phi(dest_val, mappings) = &inst_iter.kind {
+                        if let InstructionKind::Phi(_, mappings) = &inst_iter.kind {
                             if let Some(src_val) = mappings.get(&current_ssa_block_id) {
-                                f_args.push(get_val(&ctx.values, src_val));
-                                if let SsaType::Buffer(_) = ctx.ssa_func.get_type(*dest_val) {
-                                    f_args.push(get_len(&ctx.buffer_lengths, src_val));
-                                }
+                                f_args.extend(get_all_cl_values(ctx, src_val));
                             }
                         }
                     }
@@ -85,12 +76,9 @@ pub fn lower<M: Module>(
                 for ssa_block_iter in &ctx.ssa_func.blocks {
                     if ssa_block_iter.id == *target_ssa_id {
                         for inst_iter in &ssa_block_iter.instructions {
-                            if let InstructionKind::Phi(dest_val, mappings) = &inst_iter.kind {
+                            if let InstructionKind::Phi(_, mappings) = &inst_iter.kind {
                                 if let Some(src_val) = mappings.get(&current_ssa_block_id) {
-                                    phi_args.push(get_val(&ctx.values, src_val));
-                                    if let SsaType::Buffer(_) = ctx.ssa_func.get_type(*dest_val) {
-                                        phi_args.push(get_len(&ctx.buffer_lengths, src_val));
-                                    }
+                                    phi_args.extend(get_all_cl_values(ctx, src_val));
                                 }
                             }
                         }
@@ -120,7 +108,13 @@ pub fn lower<M: Module>(
             }
         }
         InstructionKind::Return(val) => {
-            if ctx.ssa_func.return_type.is_simd() {
+            if let SsaType::NamedTuple(_) = ctx.ssa_func.return_type {
+                let mut cl_vals = Vec::new();
+                if let Some(v) = val {
+                    cl_vals.extend(get_all_cl_values(ctx, v));
+                }
+                ctx.builder.ins().return_(&cl_vals);
+            } else if ctx.ssa_func.return_type.is_simd() {
                 if let Some(v) = val {
                     let vec_val = get_val(&ctx.values, v);
                     let dest_ptr = ctx.sret_ptr.expect("Missing SRet pointer for SIMD");

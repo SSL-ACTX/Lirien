@@ -16,6 +16,7 @@ pub struct CodegenContext<'a, M: Module> {
     pub ssa_func: &'a SsaFunction,
     pub blocks: HashMap<SsaBlockId, Block>,
     pub values: HashMap<SsaValue, Value>,
+    pub unpacked_values: HashMap<SsaValue, Vec<Value>>,
     pub buffer_lengths: HashMap<SsaValue, Value>,
     pub tensor_dims: HashMap<SsaValue, Vec<Value>>,
     pub is_tuple_return: bool,
@@ -42,6 +43,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         | SsaType::Buffer(_)
         | SsaType::Tensor(_, _)
         | SsaType::Struct(_)
+        | SsaType::NamedTuple(_)
         | SsaType::Enum(_)
         | SsaType::Pointer(_)
         | SsaType::NullablePointer(_)
@@ -232,6 +234,11 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     if let SsaType::Tuple(_) = ssa_func.return_type {
         sig.params.push(AbiParam::new(types::I64));
         is_ptr_return = true;
+    } else if let SsaType::NamedTuple(_) = ssa_func.return_type {
+        let cl_types = lower::get_flattened_types(ssa_func, &ssa_func.return_type);
+        for cl_ty in cl_types {
+            sig.returns.push(AbiParam::new(cl_ty));
+        }
     } else if ssa_func.return_type.is_simd() {
         sig.params.push(AbiParam::new(types::I64));
         is_ptr_return = true;
@@ -250,6 +257,12 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                     sig.params.push(AbiParam::new(types::I64)); // Dim length
                 }
             }
+            SsaType::NamedTuple(_) => {
+                let cl_types = lower::get_flattened_types(ssa_func, &ty);
+                for cl_ty in cl_types {
+                    sig.params.push(AbiParam::new(cl_ty));
+                }
+            }
             _ if ty.is_simd() => {
                 sig.params.push(AbiParam::new(types::I64)); // Pass by pointer for interop
             }
@@ -259,7 +272,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }
     }
 
-    if ssa_func.return_type != SsaType::Unknown && !is_ptr_return {
+    if ssa_func.return_type != SsaType::Unknown && !is_ptr_return && !matches!(ssa_func.return_type, SsaType::NamedTuple(_)) {
         sig.returns
             .push(AbiParam::new(translate_type(&ssa_func.return_type)));
     }
@@ -328,6 +341,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         builder.append_block_params_for_function_params(entry_block);
 
         let values = HashMap::new();
+        let unpacked_values = HashMap::new();
         let buffer_lengths = HashMap::new();
 
         let mut cg_ctx = CodegenContext {
@@ -336,6 +350,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             ssa_func,
             blocks,
             values,
+            unpacked_values,
             buffer_lengths,
             tensor_dims: HashMap::new(),
             is_tuple_return: matches!(ssa_func.return_type, SsaType::Tuple(_)),
@@ -359,14 +374,23 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             for inst in &ssa_block.instructions {
                 if let InstructionKind::Phi(dest, _) = &inst.kind {
                     let ty = ssa_func.get_type(*dest);
-                    let cl_ty = translate_type(&ty);
-                    let cl_val = cg_ctx.builder.append_block_param(current_cl_block, cl_ty);
-                    cg_ctx.values.insert(*dest, cl_val);
-                    if let SsaType::Buffer(_) = ty {
-                        let cl_len = cg_ctx
-                            .builder
-                            .append_block_param(current_cl_block, types::I64);
-                        cg_ctx.buffer_lengths.insert(*dest, cl_len);
+                    if let SsaType::NamedTuple(_) = ty {
+                        let cl_types = lower::get_flattened_types(ssa_func, &ty);
+                        let mut field_vals = Vec::new();
+                        for cl_ty in cl_types {
+                            field_vals.push(cg_ctx.builder.append_block_param(current_cl_block, cl_ty));
+                        }
+                        cg_ctx.unpacked_values.insert(*dest, field_vals);
+                    } else {
+                        let cl_ty = translate_type(&ty);
+                        let cl_val = cg_ctx.builder.append_block_param(current_cl_block, cl_ty);
+                        cg_ctx.values.insert(*dest, cl_val);
+                        if let SsaType::Buffer(_) = ty {
+                            let cl_len = cg_ctx
+                                .builder
+                                .append_block_param(current_cl_block, types::I64);
+                            cg_ctx.buffer_lengths.insert(*dest, cl_len);
+                        }
                     }
                 }
             }
@@ -425,6 +449,15 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                             }
                             cg_ctx.tensor_dims.insert(val, dim_vals);
                             p_idx += 1 + dims.len();
+                        }
+                        SsaType::NamedTuple(_) => {
+                            let cl_types = lower::get_flattened_types(ssa_func, &ty);
+                            let mut field_vals = Vec::new();
+                            for _ in cl_types {
+                                field_vals.push(cg_ctx.builder.block_params(entry_block)[p_idx]);
+                                p_idx += 1;
+                            }
+                            cg_ctx.unpacked_values.insert(val, field_vals);
                         }
                         _ if ty.is_simd() => {
                             let ptr = cg_ctx.builder.block_params(entry_block)[p_idx];

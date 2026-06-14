@@ -1,4 +1,4 @@
-use super::{get_val, translate_type, CodegenContext};
+use super::{get_all_cl_values, get_flattened_types, get_val, translate_type, CodegenContext};
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use lila_ir::ir::{Type as SsaType, Value as SsaValue};
@@ -82,39 +82,62 @@ pub fn lower<M: Module>(
     let registry = lila_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
 
     let mut is_sret = false;
+    let mut is_named_tuple_ret = false;
     let ret_ty;
 
     if let Some(sig) = registry.get(func) {
         ret_ty = sig.return_type.clone();
-        if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
+        if let SsaType::NamedTuple(_) = ret_ty {
+            for cl_ty in get_flattened_types(ctx.ssa_func, &ret_ty) {
+                cl_sig.returns.push(AbiParam::new(cl_ty));
+            }
+            is_named_tuple_ret = true;
+        } else if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
             cl_sig.params.push(AbiParam::new(types::I64)); // sret pointer
             is_sret = true;
         }
 
         for arg_ty in &sig.arg_types {
-            cl_sig.params.push(AbiParam::new(translate_type(arg_ty)));
-            if let SsaType::Buffer(_) = arg_ty {
-                cl_sig.params.push(AbiParam::new(types::I64));
+            if let SsaType::NamedTuple(_) = arg_ty {
+                for cl_ty in get_flattened_types(ctx.ssa_func, arg_ty) {
+                    cl_sig.params.push(AbiParam::new(cl_ty));
+                }
+            } else {
+                cl_sig.params.push(AbiParam::new(translate_type(arg_ty)));
+                if let SsaType::Buffer(_) = arg_ty {
+                    cl_sig.params.push(AbiParam::new(types::I64));
+                }
             }
         }
-        if !is_sret {
+        if !is_sret && !is_named_tuple_ret {
             cl_sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
         }
     } else {
         ret_ty = ctx.ssa_func.get_type(dest);
-        if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
+        if let SsaType::NamedTuple(_) = ret_ty {
+            for cl_ty in get_flattened_types(ctx.ssa_func, &ret_ty) {
+                cl_sig.returns.push(AbiParam::new(cl_ty));
+            }
+            is_named_tuple_ret = true;
+        } else if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
             cl_sig.params.push(AbiParam::new(types::I64)); // sret pointer
             is_sret = true;
         }
 
         for arg in args {
             let ty = ctx.ssa_func.get_type(*arg);
-            cl_sig.params.push(AbiParam::new(translate_type(&ty)));
-            if let SsaType::Buffer(_) = ty {
-                cl_sig.params.push(AbiParam::new(types::I64));
+            if let SsaType::NamedTuple(_) = ty {
+                for cl_ty in get_flattened_types(ctx.ssa_func, &ty) {
+                    cl_sig.params.push(AbiParam::new(cl_ty));
+                }
+            } else {
+                cl_sig.params.push(AbiParam::new(translate_type(&ty)));
+                if let SsaType::Buffer(_) = ty {
+                    cl_sig.params.push(AbiParam::new(types::I64));
+                }
             }
         }
-        if !is_sret {
+        if !is_sret && !is_named_tuple_ret {
             cl_sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
         }
     }
@@ -139,19 +162,20 @@ pub fn lower<M: Module>(
     }
 
     for arg in args {
-        let arg_val = get_val(&ctx.values, arg);
-        arg_vals.push(arg_val);
-        if let Some(len) = ctx.buffer_lengths.get(arg) {
-            arg_vals.push(*len);
-        }
+        arg_vals.extend(get_all_cl_values(ctx, arg));
     }
 
     let call = ctx.builder.ins().call(local_callee, &arg_vals);
     if is_sret {
         ctx.values.insert(dest, sret_slot.unwrap());
+    } else if is_named_tuple_ret {
+        let res_vals = ctx.builder.inst_results(call).to_vec();
+        ctx.unpacked_values.insert(dest, res_vals);
     } else {
-        let res = ctx.builder.inst_results(call)[0];
-        ctx.values.insert(dest, res);
+        let res = ctx.builder.inst_results(call).get(0).cloned();
+        if let Some(r) = res {
+            ctx.values.insert(dest, r);
+        }
     }
     Ok(())
 }

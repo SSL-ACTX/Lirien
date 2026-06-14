@@ -17,6 +17,7 @@ pub struct CFGBuilder {
     pub current_block: BlockId,
     pub current_location: Option<SourceLocation>,
     pub type_aliases: HashMap<String, String>,
+    pub named_tuple_names: HashSet<String>,
     // Maps variable name -> (BlockId -> Value)
     pub variable_defs: HashMap<String, HashMap<BlockId, Value>>,
     // Track Phi nodes that need to be filled once all predecessors are processed (for loops)
@@ -54,13 +55,19 @@ impl CFGBuilder {
         layouts: HashMap<String, Vec<(String, String)>>,
         enum_layouts_raw: HashMap<String, Vec<(String, String)>>,
         type_aliases: HashMap<String, String>,
+        named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
     ) -> Self {
+        let mut named_tuple_names = HashSet::new();
+        for name in named_tuple_layouts.keys() {
+            named_tuple_names.insert(name.clone());
+        }
+
         let mut struct_layouts = HashMap::new();
         for (s_name, fields) in layouts {
             let mut field_types = Vec::new();
             for (f_name, f_ty_str) in fields {
                 let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
-                    metadata::parse_type(&expr, &type_aliases).unwrap_or(Type::Unknown)
+                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names).unwrap_or(Type::Unknown)
                 } else {
                     match f_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -79,6 +86,8 @@ impl CFGBuilder {
                                 Type::Unknown
                             } else if enum_layouts_raw.contains_key(&f_ty_str) {
                                 Type::Enum(f_ty_str.clone())
+                            } else if named_tuple_names.contains(&f_ty_str) {
+                                Type::NamedTuple(f_ty_str.clone())
                             } else {
                                 Type::Struct(f_ty_str.clone())
                             }
@@ -90,12 +99,48 @@ impl CFGBuilder {
             struct_layouts.insert(s_name, field_types);
         }
 
+        for (nt_name, fields) in named_tuple_layouts {
+            let mut field_types = Vec::new();
+            for (f_name, f_ty_str) in fields {
+                let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
+                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names).unwrap_or(Type::Unknown)
+                } else {
+                    match f_ty_str.as_str() {
+                        "i8" => Type::I8,
+                        "u8" => Type::U8,
+                        "i16" => Type::I16,
+                        "u16" => Type::U16,
+                        "i32" => Type::I32,
+                        "u32" => Type::U32,
+                        "i64" => Type::I64,
+                        "u64" => Type::U64,
+                        "f32" => Type::F32,
+                        "f64" => Type::F64,
+                        "bool" => Type::Bool,
+                        _ => {
+                            if f_ty_str == "unknown" {
+                                Type::Unknown
+                            } else if enum_layouts_raw.contains_key(&f_ty_str) {
+                                Type::Enum(f_ty_str.clone())
+                            } else if named_tuple_names.contains(&f_ty_str) {
+                                Type::NamedTuple(f_ty_str.clone())
+                            } else {
+                                Type::Struct(f_ty_str.clone())
+                            }
+                        }
+                    }
+                };
+                field_types.push((f_name, ty));
+            }
+            struct_layouts.insert(nt_name, field_types);
+        }
+
         let mut enum_layouts = HashMap::new();
         for (e_name, variants) in enum_layouts_raw {
             let mut variant_types = Vec::new();
             for (v_name, v_ty_str) in variants {
                 let ty = if let Ok(expr) = ast::Expr::parse(&v_ty_str, "<variant>") {
-                    metadata::parse_type(&expr, &type_aliases).unwrap_or(Type::Unknown)
+                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names).unwrap_or(Type::Unknown)
                 } else {
                     match v_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -112,6 +157,8 @@ impl CFGBuilder {
                         _ => {
                             if v_ty_str == "unknown" {
                                 Type::Unknown
+                            } else if named_tuple_names.contains(&v_ty_str) {
+                                Type::NamedTuple(v_ty_str.clone())
                             } else {
                                 Type::Struct(v_ty_str.clone())
                             }
@@ -132,12 +179,14 @@ impl CFGBuilder {
             current_block: BlockId(0),
             current_location: None,
             type_aliases,
+            named_tuple_names,
             variable_defs: HashMap::new(),
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),
             loop_stack: Vec::new(),
             lambdas: Vec::new(),
         };
+
 
         let entry = builder.create_block();
         builder.current_block = entry;
@@ -346,6 +395,7 @@ impl CFGBuilder {
             current_block: BlockId(0),
             current_location: self.current_location,
             type_aliases: self.type_aliases.clone(),
+            named_tuple_names: self.named_tuple_names.clone(),
             variable_defs: HashMap::new(),
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),

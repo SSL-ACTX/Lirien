@@ -2,7 +2,7 @@ use super::{translate_type, CodegenContext};
 use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_module::Module;
-use lila_ir::ir::{BlockId as SsaBlockId, Instruction, InstructionKind, Value as SsaValue};
+use lila_ir::ir::{BlockId as SsaBlockId, Instruction, InstructionKind, Value as SsaValue, Function as SsaFunction};
 
 pub mod arithmetic;
 pub mod control_flow;
@@ -65,6 +65,204 @@ pub fn copy_to_stack(
     }
 }
 
+pub fn get_flattened_types(
+    ssa_func: &SsaFunction,
+    ty: &lila_ir::ir::Type,
+) -> Vec<types::Type> {
+    match ty {
+        lila_ir::ir::Type::NamedTuple(ref name) => {
+            let fields = ssa_func.struct_layouts.get(name).unwrap();
+            let mut res = Vec::new();
+            for (_, f_ty) in fields {
+                res.extend(get_flattened_types(ssa_func, f_ty));
+            }
+            res
+        }
+        lila_ir::ir::Type::Buffer(_) => vec![types::I64, types::I64],
+        lila_ir::ir::Type::Tensor(_, ref dims) => {
+            let mut res = vec![types::I64];
+            for _ in 0..dims.len() {
+                res.push(types::I64);
+            }
+            res
+        }
+        _ => vec![super::translate_type(ty)],
+    }
+}
+
+pub fn get_field_info(
+    ssa_func: &SsaFunction,
+    ty: &lila_ir::ir::Type,
+    target_offset: i32,
+    expected_count: usize,
+    current_offset: &mut i32,
+    val_idx: &mut usize,
+) -> Option<usize> {
+    let align = ty.align(&ssa_func.struct_layouts) as i32;
+    *current_offset = (*current_offset + align - 1) & !(align - 1);
+
+    if *current_offset == target_offset {
+        let count = get_flattened_types(ssa_func, ty).len();
+        if count == expected_count {
+            return Some(*val_idx);
+        }
+    }
+
+    match ty {
+        lila_ir::ir::Type::NamedTuple(ref name) => {
+            let fields = ssa_func.struct_layouts.get(name).unwrap();
+            for (_, f_ty) in fields {
+                if let Some(res) = get_field_info(ssa_func, f_ty, target_offset, expected_count, current_offset, val_idx) {
+                    return Some(res);
+                }
+            }
+        }
+        lila_ir::ir::Type::Buffer(_) => {
+            *current_offset += 16;
+            *val_idx += 2;
+        }
+        lila_ir::ir::Type::Tensor(_, dims) => {
+            *current_offset += 8 + 8 * dims.len() as i32;
+            *val_idx += 1 + dims.len();
+        }
+        _ => {
+            *current_offset += ty.size(&ssa_func.struct_layouts) as i32;
+            *val_idx += 1;
+        }
+    }
+    None
+}
+
+pub fn store_to_stack_recursive<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    ty: &lila_ir::ir::Type,
+    flat_vals: &[Value],
+    slot: StackSlot,
+    current_offset: &mut i32,
+    val_idx: &mut usize,
+) {
+    let align = ty.align(&ctx.ssa_func.struct_layouts) as i32;
+    *current_offset = (*current_offset + align - 1) & !(align - 1);
+    let start_offset = *current_offset;
+
+    match ty {
+        lila_ir::ir::Type::NamedTuple(ref name) => {
+            let fields = ctx.ssa_func.struct_layouts.get(name).unwrap();
+            for (_, f_ty) in fields {
+                store_to_stack_recursive(ctx, f_ty, flat_vals, slot, current_offset, val_idx);
+            }
+        }
+        lila_ir::ir::Type::Buffer(_) => {
+            let ptr_val = flat_vals[*val_idx];
+            let len_val = flat_vals[*val_idx + 1];
+            ctx.builder.ins().stack_store(ptr_val, slot, start_offset);
+            ctx.builder.ins().stack_store(len_val, slot, start_offset + 8);
+            *current_offset += 16;
+            *val_idx += 2;
+        }
+        lila_ir::ir::Type::Tensor(_, dims) => {
+            let ptr_val = flat_vals[*val_idx];
+            ctx.builder.ins().stack_store(ptr_val, slot, start_offset);
+            for i in 0..dims.len() {
+                let dim_val = flat_vals[*val_idx + 1 + i];
+                ctx.builder.ins().stack_store(dim_val, slot, start_offset + 8 + 8 * i as i32);
+            }
+            *current_offset += 8 + 8 * dims.len() as i32;
+            *val_idx += 1 + dims.len();
+        }
+        _ => {
+            let val = flat_vals[*val_idx];
+            let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;
+            if ty.is_composite() {
+                copy_to_stack(&mut ctx.builder, val, slot, start_offset, size as usize);
+            } else {
+                ctx.builder.ins().stack_store(val, slot, start_offset);
+            }
+            *current_offset += size;
+            *val_idx += 1;
+        }
+    }
+}
+
+pub fn store_to_stack<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    src: SsaValue,
+    slot: StackSlot,
+    slot_offset: i32,
+) {
+    let ty = ctx.ssa_func.get_type(src);
+    let flat_vals = get_all_cl_values(ctx, &src);
+    let mut current_offset = slot_offset;
+    let mut val_idx = 0;
+    store_to_stack_recursive(ctx, &ty, &flat_vals, slot, &mut current_offset, &mut val_idx);
+}
+
+pub fn store_to_memory_recursive<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    ty: &lila_ir::ir::Type,
+    flat_vals: &[Value],
+    dest_ptr: Value,
+    current_offset: &mut i32,
+    val_idx: &mut usize,
+) {
+    let align = ty.align(&ctx.ssa_func.struct_layouts) as i32;
+    *current_offset = (*current_offset + align - 1) & !(align - 1);
+    let start_offset = *current_offset;
+
+    match ty {
+        lila_ir::ir::Type::NamedTuple(ref name) => {
+            let fields = ctx.ssa_func.struct_layouts.get(name).unwrap();
+            for (_, f_ty) in fields {
+                store_to_memory_recursive(ctx, f_ty, flat_vals, dest_ptr, current_offset, val_idx);
+            }
+        }
+        lila_ir::ir::Type::Buffer(_) => {
+            let ptr_val = flat_vals[*val_idx];
+            let len_val = flat_vals[*val_idx + 1];
+            ctx.builder.ins().store(MemFlags::new(), ptr_val, dest_ptr, start_offset);
+            ctx.builder.ins().store(MemFlags::new(), len_val, dest_ptr, start_offset + 8);
+            *current_offset += 16;
+            *val_idx += 2;
+        }
+        lila_ir::ir::Type::Tensor(_, dims) => {
+            let ptr_val = flat_vals[*val_idx];
+            ctx.builder.ins().store(MemFlags::new(), ptr_val, dest_ptr, start_offset);
+            for i in 0..dims.len() {
+                let dim_val = flat_vals[*val_idx + 1 + i];
+                ctx.builder.ins().store(MemFlags::new(), dim_val, dest_ptr, start_offset + 8 + 8 * i as i32);
+            }
+            *current_offset += 8 + 8 * dims.len() as i32;
+            *val_idx += 1 + dims.len();
+        }
+        _ => {
+            let val = flat_vals[*val_idx];
+            let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;
+            if ty.is_composite() {
+                let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
+                let dest_addr = ctx.builder.ins().iadd_imm(dest_ptr, start_offset as i64);
+                ctx.builder.call_memcpy(ctx.module.target_config(), dest_addr, val, size_val);
+            } else {
+                ctx.builder.ins().store(MemFlags::new(), val, dest_ptr, start_offset);
+            }
+            *current_offset += size;
+            *val_idx += 1;
+        }
+    }
+}
+
+pub fn store_to_memory<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    src: SsaValue,
+    dest_ptr: Value,
+    dest_offset: i32,
+) {
+    let ty = ctx.ssa_func.get_type(src);
+    let flat_vals = get_all_cl_values(ctx, &src);
+    let mut current_offset = dest_offset;
+    let mut val_idx = 0;
+    store_to_memory_recursive(ctx, &ty, &flat_vals, dest_ptr, &mut current_offset, &mut val_idx);
+}
+
 pub fn lower_instruction<M: Module>(
     ctx: &mut CodegenContext<M>,
     inst: &Instruction,
@@ -91,8 +289,23 @@ pub fn lower_instruction<M: Module>(
             Ok(())
         }
         InstructionKind::Assign(dest, src) => {
-            let s = get_val(&ctx.values, src);
-            ctx.values.insert(*dest, s);
+            let ty = ctx.ssa_func.get_type(*dest);
+            if let lila_ir::ir::Type::NamedTuple(_) = ty {
+                let s_vals = ctx.unpacked_values.get(src).unwrap().clone();
+                ctx.unpacked_values.insert(*dest, s_vals);
+            } else {
+                let s = get_val(&ctx.values, src);
+                ctx.values.insert(*dest, s);
+                // Also handle Buffer/Tensor metadata if needed
+                if let Some(len) = ctx.buffer_lengths.get(src) {
+                    let l = *len;
+                    ctx.buffer_lengths.insert(*dest, l);
+                }
+                if let Some(dims) = ctx.tensor_dims.get(src) {
+                    let d = dims.clone();
+                    ctx.tensor_dims.insert(*dest, d);
+                }
+            }
             Ok(())
         }
 
@@ -246,6 +459,33 @@ pub fn get_val(values: &std::collections::HashMap<SsaValue, Value>, val: &SsaVal
     *values
         .get(val)
         .unwrap_or_else(|| panic!("Value v{} not found", val.0))
+}
+
+pub fn get_all_cl_values<M: Module>(ctx: &CodegenContext<M>, val: &SsaValue) -> Vec<Value> {
+    let ty = ctx.ssa_func.get_type(*val);
+    match ty {
+        lila_ir::ir::Type::NamedTuple(_) => ctx
+            .unpacked_values
+            .get(val)
+            .cloned()
+            .unwrap_or_else(|| panic!("Unpacked values for v{} not found", val.0)),
+        lila_ir::ir::Type::Buffer(_) => vec![
+            get_val(&ctx.values, val),
+            *ctx.buffer_lengths
+                .get(val)
+                .unwrap_or_else(|| panic!("Length for v{} not found", val.0)),
+        ],
+        lila_ir::ir::Type::Tensor(_, ref _dims) => {
+            let mut res = vec![get_val(&ctx.values, val)];
+            res.extend(
+                ctx.tensor_dims
+                    .get(val)
+                    .unwrap_or_else(|| panic!("Dims for v{} not found", val.0)),
+            );
+            res
+        }
+        _ => vec![get_val(&ctx.values, val)],
+    }
 }
 
 pub fn get_len(lengths: &std::collections::HashMap<SsaValue, Value>, val: &SsaValue) -> Value {

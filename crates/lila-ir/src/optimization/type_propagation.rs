@@ -428,6 +428,70 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, v_ty);
                         }
                     }
+                    InstructionKind::StructCreate(d, _struct_name, args) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            // We need to know if it's a Struct or NamedTuple.
+                            // The visitor usually sets this, but propagation might help if it's missed.
+                            // For now, let's assume Struct if not already set, 
+                            // but actually, we should check registry or self.
+                            // If we can't determine, we leave it unknown.
+                        } else if let Type::Struct(name) | Type::NamedTuple(name) = current_ty {
+                            if let Some(fields) = func.struct_layouts.get(&name) {
+                                for (i, arg) in args.iter().enumerate() {
+                                    if i < fields.len() {
+                                        let arg_ty = func.get_type(*arg);
+                                        if arg_ty == Type::Unknown {
+                                            new_types.insert(*arg, fields[i].1.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    InstructionKind::StructLoad(d, obj, offset) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            let obj_ty = func.get_type(*obj);
+                            if let Type::Struct(name) | Type::NamedTuple(name) = obj_ty {
+                                if let Some(fields) = func.struct_layouts.get(&name) {
+                                    let mut curr_offset = 0;
+                                    for (_, f_ty) in fields {
+                                        let align = f_ty.align(&func.struct_layouts);
+                                        curr_offset = (curr_offset + align - 1) & !(align - 1);
+                                        if curr_offset == *offset {
+                                            new_types.insert(*d, f_ty.clone());
+                                            break;
+                                        }
+                                        curr_offset += f_ty.size(&func.struct_layouts);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    InstructionKind::StructSet(d, obj, offset, val, _ty) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, func.get_type(*obj));
+                        }
+                        let obj_ty = func.get_type(*obj);
+                        if let Type::Struct(name) | Type::NamedTuple(name) = obj_ty {
+                            if let Some(fields) = func.struct_layouts.get(&name) {
+                                let mut curr_offset = 0;
+                                for (_, f_ty) in fields {
+                                    let align = f_ty.align(&func.struct_layouts);
+                                    curr_offset = (curr_offset + align - 1) & !(align - 1);
+                                    if curr_offset == *offset {
+                                        if func.get_type(*val) == Type::Unknown {
+                                            new_types.insert(*val, f_ty.clone());
+                                        }
+                                        break;
+                                    }
+                                    curr_offset += f_ty.size(&func.struct_layouts);
+                                }
+                            }
+                        }
+                    }
                     InstructionKind::EnumExtract(d, obj, tag_idx) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {

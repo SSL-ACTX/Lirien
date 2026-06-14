@@ -15,10 +15,17 @@ pub fn transform(
     struct_layouts: HashMap<String, Vec<(String, String)>>,
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
+    named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
 ) -> Result<Vec<Function>, String> {
     info!(target: "lila::ssa", "Transforming AST to IR for '{}'...", name);
 
-    let mut builder = CFGBuilder::new(name, struct_layouts, enum_layouts, type_aliases);
+    let mut builder = CFGBuilder::new(
+        name,
+        struct_layouts,
+        enum_layouts,
+        type_aliases,
+        named_tuple_layouts,
+    );
     builder.build(suite)?;
 
     let mut main_func = builder.func;

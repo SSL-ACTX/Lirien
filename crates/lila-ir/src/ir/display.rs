@@ -31,6 +31,7 @@ impl fmt::Display for Type {
             Type::Buffer(t) => write!(f, "Buffer<{}>", t),
             Type::Tensor(t, dims) => write!(f, "Tensor<{}, {}>", t, dims.join(", ")),
             Type::Struct(name) => write!(f, "Struct<{}>", name),
+            Type::NamedTuple(name) => write!(f, "NamedTuple<{}>", name),
             Type::Enum(name) => write!(f, "Enum<{}>", name),
             Type::Tuple(types) => {
                 let inner: Vec<String> = types.iter().map(|t| t.to_string()).collect();

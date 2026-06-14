@@ -24,10 +24,9 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 ctx.values.insert(*dest, res);
             }
         }
-        InstructionKind::BufferStore(dest, buf, idx, val, ty) => {
+        InstructionKind::BufferStore(dest, buf, idx, val, _ty) => {
             let buf_ptr = get_val(&ctx.values, buf);
             let idx_val = get_val(&ctx.values, idx);
-            let val_val = get_val(&ctx.values, val);
             let elem_size = match &ctx.ssa_func.get_type(*buf) {
                 SsaType::Buffer(inner) => inner.size(&ctx.ssa_func.struct_layouts),
                 _ => 8,
@@ -35,27 +34,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
             let addr = ctx.builder.ins().iadd(buf_ptr, offset);
 
-            if ty.is_composite() {
-                // For composite types (structs), val_val is a pointer to the data.
-                // We need to do a memory copy from val_val to addr.
-                let size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
-                ctx.builder
-                    .call_memcpy(ctx.module.target_config(), addr, val_val, size_val);
-            } else {
-                let cl_ty = translate_type(ty);
-                let val_to_store = if ctx.builder.func.dfg.value_type(val_val) != cl_ty {
-                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(val_val).is_int() {
-                        ctx.builder.ins().ireduce(cl_ty, val_val)
-                    } else {
-                        val_val
-                    }
-                } else {
-                    val_val
-                };
-                ctx.builder
-                    .ins()
-                    .store(MemFlags::new(), val_to_store, addr, 0);
-            }
+            super::store_to_memory(ctx, *val, addr, 0);
 
             ctx.values.insert(*dest, buf_ptr);
 
@@ -394,10 +373,9 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 ctx.values.insert(*dest, res);
             }
         }
-        InstructionKind::ArrayStore(dest, arr, idx, val, ty) => {
+        InstructionKind::ArrayStore(dest, arr, idx, val, _ty) => {
             let arr_ptr = get_val(&ctx.values, arr);
             let idx_val = get_val(&ctx.values, idx);
-            let val_val = get_val(&ctx.values, val);
             let elem_size = match &ctx.ssa_func.get_type(*arr) {
                 SsaType::Array(inner, _) => inner.size(&ctx.ssa_func.struct_layouts),
                 _ => 8,
@@ -405,31 +383,21 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
             let addr = ctx.builder.ins().iadd(arr_ptr, offset);
 
-            if ty.is_composite() {
-                let size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
-                ctx.builder
-                    .call_memcpy(ctx.module.target_config(), addr, val_val, size_val);
-            } else {
-                let cl_ty = translate_type(ty);
-                let val_to_store = if ctx.builder.func.dfg.value_type(val_val) != cl_ty {
-                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(val_val).is_int() {
-                        ctx.builder.ins().ireduce(cl_ty, val_val)
-                    } else {
-                        val_val
-                    }
-                } else {
-                    val_val
-                };
-                ctx.builder
-                    .ins()
-                    .store(MemFlags::new(), val_to_store, addr, 0);
-            }
+            super::store_to_memory(ctx, *val, addr, 0);
             ctx.values.insert(*dest, arr_ptr);
         }
         InstructionKind::StructCreate(dest, struct_name, args) => {
             let dest_ty = ctx.ssa_func.get_type(*dest);
-            let size = dest_ty.size(&ctx.ssa_func.struct_layouts);
+            if let SsaType::NamedTuple(_) = dest_ty {
+                let mut field_vals = Vec::new();
+                for arg in args {
+                    field_vals.push(get_val(&ctx.values, arg));
+                }
+                ctx.unpacked_values.insert(*dest, field_vals);
+                return Ok(());
+            }
 
+            let size = dest_ty.size(&ctx.ssa_func.struct_layouts);
             let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
                 size as u32,
@@ -443,36 +411,11 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 .clone();
             let mut field_offset = 0;
             for (i, p_val) in args.iter().enumerate() {
-                let cl_p_val = get_val(&ctx.values, p_val);
                 let f_ty = &fields[i].1;
                 let f_align = f_ty.align(&ctx.ssa_func.struct_layouts);
                 field_offset = (field_offset + f_align - 1) & !(f_align - 1);
 
-                if f_ty.is_composite() {
-                    let f_size = f_ty.size(&ctx.ssa_func.struct_layouts);
-                    super::copy_to_stack(
-                        &mut ctx.builder,
-                        cl_p_val,
-                        slot,
-                        field_offset as i32,
-                        f_size,
-                    );
-                } else {
-                    let cl_ty = super::translate_type(f_ty);
-                    let val_to_store = if ctx.builder.func.dfg.value_type(cl_p_val) != cl_ty {
-                        if cl_ty.is_int() && ctx.builder.func.dfg.value_type(cl_p_val).is_int() {
-                            ctx.builder.ins().ireduce(cl_ty, cl_p_val)
-                        } else {
-                            cl_p_val
-                        }
-                    } else {
-                        cl_p_val
-                    };
-
-                    ctx.builder
-                        .ins()
-                        .stack_store(val_to_store, slot, field_offset as i32);
-                }
+                super::store_to_stack(ctx, *p_val, slot, field_offset as i32);
                 field_offset += f_ty.size(&ctx.ssa_func.struct_layouts);
             }
 
@@ -480,6 +423,41 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             ctx.values.insert(*dest, dest_addr);
         }
         InstructionKind::StructLoad(dest, obj, offset) => {
+            let obj_ty = ctx.ssa_func.get_type(*obj);
+            if let SsaType::NamedTuple(_) = obj_ty {
+                let mut current_offset = 0;
+                let mut val_idx = 0;
+                let dest_ty = ctx.ssa_func.get_type(*dest);
+                let expected_count = super::get_flattened_types(ctx.ssa_func, &dest_ty).len();
+
+                if let Some(start_idx) = super::get_field_info(
+                    ctx.ssa_func,
+                    &obj_ty,
+                    *offset as i32,
+                    expected_count,
+                    &mut current_offset,
+                    &mut val_idx,
+                ) {
+                    let flat_vals = ctx.unpacked_values.get(obj).unwrap();
+                    let extracted = flat_vals[start_idx..start_idx + expected_count].to_vec();
+                    if let SsaType::NamedTuple(_) = dest_ty {
+                        ctx.unpacked_values.insert(*dest, extracted);
+                    } else {
+                        if expected_count == 1 {
+                            ctx.values.insert(*dest, extracted[0]);
+                        } else if let SsaType::Buffer(_) = dest_ty {
+                            ctx.values.insert(*dest, extracted[0]);
+                            ctx.buffer_lengths.insert(*dest, extracted[1]);
+                        } else if let SsaType::Tensor(_, _dims) = dest_ty {
+                            ctx.values.insert(*dest, extracted[0]);
+                            ctx.tensor_dims.insert(*dest, extracted[1..].to_vec());
+                        }
+                    }
+                    return Ok(());
+                }
+                return Err(format!("Field offset {} (count {}) not found in NamedTuple {:?}", offset, expected_count, obj_ty));
+            }
+
             let obj_ptr = get_val(&ctx.values, obj);
             let dest_ty = ctx.ssa_func.get_type(*dest);
             if dest_ty.is_composite() {
@@ -499,31 +477,36 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let res = ctx.builder.ins().iadd_imm(obj_ptr, *offset as i64);
             ctx.values.insert(*dest, res);
         }
-        InstructionKind::StructSet(dest, obj, offset, val, ty) => {
-            let obj_ptr = get_val(&ctx.values, obj);
-            let val_val = get_val(&ctx.values, val);
+        InstructionKind::StructSet(dest, obj, offset, val, _ty) => {
+            let obj_ty = ctx.ssa_func.get_type(*obj);
+            if let SsaType::NamedTuple(_) = obj_ty {
+                let mut current_offset = 0;
+                let mut val_idx = 0;
+                let val_ty = ctx.ssa_func.get_type(*val);
+                let expected_count = super::get_flattened_types(ctx.ssa_func, &val_ty).len();
 
-            if ty.is_composite() {
-                let elem_size = ty.size(&ctx.ssa_func.struct_layouts);
-                let size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
-                let dest_addr = ctx.builder.ins().iadd_imm(obj_ptr, *offset as i64);
-                ctx.builder
-                    .call_memcpy(ctx.module.target_config(), dest_addr, val_val, size_val);
-            } else {
-                let cl_ty = translate_type(ty);
-                let val_to_store = if ctx.builder.func.dfg.value_type(val_val) != cl_ty {
-                    if cl_ty.is_int() && ctx.builder.func.dfg.value_type(val_val).is_int() {
-                        ctx.builder.ins().ireduce(cl_ty, val_val)
-                    } else {
-                        val_val
+                if let Some(start_idx) = super::get_field_info(
+                    ctx.ssa_func,
+                    &obj_ty,
+                    *offset as i32,
+                    expected_count,
+                    &mut current_offset,
+                    &mut val_idx,
+                ) {
+                    let mut new_flat_vals = ctx.unpacked_values.get(obj).unwrap().clone();
+                    let val_flat = super::get_all_cl_values(ctx, val);
+                    assert_eq!(expected_count, val_flat.len());
+                    for i in 0..expected_count {
+                        new_flat_vals[start_idx + i] = val_flat[i];
                     }
-                } else {
-                    val_val
-                };
-                ctx.builder
-                    .ins()
-                    .store(MemFlags::new(), val_to_store, obj_ptr, *offset as i32);
+                    ctx.unpacked_values.insert(*dest, new_flat_vals);
+                    return Ok(());
+                }
+                return Err(format!("Field offset {} (count {}) not found in NamedTuple {:?}", offset, expected_count, obj_ty));
             }
+
+            let obj_ptr = get_val(&ctx.values, obj);
+            super::store_to_memory(ctx, *val, obj_ptr, *offset as i32);
             ctx.values.insert(*dest, obj_ptr);
         }
         InstructionKind::EnumCreate(dest, enum_name, tag_idx, payload) => {
@@ -653,32 +636,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         }
         InstructionKind::PointerStore(ptr, val) => {
             let ptr_val = get_val(&ctx.values, ptr);
-            let val_val = get_val(&ctx.values, val);
-            let val_ty = ctx.ssa_func.get_type(*val);
-
-            if val_ty.is_composite() {
-                let size = val_ty.size(&ctx.ssa_func.struct_layouts);
-                let mut sig = ctx.module.make_signature();
-                sig.params.push(AbiParam::new(types::I64)); // dest
-                sig.params.push(AbiParam::new(types::I64)); // src
-                sig.params.push(AbiParam::new(types::I64)); // n
-                sig.returns.push(AbiParam::new(types::I64)); // dest
-
-                let callee = ctx
-                    .module
-                    .declare_function("memcpy", Linkage::Import, &sig)
-                    .unwrap();
-                let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
-
-                let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
-                ctx.builder
-                    .ins()
-                    .call(local_callee, &[ptr_val, val_val, size_val]);
-            } else {
-                ctx.builder
-                    .ins()
-                    .store(MemFlags::new(), val_val, ptr_val, 0);
-            }
+            super::store_to_memory(ctx, *val, ptr_val, 0);
         }
         _ => return Err(format!("Not a memory instruction: {:?}", kind)),
     }

@@ -27,6 +27,7 @@ pub enum Type {
     Buffer(Box<Type>),
     Tensor(Box<Type>, Vec<String>),
     Struct(String),
+    NamedTuple(String),
     Enum(String),
     Tuple(Vec<Type>),
     Pointer(Box<Type>),
@@ -157,7 +158,7 @@ impl Type {
 
     pub fn is_composite(&self) -> bool {
         match self {
-            Type::Struct(_) | Type::Tuple(_) | Type::Enum(_) => true,
+            Type::Struct(_) | Type::NamedTuple(_) | Type::Tuple(_) | Type::Enum(_) => true,
             Type::Array(inner, Some(_)) => {
                 // If the inner type is not a primitive, we treat fixed arrays as composite for offsets
                 !inner.is_int() && !inner.is_float()
@@ -185,7 +186,7 @@ impl Type {
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
             Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
-            Type::Struct(name) => {
+            Type::Struct(name) | Type::NamedTuple(name) => {
                 if let Some(fields) = struct_layouts.get(name) {
                     let mut offset = 0;
                     for (_, f_ty) in fields {
@@ -263,7 +264,7 @@ impl Type {
             Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
-            Type::Struct(name) => {
+            Type::Struct(name) | Type::NamedTuple(name) => {
                 if let Some(fields) = struct_layouts.get(name) {
                     let mut max_align = 1;
                     for (_, f_ty) in fields {

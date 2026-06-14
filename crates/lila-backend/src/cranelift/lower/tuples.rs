@@ -19,19 +19,14 @@ pub fn lower<M: Module>(
 
             let mut offset = 0;
             for elt in elts {
-                let elt_val = get_val(&ctx.values, elt);
                 let elt_ty = ctx.ssa_func.get_type(*elt);
                 let elt_align = elt_ty.align(&ctx.ssa_func.struct_layouts);
                 offset = (offset + elt_align - 1) & !(elt_align - 1);
 
-                if elt_ty.is_composite() {
-                    let elt_size = elt_ty.size(&ctx.ssa_func.struct_layouts);
-                    super::copy_to_stack(&mut ctx.builder, elt_val, slot, offset as i32, elt_size);
-                } else {
-                    ctx.builder.ins().stack_store(elt_val, slot, offset as i32);
-                }
+                super::store_to_stack(ctx, *elt, slot, offset as i32);
                 offset += elt_ty.size(&ctx.ssa_func.struct_layouts);
             }
+
 
             let addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
             ctx.values.insert(*dest, addr);

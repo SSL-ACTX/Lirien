@@ -21,6 +21,7 @@ from .signatures import (
     _get_all_typevars,
     TypeSubstitutor,
     _value_to_lila_type,
+    is_named_tuple,
 )
 from .ffi import (
     _map_ctypes_arguments,
@@ -216,10 +217,21 @@ class MonomorphizedFunction:
     ):
         """Recursively match TypeVars and Protocols in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
+        from typing import TypeVar
+
         if isinstance(annotation, TypeVar):
             name = annotation.__name__
             if name not in mapping:
-                mapping[name] = _value_to_lila_type(val)
+                # Store the actual class if it's a Lila object or NamedTuple
+                cls = val.__class__
+                if (
+                    hasattr(cls, "__lila_struct__")
+                    or hasattr(cls, "__lila_enum__")
+                    or is_named_tuple(cls)
+                ):
+                    mapping[name] = cls
+                else:
+                    mapping[name] = _value_to_lila_type(val)
             return
 
         # Handle Protocol
@@ -456,12 +468,35 @@ class MonomorphizedFunction:
             struct_layouts, enum_layouts, type_aliases = _discover_types(
                 self.func, self.struct_layouts, mapping
             )
+
+            # Separate NamedTuple layouts
+            named_tuple_layouts = {}
+            scope = self.func.__globals__.copy()
+            # Also check closure vars
+            try:
+                closure_vars = inspect.getclosurevars(self.func)
+                scope.update(closure_vars.nonlocals)
+                scope.update(closure_vars.globals)
+            except:
+                pass
+
+            # Also add types from mapping
+            for val in mapping.values():
+                if hasattr(val, "__name__"):
+                    scope[val.__name__] = val
+
+            for name in list(struct_layouts.keys()):
+                obj = scope.get(name)
+                if obj and getattr(obj, "__lila_named_tuple__", False):
+                    named_tuple_layouts[name] = struct_layouts.pop(name)
+
             code_ptr = lila_bridge.verify_and_compile(
                 specialized_source,
                 specialized_name,
                 struct_layouts,
                 enum_layouts,
                 type_aliases,
+                named_tuple_layouts,
                 self.timeout,
             )
         except Exception as e:
@@ -478,26 +513,23 @@ class MonomorphizedFunction:
 
         # Create specialized wrapper
         c_args, arg_map = _map_ctypes_arguments(self.sig, self.class_name, mapping)
-        is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
-            self.sig.return_annotation, c_args, arg_map, mapping
+
+        ret_ann = self.sig.return_annotation
+        if hasattr(ret_ann, "__name__") and ret_ann.__name__ in mapping:
+            ret_ann = mapping[ret_ann.__name__]
+        elif str(ret_ann) in mapping:
+            ret_ann = mapping[str(ret_ann)]
+
+        is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = (
+            _handle_pointer_return(ret_ann, c_args, arg_map, mapping)
         )
-
-        tuple_types = []
-        if is_ptr_return:
-            if "tuple" in _get_type_name(self.sig.return_annotation, mapping).lower():
-                if hasattr(self.sig.return_annotation, "__args__"):
-                    tuple_types = self.sig.return_annotation.__args__
-                else:
-                    from .types import i64
-
-                    tuple_types = [i64, i64]
 
         return _create_wrapper(
             self.func,
             code_ptr,
             c_args,
             arg_map,
-            self.sig,
+            self.sig.replace(return_annotation=ret_ann),
             is_ptr_return,
             TupleReturn,
             tuple_types,
@@ -667,12 +699,30 @@ class OverloadedFunction:
             struct_layouts, enum_layouts, type_aliases = _discover_types(
                 self.func, self.struct_layouts
             )
+
+            # Separate NamedTuple layouts
+            named_tuple_layouts = {}
+            scope = self.func.__globals__.copy()
+            # Also check closure vars
+            try:
+                closure_vars = inspect.getclosurevars(self.func)
+                scope.update(closure_vars.nonlocals)
+                scope.update(closure_vars.globals)
+            except:
+                pass
+
+            for name in list(struct_layouts.keys()):
+                obj = scope.get(name)
+                if obj and getattr(obj, "__lila_named_tuple__", False):
+                    named_tuple_layouts[name] = struct_layouts.pop(name)
+
             code_ptr = lila_bridge.verify_and_compile(
                 specialized_source,
                 specialized_name,
                 struct_layouts,
                 enum_layouts,
                 type_aliases,
+                named_tuple_layouts,
                 self.timeout,
             )
         except Exception as e:
@@ -689,19 +739,9 @@ class OverloadedFunction:
 
         # Map to ctypes and create wrapper
         c_args, arg_map = _map_ctypes_arguments(sig, self.class_name)
-        is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
-            sig.return_annotation, c_args, arg_map
+        is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = (
+            _handle_pointer_return(sig.return_annotation, c_args, arg_map)
         )
-
-        tuple_types = []
-        if is_ptr_return:
-            if "tuple" in _get_type_name(sig.return_annotation).lower():
-                if hasattr(sig.return_annotation, "__args__"):
-                    tuple_types = sig.return_annotation.__args__
-                else:
-                    from .types import i64
-
-                    tuple_types = [i64, i64]
 
         return _create_wrapper(
             self.func,
@@ -780,6 +820,22 @@ def verify(
                 func, _struct_layouts
             )
 
+            # Separate NamedTuple layouts from struct_layouts
+            named_tuple_layouts = {}
+            scope = func.__globals__.copy()
+            # Also check closure vars
+            try:
+                closure_vars = inspect.getclosurevars(func)
+                scope.update(closure_vars.nonlocals)
+                scope.update(closure_vars.globals)
+            except:
+                pass
+
+            for name in list(struct_layouts.keys()):
+                obj = scope.get(name)
+                if obj and getattr(obj, "__lila_named_tuple__", False):
+                    named_tuple_layouts[name] = struct_layouts.pop(name)
+
             try:
                 code_ptr = lila_bridge.verify_and_compile(
                     source,
@@ -787,6 +843,7 @@ def verify(
                     struct_layouts,
                     enum_layouts,
                     type_aliases,
+                    named_tuple_layouts,
                     timeout,
                 )
             finally:
@@ -794,19 +851,11 @@ def verify(
 
             sig = inspect.signature(func)
             c_args, arg_map = _map_ctypes_arguments(sig, _class_name)
-            is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
-                sig.return_annotation, c_args, arg_map
+            is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = (
+                _handle_pointer_return(
+                    sig.return_annotation, c_args, arg_map, type_aliases
+                )
             )
-
-            tuple_types = []
-            if is_ptr_return:
-                if "tuple" in str(sig.return_annotation).lower():
-                    if hasattr(sig.return_annotation, "__args__"):
-                        tuple_types = sig.return_annotation.__args__
-                    else:
-                        from .types import i64
-
-                        tuple_types = [i64, i64]
 
             return _create_wrapper(
                 func,
@@ -817,6 +866,7 @@ def verify(
                 is_ptr_return,
                 TupleReturn,
                 tuple_types,
+                type_aliases,
             )
         except Exception as e:
             error_msg = format_verification_error(func.__name__, source, str(e))

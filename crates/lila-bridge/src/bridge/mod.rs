@@ -7,27 +7,30 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 #[pyfunction]
-#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, timeout_ms=5000))]
+#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), timeout_ms=5000))]
 pub fn verify_and_compile(
     source: String,
     func_name: String,
     struct_layouts: HashMap<String, Vec<(String, String)>>,
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
+    named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
     timeout_ms: u32,
 ) -> PyResult<usize> {
     info!(target: "lila::bridge", "Received source for '{}'", func_name);
     debug!(target: "lila::bridge", "Struct layouts: {:?}", struct_layouts);
     debug!(target: "lila::bridge", "Enum layouts: {:?}", enum_layouts);
+    debug!(target: "lila::bridge", "Named Tuple layouts: {:?}", named_tuple_layouts);
     debug!(target: "lila::bridge", "Type aliases: {:?}", type_aliases);
     debug!(target: "lila::bridge", "Timeout ms: {}", timeout_ms);
 
-    let cache_hash = cache::compute_hash(
+    let cache_hash = cache::compute_hash_full(
         &source,
         &func_name,
         &struct_layouts,
         &enum_layouts,
         &type_aliases,
+        &named_tuple_layouts,
     );
 
     let ssa_list = if let Some(cached_funcs) = cache::load_ir(cache_hash) {
@@ -47,6 +50,7 @@ pub fn verify_and_compile(
             struct_layouts,
             enum_layouts,
             type_aliases,
+            named_tuple_layouts,
         )
         .map_err(|e| {
             eprintln!(

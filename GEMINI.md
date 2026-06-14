@@ -87,3 +87,6 @@ When adding a new capability to the DSL:
 ### 5.2 READ BEFORE ACTING
 *   **Consult This File FIRST:** You must read and abide by the rules in this `GEMINI.md` file before attempting to execute tasks. Do not assume standard generic workflows (like running raw `cargo build` or `maturin develop` without verifying the project's exact required sequence).
 *   **Acknowledge Flaws:** If you fail to follow these rules, recognize that it is a critical flaw and fundamentally dangerous to the codebase. Do not bullshit the user or feign blindness.
+
+### 5.3 VERBOSE PYTHON DEBUGGING
+*   **Proactive Instrumentation:** When modifying or debugging Python-side logic (FFI, decorators, signatures), you MUST include temporary `print` statements to trace data flow, type resolutions, and internal state. Never operate "blind" on the Python side. These logs provide the visibility needed to catch subtle mapping errors before they reach the Rust layer.

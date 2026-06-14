@@ -71,6 +71,70 @@ pub fn compute_hash(
     hasher.finish()
 }
 
+pub fn compute_hash_full(
+    source: &str,
+    func_name: &str,
+    struct_layouts: &HashMap<String, Vec<(String, String)>>,
+    enum_layouts: &HashMap<String, Vec<(String, String)>>,
+    type_aliases: &HashMap<String, String>,
+    named_tuple_layouts: &HashMap<String, Vec<(String, String)>>,
+) -> u64 {
+    let mut hasher = SeaHasher::new();
+
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    pkg_version.hash(&mut hasher);
+
+    if let Ok(build_hash) = env::var("LILA_BUILD_HASH") {
+        build_hash.hash(&mut hasher);
+    } else {
+        if let Some(hash) = option_env!("LILA_BUILD_HASH") {
+            hash.hash(&mut hasher);
+        }
+    }
+
+    source.hash(&mut hasher);
+    func_name.hash(&mut hasher);
+
+    let mut s_keys: Vec<_> = struct_layouts.keys().collect();
+    s_keys.sort();
+    for k in s_keys {
+        k.hash(&mut hasher);
+        for (f_name, f_type) in &struct_layouts[k] {
+            f_name.hash(&mut hasher);
+            f_type.hash(&mut hasher);
+        }
+    }
+
+    let mut e_keys: Vec<_> = enum_layouts.keys().collect();
+    e_keys.sort();
+    for k in e_keys {
+        k.hash(&mut hasher);
+        for (v_name, v_type) in &enum_layouts[k] {
+            v_name.hash(&mut hasher);
+            v_type.hash(&mut hasher);
+        }
+    }
+
+    let mut t_keys: Vec<_> = type_aliases.keys().collect();
+    t_keys.sort();
+    for k in t_keys {
+        k.hash(&mut hasher);
+        type_aliases[k].hash(&mut hasher);
+    }
+
+    let mut nt_keys: Vec<_> = named_tuple_layouts.keys().collect();
+    nt_keys.sort();
+    for k in nt_keys {
+        k.hash(&mut hasher);
+        for (f_name, f_type) in &named_tuple_layouts[k] {
+            f_name.hash(&mut hasher);
+            f_type.hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
 pub fn invalidate(hash: u64) {
     let cache_dir = get_cache_dir();
     let file_path = cache_dir.join(format!("{:016x}.lir", hash));

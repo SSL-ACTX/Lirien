@@ -17,10 +17,31 @@ from typing import (
 from .types import Box, TYPE_MAP
 
 
+def is_named_tuple(cls):
+    """Check if a class is a subclass of typing.NamedTuple."""
+    return (
+        isinstance(cls, type)
+        and issubclass(cls, tuple)
+        and hasattr(cls, "_fields")
+        and hasattr(cls, "__annotations__")
+    )
+
+
 def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
     """Consistently convert a Python-side type to its Lila IR string representation."""
+    if type_mapping:
+        if isinstance(ty, str) and ty in type_mapping:
+            return _get_type_name(type_mapping[ty], type_mapping)
+        if hasattr(ty, "__name__") and ty.__name__ in type_mapping:
+            return _get_type_name(type_mapping[ty.__name__], type_mapping)
+        if str(ty) in type_mapping:
+            return _get_type_name(type_mapping[str(ty)], type_mapping)
+
     if ty is None or ty is type(None):
         return "None"
+
+    if is_named_tuple(ty):
+        return ty.__name__
 
     if isinstance(ty, (list, tuple)):
         return "(" + ", ".join(_get_type_name(t, type_mapping) for t in ty) + ")"
@@ -212,7 +233,20 @@ def _discover_types(
                 scope[val.__name__] = val
 
     for name, obj in scope.items():
-        if getattr(obj, "__lila_struct__", False) and name not in struct_layouts:
+        if is_named_tuple(obj):
+            if name not in struct_layouts:
+                struct_layouts[name] = [
+                    (
+                        f_name,
+                        _get_type_name(
+                            obj.__annotations__.get(f_name, "i64"), type_mapping
+                        ),
+                    )
+                    for f_name in obj._fields
+                ]
+            # Tag it so we can separate it later
+            obj.__lila_named_tuple__ = True
+        elif getattr(obj, "__lila_struct__", False) and name not in struct_layouts:
             struct_layouts[name] = [
                 (f_name, _get_type_name(f_ty, type_mapping))
                 for f_name, f_ty in obj.__lila_fields__
@@ -278,7 +312,11 @@ def _value_to_lila_type(val: Any) -> str:
         return "f64"
 
     # Handle Lila-wrapped objects (Structs, Enums, SizedArrays)
-    if hasattr(val, "__lila_struct__") or hasattr(val, "__lila_enum__"):
+    if (
+        hasattr(val, "__lila_struct__")
+        or hasattr(val, "__lila_enum__")
+        or is_named_tuple(type(val))
+    ):
         return val.__class__.__name__
 
     # SIMD and common wrappers

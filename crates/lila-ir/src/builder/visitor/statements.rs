@@ -11,18 +11,19 @@ impl CFGBuilder {
         self.func.arg_count = s.args.args.len();
 
         if let Some(returns) = &s.returns {
-            self.func.return_type = parse_type(returns, &self.type_aliases)?;
+            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names)?;
+            self.func.return_type = ret_ty;
             self.func.ret_refinement =
-                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts)?;
+                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names)?;
         }
 
         for arg in s.args.args {
             let val = self.func.next_value();
             if let Some(annotation) = &arg.def.annotation {
-                let ty = parse_type(annotation, &self.type_aliases)?;
+                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names)?;
                 self.func.set_type(val, ty);
                 if let Some(refinement) =
-                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts)?
+                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names)?
                 {
                     self.func.set_refinement(val, refinement);
                 }
@@ -84,7 +85,7 @@ impl CFGBuilder {
                     let mut value = self.visit_expr(*value_expr)?;
                     value = self.auto_load(value);
 
-                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases) {
+                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names) {
                         let val_ty = self.func.get_type(value);
                         if ann_ty.is_float() && val_ty.is_int() {
                             let converted = self.func.next_value();
@@ -878,7 +879,7 @@ impl CFGBuilder {
                 // Nested struct or enum destructuring
                 let ty = self.func.get_type(val);
                 match ty {
-                    Type::Struct(ref name) => {
+                    Type::Struct(ref name) | Type::NamedTuple(ref name) => {
                         let fields = self
                             .func
                             .struct_layouts

@@ -216,12 +216,12 @@ impl CFGBuilder {
                     }
 
                     match curr_ty {
-                        Type::Struct(struct_name) => {
-                            let field_offset = self.get_field_offset(&struct_name, s.attr.as_str()).ok_or_else(|| {
+                        Type::Struct(ref struct_name) | Type::NamedTuple(ref struct_name) => {
+                            let field_offset = self.get_field_offset(struct_name, s.attr.as_str()).ok_or_else(|| {
                                 format!("Field '{}' not found in struct '{}'", s.attr, struct_name)
                             })?;
 
-                            let fields = self.func.struct_layouts.get(&struct_name).unwrap();
+                            let fields = self.func.struct_layouts.get(struct_name).unwrap();
                             let field_ty = fields
                                 .iter()
                                 .find(|(f, _)| f == s.attr.as_str())
@@ -239,7 +239,9 @@ impl CFGBuilder {
                             let dest = self.func.next_value();
                             self.update_location(expr_offset);
 
-                            if field_ty.is_composite() {
+                            if let Type::NamedTuple(_) = curr_ty {
+                                self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
+                            } else if field_ty.is_composite() {
                                 self.add_instruction(InstructionKind::StructOffset(dest, obj, field_offset));
                             } else {
                                 self.add_instruction(InstructionKind::StructLoad(dest, obj, field_offset));
@@ -603,7 +605,11 @@ impl CFGBuilder {
                         func_name.clone(),
                         struct_args,
                     ));
-                    self.func.set_type(dest, Type::Struct(func_name.clone()));
+                    if self.named_tuple_names.contains(&func_name) {
+                        self.func.set_type(dest, Type::NamedTuple(func_name.clone()));
+                    } else {
+                        self.func.set_type(dest, Type::Struct(func_name.clone()));
+                    }
                     return Ok(dest);
                 }
 
@@ -980,7 +986,7 @@ impl CFGBuilder {
 
                 for (i, arg) in s.args.args.iter().enumerate() {
                     let arg_ty = if let Some(ann) = &arg.def.annotation {
-                        crate::builder::metadata::parse_type(ann, &self.type_aliases)?
+                        crate::builder::metadata::parse_type(ann, &self.type_aliases, &self.named_tuple_names)?
                     } else {
                         Type::Unknown
                     };

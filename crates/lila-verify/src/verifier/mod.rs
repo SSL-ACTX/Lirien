@@ -16,7 +16,7 @@ pub fn get_leaf_offsets(
     offsets: &mut Vec<(usize, Type)>,
 ) {
     match ty {
-        Type::Struct(name) => {
+        Type::Struct(name) | Type::NamedTuple(name) => {
             if let Some(fields) = struct_layouts.get(name) {
                 let mut offset = 0;
                 for (_, f_ty) in fields {

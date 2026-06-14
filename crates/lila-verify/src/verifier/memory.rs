@@ -39,6 +39,10 @@ pub fn init_values<
                     inner_ty = Type::I64;
                     break;
                 }
+                Type::NamedTuple(_) => {
+                    is_mem_obj = false;
+                    break;
+                }
                 _ => break,
             }
         }
@@ -482,6 +486,14 @@ pub fn translate<
             ctx.backend.assert(&__tmp);
         }
         InstructionKind::StructCreate(dest, struct_name, args) => {
+            let dest_ty = ctx.func.get_type(*dest);
+            if let Type::NamedTuple(_) = dest_ty {
+                // For NamedTuple, we don't use an array, but we might want to track component values.
+                // However, the verifier currently doesn't have a way to track "registers" for multi-value types.
+                // We'll just skip the array modeling for now.
+                return Ok(());
+            }
+
             if let Some(z3_dest) = ctx.z3_arrays.get(dest).cloned() {
                 let z3_zero_arr = ctx.backend.array_const(
                     &format!("{}_v{}_zero_{}", ctx.func.name, dest.0, ctx.uid),
@@ -521,6 +533,10 @@ pub fn translate<
             }
         }
         InstructionKind::StructLoad(dest, obj, offset) => {
+            let obj_ty = ctx.func.get_type(*obj);
+            if let Type::NamedTuple(_) = obj_ty {
+                return Ok(());
+            }
             let z3_obj = ctx.z3_arrays.get(obj).cloned().unwrap();
             let z3_offset = ctx.backend.int_from_i64(*offset as i64);
             if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
@@ -545,6 +561,10 @@ pub fn translate<
             }
         }
         InstructionKind::StructSet(dest, obj, offset, val, _ty) => {
+            let obj_ty = ctx.func.get_type(*obj);
+            if let Type::NamedTuple(_) = obj_ty {
+                return Ok(());
+            }
             let z3_dest = ctx.z3_arrays.get(dest).cloned().unwrap();
             let z3_obj = ctx.z3_arrays.get(obj).cloned().unwrap();
             let z3_offset = ctx.backend.int_from_i64(*offset as i64);

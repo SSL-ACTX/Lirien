@@ -8,26 +8,103 @@ from typing import (
     Callable,
 )
 from .types import TYPE_MAP, Buffer, SizedArray, Closure, FnPointer, Box, Tensor
-from .signatures import _get_type_name, _value_to_lila_type
+from .signatures import _get_type_name, _value_to_lila_type, is_named_tuple
 
 
 def _get_ctypes_type(ann_str: str) -> Any:
     """Map a type name string to a ctypes type."""
-    # Sort keys by length descending to match 'f32x4' before 'f32'
+    # Prioritize specific Lila types to avoid 'float' matching 'float32'
+    priority_types = [
+        "f32x4",
+        "i32x4",
+        "f64x2",
+        "i64x2",
+        "i8x16",
+        "u8x16",
+        "i16x8",
+        "u16x8",
+        "f64",
+        "f32",
+        "i64",
+        "u64",
+        "i32",
+        "u32",
+        "i16",
+        "u16",
+        "i8",
+        "u8",
+        "bool",
+    ]
+    for name in priority_types:
+        if name in ann_str:
+            return TYPE_MAP[name]
+
+    # Fallback for other types
     for name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
         if name in ann_str:
             return TYPE_MAP[name]
     return ctypes.c_int64
 
 
+def _get_flattened_ctypes_types(
+    ty: Any, type_mapping: Dict[str, str] = None
+) -> List[Any]:
+    """Recursively discover all basic ctypes types for a given Lila type."""
+    from .types import i64
+
+    if is_named_tuple(ty):
+        res = []
+        for f_name in ty._fields:
+            f_ann = ty.__annotations__.get(f_name, i64)
+            res.extend(_get_flattened_ctypes_types(f_ann, type_mapping))
+        return res
+    else:
+        ty_str = _get_type_name(ty, type_mapping).lower()
+        return [_get_ctypes_type(ty_str)]
+
+
+def _flatten_named_tuple_values(obj: Any) -> List[Any]:
+    """Recursively flatten all values in a NamedTuple tree."""
+    res = []
+    for val in obj:
+        if is_named_tuple(type(val)):
+            res.extend(_flatten_named_tuple_values(val))
+        else:
+            res.append(val)
+    return res
+
+
+def _unflatten_named_tuple(ty: Any, flattened_values: List[Any]) -> Any:
+    """Recursively reconstruct a NamedTuple from flattened values."""
+    from .types import i64
+
+    if is_named_tuple(ty):
+        fields_vals = []
+        idx = 0
+        for f_name in ty._fields:
+            f_ann = ty.__annotations__.get(f_name, i64)
+            if is_named_tuple(f_ann):
+                count = len(_get_flattened_ctypes_types(f_ann))
+                fields_vals.append(
+                    _unflatten_named_tuple(f_ann, flattened_values[idx : idx + count])
+                )
+                idx += count
+            else:
+                fields_vals.append(flattened_values[idx])
+                idx += 1
+        return ty(*fields_vals)
+    else:
+        return flattened_values[0]
+
+
 def _map_ctypes_arguments(
     sig: inspect.Signature, class_name: str = None, type_mapping: Dict[str, str] = None
-) -> Tuple[List[Any], List[Tuple]]:
-    """Determine ctypes argument types and mapping info from function signature."""
+) -> Tuple[List[Any], List[Any]]:
+    """Map Python function parameters to ctypes types and tracking info."""
     c_args = []
-    arg_map = []  # Track which Python arg maps to which C args
+    arg_map = []  # List of (type, c_idx, [metadata])
 
-    for param in sig.parameters.values():
+    for i, param in enumerate(sig.parameters.values()):
         ann = param.annotation
 
         if param.name == "self" and class_name:
@@ -35,28 +112,37 @@ def _map_ctypes_arguments(
             arg_map.append(("pointer", len(c_args) - 1))
             continue
 
-        # Unwrap Refined type if necessary
         actual_ann = getattr(ann, "base_type", ann)
 
         # Resolve actual_ann from type_mapping if it was substituted
-        if isinstance(actual_ann, type) and actual_ann.__name__ in (type_mapping or {}):
+        if (
+            isinstance(actual_ann, type)
+            and type_mapping
+            and actual_ann.__name__ in type_mapping
+        ):
             actual_ann = type_mapping[actual_ann.__name__]
         elif type_mapping and getattr(actual_ann, "__name__", None) in type_mapping:
             actual_ann = type_mapping[actual_ann.__name__]
+        elif type_mapping and str(actual_ann) in type_mapping:
+            actual_ann = type_mapping[str(actual_ann)]
 
         ann_str = _get_type_name(actual_ann, type_mapping).lower()
 
         from typing import get_origin, Annotated
 
         origin = get_origin(actual_ann) or actual_ann
+
+        if is_named_tuple(actual_ann):
+            # Unpack NamedTuple into multiple arguments recursively
+            flattened_ctypes = _get_flattened_ctypes_types(actual_ann, type_mapping)
+            start_idx = len(c_args)
+            c_args.extend(flattened_ctypes)
+            arg_map.append(("named_tuple", start_idx, len(flattened_ctypes)))
+            continue
+
         is_buffer = (
-            (
-                origin is Annotated
-                and getattr(actual_ann, "__metadata__", (None,))[0] == "buffer"
-            )
-            or (isinstance(origin, type) and issubclass(origin, Buffer))
-            or "buffer" in ann_str
-        )
+            isinstance(origin, type) and issubclass(origin, Buffer)
+        ) or "buffer" in ann_str
 
         is_tensor = (
             isinstance(origin, type) and issubclass(origin, Tensor)
@@ -67,6 +153,15 @@ def _map_ctypes_arguments(
             origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor)
         ):
             is_ptr_wrapper = True
+
+        # Check for Protocol (duck typing)
+        if (
+            not is_ptr_wrapper
+            and hasattr(actual_ann, "_is_protocol")
+            and actual_ann._is_protocol
+        ):
+            is_ptr_wrapper = True
+
         if not is_ptr_wrapper and any(
             x in ann_str
             for x in [
@@ -89,35 +184,134 @@ def _map_ctypes_arguments(
             is_ptr_wrapper = True
 
         if is_buffer:
-            # Buffer is a Fat Pointer (ptr, len)
-            c_args.append(ctypes.c_void_p)
-            c_args.append(ctypes.c_int64)
-
-            # Determine item size for length calculation
+            c_args.append(ctypes.c_void_p)  # Ptr
+            c_args.append(ctypes.c_int64)  # Len
             item_size = 8
-            if hasattr(actual_ann, "__metadata__"):
+
+            # Check metadata for item type
+            item_ty = None
+            if origin is Annotated and hasattr(actual_ann, "__metadata__"):
                 item_ty = actual_ann.__metadata__[0]
-                if item_ty is Ellipsis:
-                    # Inferred type from ellipsis
-                    ellipsis_key = f"__ellipsis_{param.name}"
-                    if type_mapping and ellipsis_key in type_mapping:
-                        item_ty_str = str(type_mapping[ellipsis_key][0]).lower()
-                        for name, cty in TYPE_MAP.items():
+
+            if item_ty is Ellipsis:
+                # Inferred type from ellipsis
+                ellipsis_key = f"__ellipsis_{param.name}"
+                if type_mapping and ellipsis_key in type_mapping:
+                    # mapping[key] is a list [type_name] or [dim1, dim2, ...]
+                    m_val = type_mapping[ellipsis_key]
+                    if isinstance(m_val, list) and len(m_val) > 0:
+                        item_ty_str = str(m_val[0]).lower()
+                        priority_types = [
+                            "f32x4",
+                            "i32x4",
+                            "f64x2",
+                            "i64x2",
+                            "i8x16",
+                            "u8x16",
+                            "i16x8",
+                            "u16x8",
+                            "f64",
+                            "f32",
+                            "i64",
+                            "u64",
+                            "i32",
+                            "u32",
+                            "i16",
+                            "u16",
+                            "i8",
+                            "u8",
+                            "bool",
+                        ]
+                        for name in priority_types:
                             if name in item_ty_str:
-                                item_size = ctypes.sizeof(cty)
+                                item_size = ctypes.sizeof(TYPE_MAP[name])
                                 break
+            elif item_ty is not None:
+                if isinstance(item_ty, type) and issubclass(
+                    item_ty, ctypes._SimpleCData
+                ):
+                    item_size = ctypes.sizeof(item_ty)
+                elif hasattr(item_ty, "base_type"):
+                    item_ty_str = _get_type_name(
+                        item_ty.base_type, type_mapping
+                    ).lower()
+                    for name in [
+                        "f32x4",
+                        "i32x4",
+                        "f64x2",
+                        "i64x2",
+                        "i8x16",
+                        "u8x16",
+                        "i16x8",
+                        "u16x8",
+                        "f64",
+                        "f32",
+                        "i64",
+                        "u64",
+                        "i32",
+                        "u32",
+                        "i16",
+                        "u16",
+                        "i8",
+                        "u8",
+                        "bool",
+                    ]:
+                        if name in item_ty_str:
+                            item_size = ctypes.sizeof(TYPE_MAP[name])
+                            break
                 elif getattr(item_ty, "__lila_struct__", False):
                     item_size = ctypes.sizeof(item_ty.__lila_ctypes__)
                 else:
                     item_ty_str = str(item_ty).lower()
-                    for name, cty in TYPE_MAP.items():
+                    for name in [
+                        "f32x4",
+                        "i32x4",
+                        "f64x2",
+                        "i64x2",
+                        "i8x16",
+                        "u8x16",
+                        "i16x8",
+                        "u16x8",
+                        "f64",
+                        "f32",
+                        "i64",
+                        "u64",
+                        "i32",
+                        "u32",
+                        "i16",
+                        "u16",
+                        "i8",
+                        "u8",
+                        "bool",
+                    ]:
                         if name in item_ty_str:
-                            item_size = ctypes.sizeof(cty)
+                            item_size = ctypes.sizeof(TYPE_MAP[name])
                             break
             else:
-                for name, cty in TYPE_MAP.items():
+                # Fallback to ann_str
+                for name in [
+                    "f32x4",
+                    "i32x4",
+                    "f64x2",
+                    "i64x2",
+                    "i8x16",
+                    "u8x16",
+                    "i16x8",
+                    "u16x8",
+                    "f64",
+                    "f32",
+                    "i64",
+                    "u64",
+                    "i32",
+                    "u32",
+                    "i16",
+                    "u16",
+                    "i8",
+                    "u8",
+                    "bool",
+                ]:
                     if name in ann_str:
-                        item_size = ctypes.sizeof(cty)
+                        item_size = ctypes.sizeof(TYPE_MAP[name])
                         break
             arg_map.append(("buffer", len(c_args) - 2, item_size))
         elif is_tensor:
@@ -137,6 +331,12 @@ def _map_ctypes_arguments(
         ):
             c_args.append(ctypes.c_void_p)
             arg_map.append(("pointer", len(c_args) - 1))
+        elif is_named_tuple(actual_ann):
+            # Unpack NamedTuple into multiple arguments recursively
+            flattened_ctypes = _get_flattened_ctypes_types(actual_ann, type_mapping)
+            start_idx = len(c_args)
+            c_args.extend(flattened_ctypes)
+            arg_map.append(("named_tuple", start_idx, len(flattened_ctypes)))
         else:
             c_args.append(_get_ctypes_type(ann_str))
             arg_map.append(("value", len(c_args) - 1))
@@ -148,14 +348,16 @@ def _handle_pointer_return(
     c_args: List[Any],
     arg_map: List[Any],
     type_mapping: Dict[str, str] = None,
-) -> Tuple[Any, Any, List[Any], List[Any]]:
-    """Handle return-by-pointer for tuples and SIMD types, adjusting argument mapping."""
+) -> Tuple[bool, Any, List[Any], List[Any], List[Any]]:
+    """Determine if return-by-pointer is needed and update c_args/arg_map."""
     ret_ann_str = _get_type_name(ret_ann, type_mapping).lower()
     raw_ann_str = str(ret_ann).lower()
 
     # Detect if we need return-by-pointer (SRet style)
-    is_tuple = "tuple" in raw_ann_str or (
-        ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
+    is_tuple = (
+        "tuple" in raw_ann_str
+        or (ret_ann_str.startswith("(") and ret_ann_str.endswith(")"))
+        or is_named_tuple(ret_ann)
     )
     is_simd = any(
         x in ret_ann_str
@@ -172,34 +374,43 @@ def _handle_pointer_return(
     )
 
     if not (is_tuple or is_simd):
-        return False, None, c_args, arg_map
+        return False, None, c_args, arg_map, []
+
+    from .types import i64
+
+    # For NamedTuple, we prefer returning by value (in registers) if possible,
+    # because Challenge 2 specifically asks for register-allocated structs.
+    # ctypes supports Structure return values, which often use registers.
+    if is_named_tuple(ret_ann):
+        flattened_ctypes = _get_flattened_ctypes_types(ret_ann, type_mapping)
+
+        class NamedTupleResult(ctypes.Structure):
+            _fields_ = [(f"f{i}", cty) for i, cty in enumerate(flattened_ctypes)]
+
+        # Use flattened_ctypes as the tuple_types so that _create_wrapper
+        # knows how many fields to extract from the returned structure.
+        return False, NamedTupleResult, c_args, arg_map, flattened_ctypes
 
     try:
-        from .types import i64
-
         ResultStruct = None
+        tuple_types = []
         if is_tuple:
             # Try to extract inner types for Tuple
             if hasattr(ret_ann, "__args__"):
-                tuple_types = ret_ann.__args__
+                tuple_types = list(ret_ann.__args__)
             else:
                 tuple_types = [i64, i64]  # Default
 
             tuple_fields = []
             for i, t in enumerate(tuple_types):
-                t_str = _get_type_name(t, type_mapping).lower()
-                c_ty = ctypes.c_int64
-                for name, cty in TYPE_MAP.items():
-                    if name in t_str:
-                        c_ty = cty
-                        break
-                tuple_fields.append((f"f{i}", c_ty))
+                f_ty_str = _get_type_name(t, type_mapping).lower()
+                tuple_fields.append((f"f{i}", _get_ctypes_type(f_ty_str)))
 
             class TupleReturn(ctypes.Structure):
                 _fields_ = tuple_fields
 
             ResultStruct = TupleReturn
-        else:
+        elif is_simd:
             # SIMD Return - Match the specific vector type exactly if possible
             # Sort keys by length descending to match 'f32x4' before 'f32'
             for name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
@@ -208,42 +419,57 @@ def _handle_pointer_return(
                     break
 
         if ResultStruct is None:
-            return False, None, c_args, arg_map
+            return False, None, c_args, arg_map, []
 
-        new_c_args = [ctypes.POINTER(ResultStruct)] + c_args
+        new_c_args = [ctypes.c_void_p] + c_args
         new_arg_map = []
         for info in arg_map:
             # Adjust arg_map indices because we inserted a pointer at index 0
             new_arg_map.append((info[0], info[1] + 1) + info[2:])
 
-        return True, ResultStruct, new_c_args, new_arg_map
+        return True, ResultStruct, new_c_args, new_arg_map, tuple_types
     except Exception as e:
-        print(f"[Lila Warning] Failed to handle pointer return for {ret_ann}: {e}")
-        return False, None, c_args, arg_map
+        print(f"[Lila Warning] Failed to setup result structure: {e}")
+        return False, None, c_args, arg_map, []
 
 
 def _create_jit_wrapper(
-    code_ptr: Any, arg_types: List[Any], ret_type: Any, is_closure: bool = False
-) -> Callable:
-    """Create a ctypes wrapper for a JIT-compiled function pointer, supporting recursion for higher-order functions."""
+    code_ptr: int,
+    arg_types: List[Any],
+    ret_type: Any,
+    is_closure: bool = False,
+    type_mapping: Dict[str, str] = None,
+):
+    """Create a high-performance wrapper for a JIT-compiled function or closure."""
+    import ctypes
+    from .types import FnPointer, Closure, i64, TYPE_MAP
+
     c_args = []
     arg_map = []
+
     if is_closure:
         c_args.append(ctypes.c_void_p)  # ctx_ptr
 
-    for i, arg_ty in enumerate(arg_types):
-        arg_ty_str = str(arg_ty).lower()
-        if "buffer" in arg_ty_str:
+    for i, ty in enumerate(arg_types):
+        ty_str = _get_type_name(ty, type_mapping).lower()
+        if "buffer" in ty_str:
             c_args.append(ctypes.c_void_p)
             c_args.append(ctypes.c_int64)
-            arg_map.append(("buffer", len(c_args) - 2, 8))  # Simplified
+            item_size = 8
+            for name, cty in TYPE_MAP.items():
+                if name in ty_str:
+                    item_size = ctypes.sizeof(cty)
+                    break
+            arg_map.append(("buffer", len(c_args) - 2, item_size))
         elif any(
-            x in arg_ty_str
+            x in ty_str
             for x in [
                 "sizedarray",
                 "fnpointer",
                 "callable",
                 "closure",
+                "box",
+                "tensor",
                 "f32x4",
                 "i32x4",
                 "f64x2",
@@ -256,25 +482,35 @@ def _create_jit_wrapper(
         ):
             c_args.append(ctypes.c_void_p)
             arg_map.append(("pointer", len(c_args) - 1))
+        elif is_named_tuple(ty):
+            # Unpack NamedTuple recursively
+            flattened_ctypes = _get_flattened_ctypes_types(ty, type_mapping)
+            start_idx = len(c_args)
+            c_args.extend(flattened_ctypes)
+            arg_map.append(("named_tuple", start_idx, len(flattened_ctypes)))
         else:
-            c_args.append(_get_ctypes_type(arg_ty_str))
+            c_args.append(_get_ctypes_type(ty_str))
             arg_map.append(("value", len(c_args) - 1))
 
-    is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
-        ret_type, c_args, arg_map
+    # Create temporary signature for _handle_pointer_return
+    params = [
+        inspect.Parameter(
+            f"p{i}", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ty
+        )
+        for i, ty in enumerate(arg_types)
+    ]
+    dummy_sig = inspect.Signature(params, return_annotation=ret_type)
+
+    is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = _handle_pointer_return(
+        ret_type, c_args, arg_map, type_mapping
     )
 
     if is_ptr_return:
         c_ret = None
-        if "tuple" in str(ret_type).lower():
-            if hasattr(ret_type, "__args__"):
-                tuple_types = ret_type.__args__
-            else:
-                from .types import i64
-
-                tuple_types = [i64, i64]
+    elif is_named_tuple(ret_type):
+        c_ret = TupleReturn  # register-based return as structure
     else:
-        ret_ty_str = str(ret_type).lower()
+        ret_ty_str = _get_type_name(ret_type, type_mapping).lower()
         if "none" in ret_ty_str or ret_type is None:
             c_ret = None
         else:
@@ -288,8 +524,6 @@ def _create_jit_wrapper(
 
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(actual_fn_ptr)
 
-    from .types import FnPointer, Closure, i64
-
     def jit_call(*args):
         processed_args, ret_struct, anchors = _prepare_runtime_args(
             args, arg_map, c_args, is_ptr_return, TupleReturn
@@ -302,8 +536,18 @@ def _create_jit_wrapper(
 
         res = c_func(*processed_args)
 
+        if is_named_tuple(ret_type) and not is_ptr_return:
+            # Construct NamedTuple from registers
+            flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
+            return _unflatten_named_tuple(ret_type, flattened_res)
+
         if is_ptr_return:
-            if "tuple" in str(ret_type).lower():
+            if is_named_tuple(ret_type):
+                flattened_res = [
+                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                ]
+                return _unflatten_named_tuple(ret_type, flattened_res)
+            elif "tuple" in str(ret_type).lower():
                 # Convert ctypes structure back to Python tuple
                 return tuple(
                     getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
@@ -342,6 +586,7 @@ def _create_jit_wrapper(
                 inner_arg_types,
                 inner_ret_type,
                 is_closure=is_cls,
+                type_mapping=type_mapping,
             )
 
         return res
@@ -365,6 +610,8 @@ def _prepare_runtime_args(
     if is_ptr_return:
         ret_struct = TupleReturn()
         processed_args.append(ctypes.byref(ret_struct))
+    else:
+        ret_struct = None
 
     for i, arg_info in enumerate(arg_map):
         arg_type = arg_info[0]
@@ -402,7 +649,9 @@ def _prepare_runtime_args(
             for j in range(dim_count):
                 processed_args.append(ctypes.c_int64(arg.shape[j]))
         elif arg_type == "pointer":
-            if hasattr(arg, "_ctypes_obj"):
+            if hasattr(arg, "__lila_ptr__"):
+                processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
+            elif hasattr(arg, "_ctypes_obj"):
                 # If it's already a pointer or c_void_p, pass it directly.
                 # Otherwise, take the address of the struct.
                 if isinstance(arg._ctypes_obj, (ctypes.c_void_p, ctypes._Pointer)):
@@ -423,14 +672,30 @@ def _prepare_runtime_args(
                     anchors.append(c_val)
             elif isinstance(arg, ctypes.Structure):
                 processed_args.append(ctypes.c_void_p(ctypes.addressof(arg)))
-            elif hasattr(arg, "__lila_ptr__"):
-                processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
             else:
                 processed_args.append(arg)
+        elif arg_type == "named_tuple":
+            start_c_idx = arg_info[1]
+            total_count = arg_info[2]
+            flattened = _flatten_named_tuple_values(arg)
+            for j in range(total_count):
+                field_val = flattened[j]
+                target_cty = c_args[start_c_idx + j]
+                processed_args.append(target_cty(field_val))
         else:
             target_cty = c_args[c_idx]
             if hasattr(arg, "_ctypes_obj"):
-                processed_args.append(arg._ctypes_obj)
+                # If the target ctypes type is a pointer, pass the address of the struct.
+                # This handles cases where a Protocol was not resolved to a specific struct
+                # during _map_ctypes_arguments but the object has a struct layout.
+                if isinstance(target_cty, type) and issubclass(
+                    target_cty, (ctypes.c_void_p, ctypes._Pointer)
+                ):
+                    processed_args.append(
+                        ctypes.c_void_p(ctypes.addressof(arg._ctypes_obj))
+                    )
+                else:
+                    processed_args.append(arg._ctypes_obj)
             elif (
                 isinstance(arg, target_cty)
                 or hasattr(arg, "_type_")
@@ -456,8 +721,6 @@ def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
                             f"Runtime Refinement Violation for argument '{param.name}': "
                             f"Value {args[i]} does not satisfy the predicate."
                         )
-                # If predicate is a string, it's a symbolic refinement for the verifier,
-                # we skip it at runtime.
 
 
 def _wrap_return_value(
@@ -561,7 +824,9 @@ def _wrap_return_value(
             if len(params) == 2:
                 arg_types, ret_type = params
 
-        return _create_jit_wrapper(res, arg_types, ret_type, is_closure=is_cls)
+        return _create_jit_wrapper(
+            res, arg_types, ret_type, is_closure=is_cls, type_mapping=type_mapping
+        )
     return res
 
 
@@ -604,11 +869,14 @@ def _create_wrapper(
     type_mapping: Dict[str, str] = None,
 ):
     """Generate the final Python wrapper that handles runtime checks and interop."""
-    c_ret = (
-        None
-        if is_ptr_return
-        else _get_ctypes_return_type(sig.return_annotation, type_mapping)
-    )
+    if is_named_tuple(sig.return_annotation) and not is_ptr_return:
+        c_ret = TupleReturn
+    else:
+        c_ret = (
+            None
+            if is_ptr_return
+            else _get_ctypes_return_type(sig.return_annotation, type_mapping)
+        )
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
     def wrapper(*args):
@@ -620,10 +888,21 @@ def _create_wrapper(
 
         res = c_func(*processed_args)
 
+        if is_named_tuple(sig.return_annotation) and not is_ptr_return:
+            # Construct NamedTuple from registers
+            flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
+            return _unflatten_named_tuple(sig.return_annotation, flattened_res)
+
         if is_ptr_return:
             ret_ann_str = _get_type_name(sig.return_annotation, type_mapping).lower()
             raw_ann_str = str(sig.return_annotation).lower()
-            if "tuple" in raw_ann_str or (
+            if is_named_tuple(sig.return_annotation):
+                # Construct NamedTuple
+                flattened_res = [
+                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                ]
+                return _unflatten_named_tuple(sig.return_annotation, flattened_res)
+            elif "tuple" in raw_ann_str or (
                 ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
             ):
                 return tuple(
