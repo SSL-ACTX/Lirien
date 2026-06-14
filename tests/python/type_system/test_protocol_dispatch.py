@@ -6,9 +6,11 @@ from lila import verify, f32, struct
 class Renderable(Protocol):
     def render(self) -> f32: ...
 
+
 class Shape(Protocol):
     def get_area(self) -> f32: ...
     def scale(self, factor: f32) -> None: ...
+
 
 @struct
 class Circle:
@@ -23,6 +25,7 @@ class Circle:
     def scale(self, factor: f32) -> None:
         self.radius = self.radius * factor
 
+
 @struct
 class Square:
     side: f32
@@ -36,6 +39,7 @@ class Square:
     def scale(self, factor: f32) -> None:
         self.side = self.side * factor
 
+
 @struct
 class Scene:
     obj1: Circle
@@ -43,6 +47,7 @@ class Scene:
 
     def total_area(self) -> f32:
         return self.obj1.get_area() + self.obj2.get_area()
+
 
 class TestProtocolDispatch(unittest.TestCase):
     def test_protocol_dispatch(self):
@@ -80,7 +85,6 @@ class TestProtocolDispatch(unittest.TestCase):
         # Square area: 9.0
         # Total: 21.56
         self.assertAlmostEqual(get_scene_area(scene), 21.56, places=4)
-
 
 
 if __name__ == "__main__":

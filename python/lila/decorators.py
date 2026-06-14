@@ -10,6 +10,7 @@ from typing import (
     Tuple,
     get_origin,
     get_args,
+    get_overloads,
     Annotated,
 )
 from . import lila_bridge
@@ -198,6 +199,7 @@ class MonomorphizedFunction:
         timeout=5000,
     ):
         self.func = func
+        self.__code__ = func.__code__
         self.typevars = typevars  # Set of TypeVar objects
         self.strict = strict
         self.log_level = log_level
@@ -207,6 +209,7 @@ class MonomorphizedFunction:
         self.timeout = timeout
         self.cache = {}
         self.sig = inspect.signature(func)
+        self.__lila_jit__ = True
 
     def _match_typevars(
         self, annotation: Any, val: Any, mapping: Dict[str, Any], param_name: str = None
@@ -332,6 +335,13 @@ class MonomorphizedFunction:
             self.cache[cache_key] = self._specialize(mapping)
 
         return self.cache[cache_key](*args, **kwargs)
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        import types
+
+        return types.MethodType(self.__call__, instance)
 
     def _specialize(self, mapping):
         source, target_name = _prepare_source_and_name(
@@ -495,6 +505,216 @@ class MonomorphizedFunction:
         )
 
 
+class OverloadedFunction:
+    """Handles runtime dispatch and lazy compilation for overloaded functions."""
+
+    def __init__(
+        self,
+        func,
+        overloads,
+        strict,
+        log_level,
+        struct_layouts,
+        class_name=None,
+        method_name=None,
+        timeout=5000,
+    ):
+        self.func = func
+        self.__code__ = func.__code__
+        self.overloads = overloads
+        self.strict = strict
+        self.log_level = log_level
+        self.struct_layouts = struct_layouts
+        self.class_name = class_name
+        self.method_name = method_name
+        self.timeout = timeout
+        self.cache = {}
+        self.base_sig = inspect.signature(func)
+        self.__lila_jit__ = True
+
+    def _match_overload(self, *args, **kwargs):
+        """Find the first overload that matches the runtime argument types."""
+        for overload_func in self.overloads:
+            sig = inspect.signature(overload_func)
+            try:
+                bound = sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+
+                match = True
+                mapping = {}
+                for param_name, val in bound.arguments.items():
+                    param = sig.parameters[param_name]
+                    if param.annotation is inspect.Parameter.empty:
+                        continue
+
+                    # Support 'self' in methods - we trust it matches if it's a method
+                    if param_name == "self" and self.class_name:
+                        continue
+
+                    val_lila_type = _value_to_lila_type(val)
+                    ann_name = _get_type_name(param.annotation)
+                    val_name = _get_type_name(val_lila_type)
+
+                    if ann_name.lower() != val_name.lower():
+                        # Allow narrow matching: if sig says f32 and we have a float (f64), allow it.
+                        # The JIT specialized build will handle the downcast.
+                        is_numeric_match = False
+                        a_low = ann_name.lower()
+                        v_low = val_name.lower()
+                        if a_low in ("f32", "f64") and v_low in ("f32", "f64"):
+                            is_numeric_match = True
+                        elif (
+                            a_low
+                            in ("i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64")
+                            and v_low == "i64"
+                        ):
+                            is_numeric_match = True
+
+                        if not is_numeric_match:
+                            match = False
+                            break
+                    mapping[param_name] = param.annotation
+
+                if match:
+                    return overload_func, sig, mapping
+            except TypeError:
+                continue
+        return None, None, None
+
+    def __call__(self, *args, **kwargs):
+        overload_func, sig, mapping = self._match_overload(*args, **kwargs)
+        if not overload_func:
+            arg_types = [_get_type_name(_value_to_lila_type(arg)) for arg in args]
+            raise TypeError(
+                f"No matching Lila overload found for '{self.func.__name__}' with argument types {arg_types}"
+            )
+
+        # Create a stable cache key based on the matched signature
+        cache_key = tuple(sorted((k, _get_type_name(v)) for k, v in mapping.items()))
+        # Also include return type in cache key
+        ret_type_name = _get_type_name(sig.return_annotation)
+        full_cache_key = cache_key + (("__return__", ret_type_name),)
+
+        if full_cache_key not in self.cache:
+            self.cache[full_cache_key] = self._specialize(sig, full_cache_key)
+
+        return self.cache[full_cache_key](*args, **kwargs)
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        import types
+
+        return types.MethodType(self.__call__, instance)
+
+    def _specialize(self, sig, cache_key):
+        source, target_name = _prepare_source_and_name(
+            self.func, self.class_name, self.method_name
+        )
+
+        suffix = "_".join(v for k, v in cache_key if not k.startswith("__"))
+        specialized_name = f"{target_name}_{suffix}"
+        # Sanitize specialized name for Rust/Cranelift compatibility
+        specialized_name = (
+            specialized_name.replace("[", "_")
+            .replace("]", "_")
+            .replace(",", "_")
+            .replace(" ", "")
+            .replace("(", "_")
+            .replace(")", "_")
+        )
+
+        tree = ast.parse(source)
+        func_def = tree.body[0]
+        func_def.name = specialized_name
+
+        # Inject annotations from the matched overload signature into the implementation AST
+        class AnnotationInjector(ast.NodeTransformer):
+            def __init__(self, sig):
+                self.sig = sig
+
+            def visit_FunctionDef(self, node):
+                # Update parameters
+                for arg in node.args.args:
+                    if arg.arg in self.sig.parameters:
+                        ann = self.sig.parameters[arg.arg].annotation
+                        if ann is not inspect.Parameter.empty:
+                            ann_name = _get_type_name(ann)
+                            # Parse type name into AST node
+                            try:
+                                ann_node = ast.parse(ann_name).body[0].value
+                                arg.annotation = ann_node
+                            except:
+                                # Fallback to Name if parsing fails for some reason
+                                arg.annotation = ast.Name(id=ann_name, ctx=ast.Load())
+
+                # Update return annotation
+                if self.sig.return_annotation is not inspect.Signature.empty:
+                    ret_name = _get_type_name(self.sig.return_annotation)
+                    try:
+                        ret_node = ast.parse(ret_name).body[0].value
+                        node.returns = ret_node
+                    except:
+                        node.returns = ast.Name(id=ret_name, ctx=ast.Load())
+
+                return node
+
+        tree = AnnotationInjector(sig).visit(tree)
+        specialized_source = ast.unparse(tree)
+
+        log_lvl, old_log = _setup_logging(self.log_level)
+        try:
+            struct_layouts, enum_layouts, type_aliases = _discover_types(
+                self.func, self.struct_layouts
+            )
+            code_ptr = lila_bridge.verify_and_compile(
+                specialized_source,
+                specialized_name,
+                struct_layouts,
+                enum_layouts,
+                type_aliases,
+                self.timeout,
+            )
+        except Exception as e:
+            error_msg = format_verification_error(
+                self.func.__name__, specialized_source, str(e)
+            )
+            if self.strict:
+                raise VerificationError(error_msg) from e
+            else:
+                print(f"[Lila Warning] {error_msg}. Falling back to Python.")
+                return self.func
+        finally:
+            _restore_logging(log_lvl, old_log)
+
+        # Map to ctypes and create wrapper
+        c_args, arg_map = _map_ctypes_arguments(sig, self.class_name)
+        is_ptr_return, TupleReturn, c_args, arg_map = _handle_pointer_return(
+            sig.return_annotation, c_args, arg_map
+        )
+
+        tuple_types = []
+        if is_ptr_return:
+            if "tuple" in _get_type_name(sig.return_annotation).lower():
+                if hasattr(sig.return_annotation, "__args__"):
+                    tuple_types = sig.return_annotation.__args__
+                else:
+                    from .types import i64
+
+                    tuple_types = [i64, i64]
+
+        return _create_wrapper(
+            self.func,
+            code_ptr,
+            c_args,
+            arg_map,
+            sig,
+            is_ptr_return,
+            TupleReturn,
+            tuple_types,
+        )
+
+
 def verify(
     strict: bool = True,
     log_level: str = None,
@@ -518,6 +738,19 @@ def verify(
         return verify(strict=True)(func)
 
     def decorator(func: T) -> T:
+        overloads = get_overloads(func)
+        if overloads:
+            return OverloadedFunction(
+                func,
+                overloads,
+                strict,
+                log_level,
+                _struct_layouts,
+                _class_name,
+                _method_name,
+                timeout,
+            )
+
         sig = inspect.signature(func)
         typevars = _get_all_typevars(sig)
         has_ellipsis = any(

@@ -30,7 +30,7 @@ def _map_ctypes_arguments(
     for param in sig.parameters.values():
         ann = param.annotation
 
-        if param.name == "self" and ann == inspect.Parameter.empty and class_name:
+        if param.name == "self" and class_name:
             c_args.append(ctypes.c_void_p)
             arg_map.append(("pointer", len(c_args) - 1))
             continue
@@ -408,17 +408,21 @@ def _prepare_runtime_args(
                 if isinstance(arg._ctypes_obj, (ctypes.c_void_p, ctypes._Pointer)):
                     processed_args.append(arg._ctypes_obj)
                 else:
-                    processed_args.append(ctypes.addressof(arg._ctypes_obj))
+                    processed_args.append(
+                        ctypes.c_void_p(ctypes.addressof(arg._ctypes_obj))
+                    )
             elif isinstance(arg, Box):
                 if hasattr(arg.value, "_ctypes_obj"):
-                    processed_args.append(ctypes.addressof(arg.value._ctypes_obj))
+                    processed_args.append(
+                        ctypes.c_void_p(ctypes.addressof(arg.value._ctypes_obj))
+                    )
                 else:
                     c_ty = _get_ctypes_type(_value_to_lila_type(arg.value))
                     c_val = c_ty(arg.value)
                     processed_args.append(ctypes.byref(c_val))
                     anchors.append(c_val)
             elif isinstance(arg, ctypes.Structure):
-                processed_args.append(ctypes.addressof(arg))
+                processed_args.append(ctypes.c_void_p(ctypes.addressof(arg)))
             elif hasattr(arg, "__lila_ptr__"):
                 processed_args.append(ctypes.c_void_p(arg.__lila_ptr__))
             else:

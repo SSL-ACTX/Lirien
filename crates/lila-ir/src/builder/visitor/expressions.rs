@@ -607,6 +607,40 @@ impl CFGBuilder {
                     return Ok(dest);
                 }
 
+                if func_name == "isinstance" {
+                    if s.args.len() != 2 {
+                        return Err("isinstance() expects 2 arguments".to_string());
+                    }
+                    let obj = self.visit_expr(s.args[0].clone())?;
+                    let obj_ty = self.func.get_type(obj);
+
+                    let target_ty_name = if let ast::Expr::Name(n) = &s.args[1] {
+                        n.id.to_string()
+                    } else {
+                        "unknown".to_string()
+                    };
+
+                    let matched = match target_ty_name.as_str() {
+                        "int" | "i64" | "i32" | "u64" | "u32" | "i16" | "u16" | "i8" | "u8" => {
+                            obj_ty.is_int()
+                        }
+                        "float" | "f64" | "f32" => obj_ty.is_float(),
+                        "bool" => matches!(obj_ty, Type::Bool),
+                        _ => {
+                            if let Type::Struct(name) = &obj_ty {
+                                name == &target_ty_name
+                            } else {
+                                false
+                            }
+                        }
+                    };
+
+                    let dest = self.func.next_value();
+                    self.add_instruction(InstructionKind::ConstInt(dest, if matched { 1 } else { 0 }));
+                    self.func.set_type(dest, Type::Bool);
+                    return Ok(dest);
+                }
+
                 if func_name == "f64" || func_name == "float" {
                     if s.args.len() != 1 {
                         return Err("f64() expects 1 argument".to_string());
@@ -1168,6 +1202,40 @@ impl CFGBuilder {
             self.func.set_type(splat_val, r_ty.clone());
             lhs = splat_val;
             l_ty = r_ty.clone();
+        }
+
+        // Handle mixed scalar types (e.g. i64 + f64)
+        if !l_ty.is_simd() && !r_ty.is_simd() && !l_ty.is_tensor() && !r_ty.is_tensor() {
+            if l_ty.is_float() && r_ty.is_int() {
+                let converted = self.func.next_value();
+                self.add_instruction(InstructionKind::IToF(converted, rhs, l_ty.clone()));
+                self.func.set_type(converted, l_ty.clone());
+                rhs = converted;
+                r_ty = l_ty.clone();
+            } else if l_ty.is_int() && r_ty.is_float() {
+                let converted = self.func.next_value();
+                self.add_instruction(InstructionKind::IToF(converted, lhs, r_ty.clone()));
+                self.func.set_type(converted, r_ty.clone());
+                lhs = converted;
+                l_ty = r_ty.clone();
+            } else if l_ty.is_float() && r_ty.is_float() && l_ty != r_ty {
+                // Promote f32 to f64
+                let dest_ty = if matches!(l_ty, Type::F64) || matches!(r_ty, Type::F64) { Type::F64 } else { Type::F32 };
+                if l_ty != dest_ty {
+                    let converted = self.func.next_value();
+                    self.add_instruction(InstructionKind::FConv(converted, lhs, dest_ty.clone()));
+                    self.func.set_type(converted, dest_ty.clone());
+                    lhs = converted;
+                    l_ty = dest_ty.clone();
+                }
+                if r_ty != dest_ty {
+                    let converted = self.func.next_value();
+                    self.add_instruction(InstructionKind::FConv(converted, rhs, dest_ty.clone()));
+                    self.func.set_type(converted, dest_ty.clone());
+                    rhs = converted;
+                    r_ty = dest_ty.clone();
+                }
+            }
         }
 
         let is_float = l_ty.is_float() || r_ty.is_float();

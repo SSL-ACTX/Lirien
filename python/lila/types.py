@@ -662,25 +662,33 @@ def struct(cls):
         cls.__name__: [(f_name, _get_type_name(f_ty)) for f_name, f_ty in field_list]
     }
     methods = []
-    for name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+    for name, method in inspect.getmembers(cls):
         if name.startswith("__") and name.endswith("__"):
             continue
         if name == "new_init":
             continue
-        methods.append((name, method))
+        if inspect.isfunction(method) or hasattr(method, "__lila_jit__"):
+            methods.append((name, method))
 
     # Sort by line number
     methods.sort(key=lambda x: x[1].__code__.co_firstlineno)
 
     for name, method in methods:
         # Check if already verified to avoid double-wrapping
-        if not hasattr(method, "__lila_jit__"):
-            verified_method = verify(
-                _class_name=cls.__name__,
-                _method_name=f"{cls.__name__}_{name}",
-                _struct_layouts=struct_layout,
-            )(method)
-            setattr(cls, name, verified_method)
+        if hasattr(method, "__lila_jit__"):
+            # If it's a generic or overloaded function, we need to update its class info
+            if hasattr(method, "class_name") and method.class_name is None:
+                method.class_name = cls.__name__
+                method.method_name = f"{cls.__name__}_{name}"
+                method.struct_layouts = struct_layout
+            continue
+
+        verified_method = verify(
+            _class_name=cls.__name__,
+            _method_name=f"{cls.__name__}_{name}",
+            _struct_layouts=struct_layout,
+        )(method)
+        setattr(cls, name, verified_method)
 
     # Add property accessors that wrap nested structs
     for name, ftype in field_list:

@@ -167,6 +167,28 @@ def first_elt(a: Tensor[f64, ...]) -> f64:
     return a[0, 0] # Specialized for the specific rank at runtime
 ```
 
+#### True Multiple Dispatch
+Lila leverages Python's standard `@typing.overload` decorator to implement true ad-hoc polymorphism. Instead of being ignored at runtime, function calls are resolved against overloaded signatures and lazily JIT-compiled into specialized, type-safe machine code.
+
+```python
+from typing import overload
+from lila import verify, i64, f64
+
+@overload
+def compute(x: i64) -> i64: ...
+
+@overload
+def compute(x: f64) -> f64: ...
+
+@verify
+def compute(x):
+    return x * 2
+
+# Lila dynamically routes to completely different machine-code bodies!
+compute(10)   # Executes specialized i64 logic
+compute(2.5)  # Executes specialized f64 logic
+```
+
 #### Verified Loop Unrolling
 By using `typing.Literal`, Lila can track compile-time constants and perform robust loop unrolling. This eliminates loop overhead and provides Z3 with exact induction values for indexing proofs.
 ```python

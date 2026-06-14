@@ -103,17 +103,51 @@ impl CFGBuilder {
                 Ok(())
             }
             ast::Stmt::Return(s) => {
-                let val = if let Some(expr) = s.value {
+                let mut val = if let Some(expr) = s.value {
                     let v = self.visit_expr(*expr)?;
                     Some(self.auto_load(v))
                 } else {
                     None
                 };
+
+                // Auto-cast to return type if necessary
+                if let Some(v) = val {
+                    let val_ty = self.func.get_type(v);
+                    let ret_ty = self.func.return_type.clone();
+                    if ret_ty.is_float() && val_ty.is_int() {
+                        let converted = self.func.next_value();
+                        self.add_instruction(InstructionKind::IToF(converted, v, ret_ty.clone()));
+                        self.func.set_type(converted, ret_ty);
+                        val = Some(converted);
+                    } else if ret_ty.is_int() && val_ty.is_float() {
+                        let converted = self.func.next_value();
+                        self.add_instruction(InstructionKind::FToI(converted, v, ret_ty.clone()));
+                        self.func.set_type(converted, ret_ty);
+                        val = Some(converted);
+                    }
+                }
+
                 self.add_instruction(InstructionKind::Return(val));
                 Ok(())
             }
             ast::Stmt::If(s) => {
                 let cond = self.visit_expr(*s.test)?;
+                let cond = self.auto_load(cond);
+
+                // Constant pruning for If
+                if let Some(val) = self.get_constant_int(cond) {
+                    if val != 0 {
+                        for stmt in s.body {
+                            self.visit_stmt(stmt)?;
+                        }
+                    } else {
+                        for stmt in s.orelse {
+                            self.visit_stmt(stmt)?;
+                        }
+                    }
+                    return Ok(());
+                }
+
                 let prev_block = self.current_block;
 
                 let true_block = self.create_block();

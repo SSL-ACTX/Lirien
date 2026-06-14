@@ -2,6 +2,7 @@ import inspect
 import ast
 import sys
 import types
+import ctypes
 from typing import (
     Any,
     Callable,
@@ -13,7 +14,7 @@ from typing import (
     get_args,
     Annotated,
 )
-from .types import Box
+from .types import Box, TYPE_MAP
 
 
 def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
@@ -96,10 +97,11 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
                     kind = "Closure"
                 return f"{kind}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
 
-        inner_name = _get_type_name(inner, type_mapping)
         if "buffer" in origin_str:
+            inner_name = _get_type_name(inner, type_mapping)
             return f"Buffer[{inner_name}]"
         if "box" in origin_str:
+            inner_name = _get_type_name(inner, type_mapping)
             return f"Box[{inner_name}]"
         if "sizedarray" in origin_str:
             # SizedArray metadata usually has (base_type, size)
@@ -107,7 +109,9 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
                 return (
                     f"SizedArray[{_get_type_name(inner[0], type_mapping)}, {inner[1]}]"
                 )
-        return inner_name
+
+        # Fallback for standard Annotated[T, metadata]
+        return _get_type_name(origin, type_mapping)
 
     # Handle standard Tuples
     origin = getattr(ty, "__origin__", None)
@@ -335,6 +339,22 @@ def _value_to_lila_type(val: Any) -> str:
     # Fallback for Boxed values
     if isinstance(val, Box):
         return _value_to_lila_type(val.value)
+
+    if isinstance(val, ctypes.Array):
+        # Map ctypes array to Buffer[T]
+        elt_cty = val._type_
+        elt_lila = "i64"
+        for lila_name, cty in TYPE_MAP.items():
+            if cty == elt_cty:
+                elt_lila = lila_name
+                break
+        return f"Buffer[{elt_lila}]"
+
+    if isinstance(val, ctypes._Pointer):
+        return "pointer"
+
+    if isinstance(val, ctypes.Structure) and not hasattr(val, "__lila_struct__"):
+        return val.__class__.__name__
 
     return "i64"
 
