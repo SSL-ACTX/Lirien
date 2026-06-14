@@ -81,7 +81,12 @@ pub fn lower_instruction<M: Module>(
             Ok(())
         }
         InstructionKind::ConstFloat(dest, val) => {
-            let res = ctx.builder.ins().f64const(*val);
+            let ty = ctx.ssa_func.get_type(*dest);
+            let res = if ty.is_float32() {
+                ctx.builder.ins().f32const(*val as f32)
+            } else {
+                ctx.builder.ins().f64const(*val)
+            };
             ctx.values.insert(*dest, res);
             Ok(())
         }

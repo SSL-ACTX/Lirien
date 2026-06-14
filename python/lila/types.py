@@ -419,6 +419,9 @@ class Buffer:
         from typing import Annotated
         import ctypes
 
+        if base_type is Ellipsis:
+            return Annotated[cls, Ellipsis]
+
         class BufferAnnotated:
             @classmethod
             def alloc(cls_ann, count: int):

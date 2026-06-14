@@ -228,7 +228,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::SLt(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::SignedLessThan, l, r);
+            let l_ty = ctx.builder.func.dfg.value_type(l);
+            let res = if l_ty.is_float() {
+                ctx.builder.ins().fcmp(FloatCC::LessThan, l, r)
+            } else {
+                ctx.builder.ins().icmp(IntCC::SignedLessThan, l, r)
+            };
             let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
             let res_final = ctx.builder.ins().bmask(res_ty, res);
             ctx.values.insert(*dest, res_final);
@@ -236,7 +241,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::SLe(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r);
+            let l_ty = ctx.builder.func.dfg.value_type(l);
+            let res = if l_ty.is_float() {
+                ctx.builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r)
+            } else {
+                ctx.builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r)
+            };
             let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
             let res_final = ctx.builder.ins().bmask(res_ty, res);
             ctx.values.insert(*dest, res_final);
@@ -244,7 +254,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::SGt(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::SignedGreaterThan, l, r);
+            let l_ty = ctx.builder.func.dfg.value_type(l);
+            let res = if l_ty.is_float() {
+                ctx.builder.ins().fcmp(FloatCC::GreaterThan, l, r)
+            } else {
+                ctx.builder.ins().icmp(IntCC::SignedGreaterThan, l, r)
+            };
             let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
             let res_final = ctx.builder.ins().bmask(res_ty, res);
             ctx.values.insert(*dest, res_final);
@@ -252,10 +267,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::SGe(dest, lhs, rhs) => {
             let l = get_val(&ctx.values, lhs);
             let r = get_val(&ctx.values, rhs);
-            let res = ctx
-                .builder
-                .ins()
-                .icmp(IntCC::SignedGreaterThanOrEqual, l, r);
+            let l_ty = ctx.builder.func.dfg.value_type(l);
+            let res = if l_ty.is_float() {
+                ctx.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r)
+            } else {
+                ctx.builder.ins()
+                    .icmp(IntCC::SignedGreaterThanOrEqual, l, r)
+            };
             let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
             let res_final = ctx.builder.ins().bmask(res_ty, res);
             ctx.values.insert(*dest, res_final);

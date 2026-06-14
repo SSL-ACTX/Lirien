@@ -3,6 +3,111 @@ use std::collections::HashMap;
 use std::ops::Neg;
 #[allow(unused)]
 use z3::ast::{Array, Ast, Bool, Float, Int, Real, RoundingMode, BV};
+use z3_sys;
+
+fn unify_floats(a: &Float, b: &Float) -> (Float, Float) {
+    let sort_a = a.get_sort();
+    let sort_b = b.get_sort();
+    if sort_a == sort_b {
+        return (a.clone(), b.clone());
+    }
+
+    let ctx = a.get_ctx();
+    unsafe {
+        let context = ctx.get_z3_context();
+        let ebits_a = z3_sys::Z3_fpa_get_ebits(context, sort_a.get_z3_sort());
+        let ebits_b = z3_sys::Z3_fpa_get_ebits(context, sort_b.get_z3_sort());
+
+        if ebits_a > ebits_b {
+            // Promote b to sort of a
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(context)
+                .expect("Rounding mode failed");
+            let promoted = z3_sys::Z3_mk_fpa_to_fp_float(
+                context,
+                rm,
+                b.get_z3_ast(),
+                sort_a.get_z3_sort(),
+            );
+            (a.clone(), Float::wrap(ctx, promoted.expect("Promotion failed")))
+        } else {
+            // Promote a to sort of b
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(context)
+                .expect("Rounding mode failed");
+            let promoted = z3_sys::Z3_mk_fpa_to_fp_float(
+                context,
+                rm,
+                a.get_z3_ast(),
+                sort_b.get_z3_sort(),
+            );
+            (Float::wrap(ctx, promoted.expect("Promotion failed")), b.clone())
+        }
+    }
+}
+
+fn float_eq(a: &Float, b: &Float) -> Bool {
+    let (lhs, rhs) = unify_floats(a, b);
+    let ctx = lhs.get_ctx();
+    unsafe {
+        let ast = z3_sys::Z3_mk_eq(
+            ctx.get_z3_context(),
+            lhs.get_z3_ast(),
+            rhs.get_z3_ast(),
+        );
+        Bool::wrap(ctx, ast.expect("Z3_mk_eq failed"))
+    }
+}
+
+fn float_lt(a: &Float, b: &Float) -> Bool {
+    let (lhs, rhs) = unify_floats(a, b);
+    let ctx = lhs.get_ctx();
+    unsafe {
+        let ast = z3_sys::Z3_mk_fpa_lt(
+            ctx.get_z3_context(),
+            lhs.get_z3_ast(),
+            rhs.get_z3_ast(),
+        );
+        Bool::wrap(ctx, ast.expect("Z3_mk_fpa_lt failed"))
+    }
+}
+
+fn float_le(a: &Float, b: &Float) -> Bool {
+    let (lhs, rhs) = unify_floats(a, b);
+    let ctx = lhs.get_ctx();
+    unsafe {
+        let ast = z3_sys::Z3_mk_fpa_leq(
+            ctx.get_z3_context(),
+            lhs.get_z3_ast(),
+            rhs.get_z3_ast(),
+        );
+        Bool::wrap(ctx, ast.expect("Z3_mk_fpa_leq failed"))
+    }
+}
+
+fn float_gt(a: &Float, b: &Float) -> Bool {
+    let (lhs, rhs) = unify_floats(a, b);
+    let ctx = lhs.get_ctx();
+    unsafe {
+        let ast = z3_sys::Z3_mk_fpa_gt(
+            ctx.get_z3_context(),
+            lhs.get_z3_ast(),
+            rhs.get_z3_ast(),
+        );
+        Bool::wrap(ctx, ast.expect("Z3_mk_fpa_gt failed"))
+    }
+}
+
+fn float_ge(a: &Float, b: &Float) -> Bool {
+    let (lhs, rhs) = unify_floats(a, b);
+    let ctx = lhs.get_ctx();
+    unsafe {
+        let ast = z3_sys::Z3_mk_fpa_geq(
+            ctx.get_z3_context(),
+            lhs.get_z3_ast(),
+            rhs.get_z3_ast(),
+        );
+        Bool::wrap(ctx, ast.expect("Z3_mk_fpa_geq failed"))
+    }
+}
 
 pub struct Resolver<'a> {
     pub ints: &'a HashMap<Value, Int>,
@@ -204,12 +309,12 @@ fn parse_bool_expr(
                 let lhs = parse_float_expr(parts[1], v_float, v_arr, resolver)?;
                 let rhs = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
                 match parts[0] {
-                    "=" => Ok(lhs.eq(&rhs)),
-                    "!=" => Ok(lhs.eq(&rhs).not()),
-                    "<" => Ok(lhs.lt(&rhs)),
-                    "<=" => Ok(lhs.le(&rhs)),
-                    ">" => Ok(lhs.gt(&rhs)),
-                    ">=" => Ok(lhs.ge(&rhs)),
+                    "=" => Ok(float_eq(&lhs, &rhs)),
+                    "!=" => Ok(float_eq(&lhs, &rhs).not()),
+                    "<" => Ok(float_lt(&lhs, &rhs)),
+                    "<=" => Ok(float_le(&lhs, &rhs)),
+                    ">" => Ok(float_gt(&lhs, &rhs)),
+                    ">=" => Ok(float_ge(&lhs, &rhs)),
                     _ => unreachable!(),
                 }
             } else if v_real.is_some() {
@@ -586,7 +691,8 @@ fn parse_float_expr(
             }
             let lhs = parse_float_expr(parts[1], v_float, v_arr, resolver)?;
             let rhs = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
-            Ok(rm.add(&lhs, &rhs))
+            let (l, r) = unify_floats(&lhs, &rhs);
+            Ok(rm.add(&l, &r))
         }
         "-" => {
             if parts.len() == 2 {
@@ -594,7 +700,8 @@ fn parse_float_expr(
             } else if parts.len() == 3 {
                 let lhs = parse_float_expr(parts[1], v_float, v_arr, resolver)?;
                 let rhs = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
-                Ok(rm.sub(&lhs, &rhs))
+                let (l, r) = unify_floats(&lhs, &rhs);
+                Ok(rm.sub(&l, &r))
             } else {
                 Err("- expects 1 or 2 arguments".to_string())
             }
@@ -605,7 +712,8 @@ fn parse_float_expr(
             }
             let lhs = parse_float_expr(parts[1], v_float, v_arr, resolver)?;
             let rhs = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
-            Ok(rm.mul(&lhs, &rhs))
+            let (l, r) = unify_floats(&lhs, &rhs);
+            Ok(rm.mul(&l, &r))
         }
         "/" | "div" => {
             if parts.len() != 3 {
@@ -613,7 +721,8 @@ fn parse_float_expr(
             }
             let lhs = parse_float_expr(parts[1], v_float, v_arr, resolver)?;
             let rhs = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
-            Ok(rm.div(&lhs, &rhs))
+            let (l, r) = unify_floats(&lhs, &rhs);
+            Ok(rm.div(&l, &r))
         }
         "ite" => {
             if parts.len() != 4 {

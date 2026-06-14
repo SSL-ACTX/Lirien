@@ -157,15 +157,20 @@ def _has_ellipsis(ann):
     """Check if a type annotation contains an Ellipsis (...)."""
     if ann is Ellipsis:
         return True
-    # Tensor shape is in metadata[0][1]
+    # Handle Annotated types
     if hasattr(ann, "__metadata__"):
         metadata = ann.__metadata__
-        if metadata and isinstance(metadata[0], tuple):
-            if any(_has_ellipsis(m) for m in metadata[0]):
+        if metadata:
+            # metadata[0] can be Ellipsis (Buffer[...]) or a tuple (Tensor[T, ...])
+            if any(_has_ellipsis(m) for m in metadata):
                 return True
-            if len(metadata[0]) > 1 and isinstance(metadata[0][1], (list, tuple)):
-                if any(m is Ellipsis for m in metadata[0][1]):
+            if isinstance(metadata[0], (list, tuple)):
+                if any(_has_ellipsis(m) for m in metadata[0]):
                     return True
+                # Tensor/SizedArray nested ellipsis check
+                if len(metadata[0]) > 1 and isinstance(metadata[0][1], (list, tuple)):
+                    if any(m is Ellipsis for m in metadata[0][1]):
+                        return True
     if hasattr(ann, "__args__"):
         return any(_has_ellipsis(arg) for arg in ann.__args__)
     if isinstance(ann, (list, tuple)):
@@ -219,7 +224,13 @@ class MonomorphizedFunction:
             # Buffer[T] -> Annotated[Buffer, T]
             if actual_origin is Buffer:
                 if metadata:
-                    self._match_typevars(metadata[0], val, mapping, param_name)
+                    if metadata[0] is Ellipsis:
+                        if param_name:
+                            mapping[f"__ellipsis_{param_name}"] = [
+                                _value_to_lila_type(val)
+                            ]
+                    else:
+                        self._match_typevars(metadata[0], val, mapping, param_name)
                 return
 
             # Tensor[T, shape] -> Annotated[Tensor, (T, shape)]
@@ -315,11 +326,17 @@ class MonomorphizedFunction:
         suffix_parts = []
         for k, v in sorted(mapping.items()):
             if k.startswith("__ellipsis_"):
-                suffix_parts.append("rank" + str(len(v)))
+                if all(isinstance(x, int) for x in v):
+                    suffix_parts.append("rank" + str(len(v)))
+                else:
+                    # For Buffer element types or other non-rank ellipsis
+                    suffix_parts.extend([str(x) for x in v])
             else:
                 suffix_parts.append(str(v))
 
         specialized_name = target_name + "_" + "_".join(suffix_parts)
+        # print(f"DEBUG: mapping={mapping}")
+        # print(f"DEBUG: specialized_name={specialized_name}")
 
         tree = ast.parse(source)
         tree.body[0].name = specialized_name
@@ -359,7 +376,20 @@ class MonomorphizedFunction:
                 if isinstance(node.value, ast.Name) and node.value.id in (
                     "Tensor",
                     "SizedArray",
+                    "Buffer",
                 ):
+                    # Handle single Ellipsis (Buffer[...])
+                    if (
+                        isinstance(node.slice, ast.Constant)
+                        and node.slice.value is Ellipsis
+                    ):
+                        ellipsis_key = f"__ellipsis_{self.current_param}"
+                        if ellipsis_key in self.mapping:
+                            type_name = self.mapping[ellipsis_key][0]
+                            node.slice = ast.Name(id=type_name, ctx=ast.Load())
+                        return node
+
+                    # Handle Tuple with Ellipsis (Tensor[T, ...], SizedArray[T, ...])
                     if isinstance(node.slice, ast.Tuple):
                         new_elts = []
                         for elt in node.slice.elts:
@@ -367,7 +397,13 @@ class MonomorphizedFunction:
                                 ellipsis_key = f"__ellipsis_{self.current_param}"
                                 if ellipsis_key in self.mapping:
                                     for dim in self.mapping[ellipsis_key]:
-                                        new_elts.append(ast.Constant(value=dim))
+                                        if isinstance(dim, str):
+                                            # It's a type name (for rank-polymorphic types if we ever support that)
+                                            # or just a stringified dim.
+                                            # For Tensor/SizedArray, dims are ints or strings.
+                                            new_elts.append(ast.Constant(value=dim))
+                                        else:
+                                            new_elts.append(ast.Constant(value=dim))
                                 else:
                                     # Fallback to first ellipsis found if mapping by name fails
                                     for k, v in self.mapping.items():

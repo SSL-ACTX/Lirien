@@ -90,7 +90,16 @@ def _map_ctypes_arguments(
             item_size = 8
             if hasattr(actual_ann, "__metadata__"):
                 item_ty = actual_ann.__metadata__[0]
-                if getattr(item_ty, "__lila_struct__", False):
+                if item_ty is Ellipsis:
+                    # Inferred type from ellipsis
+                    ellipsis_key = f"__ellipsis_{param.name}"
+                    if type_mapping and ellipsis_key in type_mapping:
+                        item_ty_str = str(type_mapping[ellipsis_key][0]).lower()
+                        for name, cty in TYPE_MAP.items():
+                            if name in item_ty_str:
+                                item_size = ctypes.sizeof(cty)
+                                break
+                elif getattr(item_ty, "__lila_struct__", False):
                     item_size = ctypes.sizeof(item_ty.__lila_ctypes__)
                 else:
                     item_ty_str = str(item_ty).lower()

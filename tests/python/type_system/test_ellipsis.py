@@ -1,8 +1,35 @@
 import unittest
-from lila import verify, Tensor, f32, f64, i64, Refined, SizedArray
+from lila import verify, Tensor, f32, f64, i64, Refined, SizedArray, Buffer
 
 
 class TestEllipsis(unittest.TestCase):
+    def test_buffer_inference(self):
+        @verify
+        def buffer_sum(buf: Buffer[...]) -> f32:
+            s = 0.0
+            for i in range(len(buf)):
+                s += buf[i]
+            return s
+
+        import array
+
+        # 'f' is float32
+        data = array.array("f", [1.0, 2.0, 3.0, 4.0])
+        mv = memoryview(data)
+
+        self.assertEqual(buffer_sum(mv), 10.0)
+
+        @verify
+        def buffer_sum_i64(buf: Buffer[...]) -> i64:
+            s = 0
+            for i in range(len(buf)):
+                s += buf[i]
+            return s
+
+        data_i = array.array("q", [10, 20, 30])  # 'q' is i64
+        mv_i = memoryview(data_i)
+        self.assertEqual(buffer_sum_i64(mv_i), 60)
+
     def test_sized_array_inference(self):
         @verify
         def sum_array(arr: SizedArray[i64, ...]) -> i64:

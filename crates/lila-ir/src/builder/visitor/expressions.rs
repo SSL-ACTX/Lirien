@@ -171,14 +171,12 @@ impl CFGBuilder {
                 match c.value {
                     ast::Constant::Int(i) => {
                         let int_val = i.to_string().parse::<i64>().map_err(|_| "Int too large")?;
-                        let inst = self.add_instruction(InstructionKind::ConstInt(val, int_val));
-                        inst.add_constraint(format!("(= {} {})", val, int_val));
+                        self.add_instruction(InstructionKind::ConstInt(val, int_val));
                         self.func.set_type(val, Type::I64);
                     }
                     ast::Constant::Float(f) => {
-                        let inst = self.add_instruction(InstructionKind::ConstFloat(val, f));
-                        inst.add_constraint(format!("(= {} {})", val, f));
-                        self.func.set_type(val, Type::F64);
+                        self.add_instruction(InstructionKind::ConstFloat(val, f));
+                        self.func.set_type(val, Type::Unknown);
                     }
                     ast::Constant::Bool(b) => {
                         let inst = self
@@ -1034,21 +1032,43 @@ impl CFGBuilder {
                 _ => unreachable!(),
             };
 
+            let is_f_lit = self.func.blocks.iter().any(|b| {
+                b.instructions.iter().any(|i| {
+                    if let InstructionKind::ConstFloat(d, _) = &i.kind {
+                        *d == scalar_val
+                    } else {
+                        false
+                    }
+                })
+            });
+            let is_i_lit = self.func.blocks.iter().any(|b| {
+                b.instructions.iter().any(|i| {
+                    if let InstructionKind::ConstInt(d, _) = &i.kind {
+                        *d == scalar_val
+                    } else {
+                        false
+                    }
+                })
+            });
+
+            let is_scalar_float = scalar_ty.is_float() || is_f_lit;
+            let is_scalar_int = scalar_ty.is_int() || is_i_lit;
+
             if scalar_ty != target_elt_ty {
                 let converted = self.func.next_value();
-                if target_elt_ty.is_float() && !scalar_ty.is_float() {
+                if target_elt_ty.is_float() && is_scalar_int && !is_scalar_float {
                     self.add_instruction(InstructionKind::IToF(
                         converted,
                         scalar_val,
                         target_elt_ty.clone(),
                     ));
-                } else if !target_elt_ty.is_float() && scalar_ty.is_float() {
+                } else if !target_elt_ty.is_float() && is_scalar_float && !is_scalar_int {
                     self.add_instruction(InstructionKind::FToI(
                         converted,
                         scalar_val,
                         target_elt_ty.clone(),
                     ));
-                } else if target_elt_ty.is_float() && scalar_ty.is_float() {
+                } else if target_elt_ty.is_float() && is_scalar_float {
                     self.add_instruction(InstructionKind::FConv(
                         converted,
                         scalar_val,
@@ -1081,21 +1101,43 @@ impl CFGBuilder {
                 _ => unreachable!(),
             };
 
+            let is_f_lit = self.func.blocks.iter().any(|b| {
+                b.instructions.iter().any(|i| {
+                    if let InstructionKind::ConstFloat(d, _) = &i.kind {
+                        *d == scalar_val
+                    } else {
+                        false
+                    }
+                })
+            });
+            let is_i_lit = self.func.blocks.iter().any(|b| {
+                b.instructions.iter().any(|i| {
+                    if let InstructionKind::ConstInt(d, _) = &i.kind {
+                        *d == scalar_val
+                    } else {
+                        false
+                    }
+                })
+            });
+
+            let is_scalar_float = scalar_ty.is_float() || is_f_lit;
+            let is_scalar_int = scalar_ty.is_int() || is_i_lit;
+
             if scalar_ty != target_elt_ty {
                 let converted = self.func.next_value();
-                if target_elt_ty.is_float() && !scalar_ty.is_float() {
+                if target_elt_ty.is_float() && is_scalar_int && !is_scalar_float {
                     self.add_instruction(InstructionKind::IToF(
                         converted,
                         scalar_val,
                         target_elt_ty.clone(),
                     ));
-                } else if !target_elt_ty.is_float() && scalar_ty.is_float() {
+                } else if !target_elt_ty.is_float() && is_scalar_float && !is_scalar_int {
                     self.add_instruction(InstructionKind::FToI(
                         converted,
                         scalar_val,
                         target_elt_ty.clone(),
                     ));
-                } else if target_elt_ty.is_float() && scalar_ty.is_float() {
+                } else if target_elt_ty.is_float() && is_scalar_float {
                     self.add_instruction(InstructionKind::FConv(
                         converted,
                         scalar_val,

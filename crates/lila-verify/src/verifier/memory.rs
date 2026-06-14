@@ -399,9 +399,31 @@ pub fn translate<
             ctx.z3_tensor_dims.insert(*dest, dims.clone());
         }
         InstructionKind::BufferLoad(dest, buf, idx) => {
-            let z3_idx = ctx.z3_bvs.get(idx).cloned().unwrap();
-            let z3_len = ctx.z3_bvs.get(buf).cloned().unwrap();
+            let z3_idx = ctx.z3_bvs.get(idx).cloned().ok_or_else(|| {
+                format!("BufferLoad: v{} (idx) not found in z3_bvs", idx.0)
+            })?;
+            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
+                format!("BufferLoad: v{} (buf) not found in z3_bvs", buf.0)
+            })?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
+
+            // Model the loaded value as an unconstrained constant of the appropriate sort
+            let dest_ty = ctx.func.get_type(*dest);
+            if dest_ty.is_float() {
+                let is_f32 = dest_ty.is_float32();
+                let z3_val = ctx.backend.float_const(
+                    &format!("{}_v{}_load_{}", ctx.func.name, dest.0, ctx.uid),
+                    is_f32,
+                );
+                ctx.z3_floats.insert(*dest, z3_val);
+            } else {
+                let bit_width = dest_ty.int_bit_width().unwrap_or(64);
+                let z3_val = ctx.backend.bv_const(
+                    &format!("{}_v{}_load_{}", ctx.func.name, dest.0, ctx.uid),
+                    bit_width,
+                );
+                ctx.z3_bvs.insert(*dest, z3_val);
+            }
         }
         InstructionKind::TensorSum(dest, tensor)
         | InstructionKind::TensorMax(dest, tensor)
@@ -420,9 +442,12 @@ pub fn translate<
             ctx.z3_tensor_dims.insert(*dest, Vec::new());
         }
         InstructionKind::BufferStore(dest, buf, idx, _val, _) => {
-
-            let z3_idx = ctx.z3_bvs.get(idx).cloned().unwrap();
-            let z3_len = ctx.z3_bvs.get(buf).cloned().unwrap();
+            let z3_idx = ctx.z3_bvs.get(idx).cloned().ok_or_else(|| {
+                format!("BufferStore: v{} (idx) not found in z3_bvs", idx.0)
+            })?;
+            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
+                format!("BufferStore: v{} (buf) not found in z3_bvs", buf.0)
+            })?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
             if let (Some(z3_dest_len), Some(z3_buf_len)) =
                 (ctx.z3_bvs.get(dest).cloned(), ctx.z3_bvs.get(buf).cloned())
@@ -433,8 +458,12 @@ pub fn translate<
             }
         }
         InstructionKind::BufferLen(dest, buf) => {
-            let z3_len = ctx.z3_bvs.get(buf).cloned().unwrap();
-            let z3_dest = ctx.z3_bvs.get(dest).cloned().unwrap();
+            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
+                format!("BufferLen: v{} (buf) not found in z3_bvs", buf.0)
+            })?;
+            let z3_dest = ctx.z3_bvs.get(dest).cloned().ok_or_else(|| {
+                format!("BufferLen: v{} (dest) not found in z3_bvs", dest.0)
+            })?;
             let __inner = ctx.backend.bv_eq(&z3_dest, &z3_len);
             let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
             ctx.backend.assert(&__tmp);
@@ -763,12 +792,8 @@ fn check_buffer_bounds<
     dest_id: usize,
     location: Option<lila_ir::ir::SourceLocation>,
 ) -> Result<(), String> {
-    let bit_width = ctx
-        .func
-        .get_type(lila_ir::ir::Value(dest_id))
-        .int_bit_width()
-        .unwrap_or(64);
-    let zero = ctx.backend.bv_from_i64(0, bit_width);
+    // Buffer indices and lengths are always 64-bit in Lila
+    let zero = ctx.backend.bv_from_i64(0, 64);
 
     ctx.backend.push();
     ctx.backend.assert(path_cond);

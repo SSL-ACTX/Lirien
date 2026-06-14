@@ -13,12 +13,12 @@ pub fn propagate_types(func: &mut Function) {
             for inst in &block.instructions {
                 match &inst.kind {
                     InstructionKind::Assign(d, s) => {
-                        let current_ty = func.get_type(*d);
-                        if current_ty == Type::Unknown {
-                            let s_ty = func.get_type(*s);
-                            if s_ty != Type::Unknown {
-                                new_types.insert(*d, s_ty);
-                            }
+                        let d_ty = func.get_type(*d);
+                        let s_ty = func.get_type(*s);
+                        if d_ty == Type::Unknown && s_ty != Type::Unknown {
+                            new_types.insert(*d, s_ty);
+                        } else if s_ty == Type::Unknown && d_ty != Type::Unknown {
+                            new_types.insert(*s, d_ty);
                         }
                     }
                     InstructionKind::Add(d, l, r)
@@ -37,13 +37,26 @@ pub fn propagate_types(func: &mut Function) {
                         let l_ty = func.get_type(*l);
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
+                        
+                        if current_ty != Type::Unknown {
+                            if l_ty == Type::Unknown {
+                                new_types.insert(*l, current_ty.base_type().clone());
+                            }
+                            if r_ty == Type::Unknown {
+                                new_types.insert(*r, current_ty.base_type().clone());
+                            }
+                        }
+
                         if current_ty == Type::Unknown {
-                            let base_ty = if l_ty != Type::Unknown { l_ty } else { r_ty };
-                            if base_ty != Type::Unknown {
-                                let inner_ty = match base_ty {
-                                    Type::Refined(inner, _) => *inner,
-                                    other => other,
-                                };
+                            let l_base = l_ty.base_type();
+                            let r_base = r_ty.base_type();
+                            let base_ty = if l_base != &Type::Unknown {
+                                l_base
+                            } else {
+                                r_base
+                            };
+                            if base_ty != &Type::Unknown {
+                                let inner_ty = base_ty.clone();
                                 let op_str = match &inst.kind {
                                     InstructionKind::Add(_, _, _) => "+",
                                     InstructionKind::Sub(_, _, _) => "-",
@@ -161,13 +174,32 @@ pub fn propagate_types(func: &mut Function) {
                         let l_ty = func.get_type(*l);
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
+
+                        if current_ty != Type::Unknown {
+                            if l_ty == Type::Unknown {
+                                new_types.insert(*l, current_ty.base_type().clone());
+                            } else if current_ty.is_float32() && l_ty.is_float64() {
+                                // Narrowing from f64 to f32
+                                new_types.insert(*l, Type::F32);
+                            }
+                            if r_ty == Type::Unknown {
+                                new_types.insert(*r, current_ty.base_type().clone());
+                            } else if current_ty.is_float32() && r_ty.is_float64() {
+                                // Narrowing from f64 to f32
+                                new_types.insert(*r, Type::F32);
+                            }
+                        }
+
                         if current_ty == Type::Unknown {
                             let mut base_ty = Type::Unknown;
-                            if l_ty.is_float() || r_ty.is_float() {
-                                if (l_ty.is_float() && !l_ty.is_float32()) || (r_ty.is_float() && !r_ty.is_float32()) {
-                                    base_ty = if l_ty.is_float() && !l_ty.is_float32() { l_ty.clone() } else { r_ty.clone() };
-                                } else if l_ty.is_float32() || r_ty.is_float32() {
-                                    base_ty = if l_ty.is_float32() { l_ty.clone() } else { r_ty.clone() };
+                            let l_base = l_ty.base_type();
+                            let r_base = r_ty.base_type();
+
+                            if l_base.is_float() || r_base.is_float() {
+                                if l_base.is_float32() || r_base.is_float32() {
+                                    base_ty = Type::F32;
+                                } else if l_base.is_float64() || r_base.is_float64() {
+                                    base_ty = Type::F64;
                                 }
                             }
 
@@ -191,6 +223,18 @@ pub fn propagate_types(func: &mut Function) {
                     }
                     InstructionKind::Phi(d, mappings) => {
                         let current_ty = func.get_type(*d);
+                        if current_ty != Type::Unknown {
+                            for val in mappings.values() {
+                                let v_ty = func.get_type(*val);
+                                if v_ty == Type::Unknown {
+                                    new_types.insert(*val, current_ty.clone());
+                                } else if v_ty.is_float() && current_ty.is_float() && v_ty != current_ty {
+                                    // Allow narrowing/widening of floats in phi
+                                    new_types.insert(*val, current_ty.clone());
+                                }
+                            }
+                        }
+
                         let mut base_ty = Type::Unknown;
                         let mut refined_sources = Vec::new();
                         let mut all_base_types_match = true;
@@ -206,7 +250,16 @@ pub fn propagate_types(func: &mut Function) {
                                 if base_ty == Type::Unknown {
                                     base_ty = b_ty.clone();
                                 } else if base_ty != b_ty {
-                                    all_base_types_match = false;
+                                    if base_ty.is_float() && b_ty.is_float() {
+                                        // Favor F32 if current_ty is F32, else F64
+                                        if current_ty.is_float32() {
+                                            base_ty = Type::F32;
+                                        } else {
+                                            base_ty = Type::F64;
+                                        }
+                                    } else {
+                                        all_base_types_match = false;
+                                    }
                                 }
                                 if is_refined
                                     || b_ty.is_int()
@@ -243,8 +296,8 @@ pub fn propagate_types(func: &mut Function) {
                     InstructionKind::BufferLoad(d, buf, _idx) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
-                            if let Type::Buffer(inner) = func.get_type(*buf) {
-                                new_types.insert(*d, *inner);
+                            if let Type::Buffer(inner) = func.get_type(*buf).base_type() {
+                                new_types.insert(*d, (**inner).clone());
                             }
                         }
                     }
@@ -265,8 +318,11 @@ pub fn propagate_types(func: &mut Function) {
                     InstructionKind::Return(Some(v)) => {
                         let ty = func.get_type(*v);
                         if func.return_type == Type::Unknown && ty != Type::Unknown {
-                            func.return_type = ty;
+                            func.return_type = ty.clone();
                             changed = true;
+                        }
+                        if ty == Type::Unknown && func.return_type != Type::Unknown {
+                            new_types.insert(*v, func.return_type.clone());
                         }
                     }
                     InstructionKind::Alloc(d, t) => {
@@ -402,7 +458,7 @@ pub fn propagate_types(func: &mut Function) {
     let mut instruction_updates = Vec::new();
 
     for block in &func.blocks {
-        for inst in &block.instructions {
+        for (inst_idx, inst) in block.instructions.iter().enumerate() {
             let new_kind = match &inst.kind {
                 InstructionKind::Add(d, l, r) => {
                     let l_ty = func.get_type(*l);
@@ -456,22 +512,39 @@ pub fn propagate_types(func: &mut Function) {
                         None
                     }
                 }
+                InstructionKind::ConstInt(d, _) => {
+                    if func.get_type(*d) == Type::Unknown {
+                        func.value_types.insert(*d, Type::I64);
+                    }
+                    None
+                }
+                InstructionKind::ConstFloat(d, _) => {
+                    let current_ty = func.get_type(*d);
+                    if current_ty == Type::Unknown
+                        || (current_ty.is_float64() && func.return_type.is_float32())
+                    {
+                        let ty = if func.return_type.is_float32() {
+                            Type::F32
+                        } else {
+                            Type::F64
+                        };
+                        func.value_types.insert(*d, ty);
+                    }
+                    None
+                }
                 _ => None,
             };
 
             if let Some(k) = new_kind {
-                instruction_updates.push((block.id, inst as *const _ as usize, k));
+                instruction_updates.push((block.id, inst_idx, k));
             }
         }
     }
 
-    for (block_id, inst_addr, new_kind) in instruction_updates {
+    for (block_id, inst_idx, new_kind) in instruction_updates {
         if let Some(block) = func.blocks.iter_mut().find(|b| b.id == block_id) {
-            for inst in &mut block.instructions {
-                if (inst as *const _) as usize == inst_addr {
-                    inst.kind = new_kind;
-                    break;
-                }
+            if inst_idx < block.instructions.len() {
+                block.instructions[inst_idx].kind = new_kind;
             }
         }
     }

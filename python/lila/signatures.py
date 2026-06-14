@@ -268,6 +268,30 @@ def _value_to_lila_type(val: Any) -> str:
             return "u8"
         if "bool" in dt:
             return "bool"
+    elif isinstance(val, memoryview):
+        fmt = val.format
+        if fmt == "f":
+            return "f32"
+        if fmt == "d":
+            return "f64"
+        if fmt in ("b", "c"):
+            return "i8"
+        if fmt == "B":
+            return "u8"
+        if fmt == "h":
+            return "i16"
+        if fmt == "H":
+            return "u16"
+        if fmt in ("i", "l"):
+            return "i32"
+        if fmt in ("I", "L"):
+            return "u32"
+        if fmt == "q":
+            return "i64"
+        if fmt == "Q":
+            return "u64"
+        if fmt == "?":
+            return "bool"
 
     # Fallback for Boxed values
     if isinstance(val, Box):

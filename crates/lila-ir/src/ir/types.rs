@@ -103,6 +103,13 @@ impl Type {
         }
     }
 
+    pub fn base_type(&self) -> &Type {
+        match self {
+            Type::Refined(inner, _) | Type::Literal(inner, _) => inner.base_type(),
+            other => other,
+        }
+    }
+
     pub fn is_unsigned(&self) -> bool {
         match self {
             Type::U8 | Type::U16 | Type::U32 | Type::U64 => true,
