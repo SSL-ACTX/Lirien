@@ -112,6 +112,40 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
     parallel_for(range(len(vec)), body)
 ```
 
+#### Concept-Based Static Dispatch
+Lila hijacks `typing.Protocol` to implement zero-cost static dispatch. Functions annotated with a Protocol are specialized for each concrete struct at compile-time, eliminating VTables and dynamic lookups.
+```python
+from typing import Protocol
+from lila import verify, f32, struct
+
+class Renderable(Protocol):
+    def render(self) -> f32: ...
+
+@struct
+class Circle:
+    radius: f32
+    def render(self) -> f32:
+        return self.radius * 3.14
+
+@verify
+def draw(obj: Renderable) -> f32:
+    return obj.render() # Statically dispatched!
+```
+
+#### Zero-Cost Null-Pointer Optimization
+Lila optimizes `Optional[Box[T]]` (or `Box[T] | None`) by representing `None` as the raw memory address `0x0`. Z3 formally proves that the code never dereferences a pointer unless it is non-null.
+```python
+@struct
+class Node:
+    val: i64
+    next: Optional[Box["Node"]]
+
+@verify
+def sum_list(n: Optional[Box[Node]]) -> i64:
+    if n is None: return 0
+    return n.val + sum_list(n.next) # Safety proved by Z3
+```
+
 #### Runtime Monomorphization
 Lila uses Python's `typing.TypeVar` and `Ellipsis` to implement zero-overhead generics and rank-polymorphism. Functions are lazily specialized and JIT-compiled for specific types and tensor ranks at the first call site, similar to C++ templates.
 ```python

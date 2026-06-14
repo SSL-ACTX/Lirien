@@ -19,6 +19,14 @@ Lila structs are compiled to flat, C-compatible memory layouts.
 *   **Use Byte Offsets:** Nested structures are **inline**. The IR must calculate the absolute byte offset from the root object (`StructOffset` or `StructLoad`) rather than chaining pointer dereferences.
 *   **Never clobber pointers:** A `StructSet` modifies the value at an offset; it does *not* overwrite the root object's pointer address.
 
+### 1.4 Zero-Cost Static Dispatch (`Protocol`)
+*   **Specialization over Virtualization:** Lila uses `typing.Protocol` for static dispatch. The monomorphization engine must clone and specialize functions for every unique struct type passed to a Protocol parameter.
+*   **Static Call Mapping:** The IR builder must resolve Protocol method calls to direct `Call` instructions using the mangled name `ClassName_methodName`.
+
+### 1.5 Null-Pointer Optimization (`Box[T] | None`)
+*   **Zero-Overhead Optionals:** `Optional[Box[T]]` and `Box[T] | None` must be represented as raw 64-bit pointers where `None` is `0x0`.
+*   **Mandatory Verification:** The Z3 verifier MUST prove non-nullity before any `PointerLoad` or `PointerStore` instruction. The IR builder must automatically insert these checks for `.val` or field access.
+
 ## 2. Python DSL Guidelines
 
 ### 2.1 Zero-Boilerplate Experience
