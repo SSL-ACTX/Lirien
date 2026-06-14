@@ -178,6 +178,11 @@ def _has_ellipsis(ann):
     return False
 
 
+def _has_protocol(ann):
+    """Check if a type annotation is a typing.Protocol."""
+    return getattr(ann, "_is_protocol", False)
+
+
 class MonomorphizedFunction:
     """Handles lazy monomorphization of generic functions using TypeVars."""
 
@@ -206,12 +211,23 @@ class MonomorphizedFunction:
     def _match_typevars(
         self, annotation: Any, val: Any, mapping: Dict[str, Any], param_name: str = None
     ):
-        """Recursively match TypeVars in the annotation against the runtime value."""
+        """Recursively match TypeVars and Protocols in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
         if isinstance(annotation, TypeVar):
             name = annotation.__name__
             if name not in mapping:
                 mapping[name] = _value_to_lila_type(val)
+            return
+
+        # Handle Protocol
+        if _has_protocol(annotation):
+            name = annotation.__name__
+            if name not in mapping:
+                mapping[name] = (
+                    val.__class__
+                    if hasattr(val, "__lila_struct__")
+                    else _value_to_lila_type(val)
+                )
             return
 
         # 2. Handle Annotated types (Buffer, Tensor, Box, etc.)
@@ -332,7 +348,8 @@ class MonomorphizedFunction:
                     # For Buffer element types or other non-rank ellipsis
                     suffix_parts.extend([str(x) for x in v])
             else:
-                suffix_parts.append(str(v))
+                name = getattr(v, "__name__", str(v))
+                suffix_parts.append(name)
 
         specialized_name = target_name + "_" + "_".join(suffix_parts)
         # print(f"DEBUG: mapping={mapping}")
@@ -506,8 +523,9 @@ def verify(
         has_ellipsis = any(
             _has_ellipsis(p.annotation) for p in sig.parameters.values()
         ) or _has_ellipsis(sig.return_annotation)
+        has_protocol = any(_has_protocol(p.annotation) for p in sig.parameters.values())
 
-        if typevars or has_ellipsis:
+        if typevars or has_ellipsis or has_protocol:
             return MonomorphizedFunction(
                 func,
                 typevars,

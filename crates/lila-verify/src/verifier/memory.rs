@@ -236,7 +236,8 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
-                let res = ctx.backend.array_select_float(&z3_arr, &z3_idx_int);
+                let dest_ty = ctx.func.get_type(*dest);
+                let res = ctx.backend.array_select_float(&z3_arr, &z3_idx_int, matches!(dest_ty, Type::F32));
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -259,7 +260,8 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
-                let stored = ctx.backend.array_store_float(&z3_arr, &z3_idx_int, &z3_val);
+                let val_ty = ctx.func.get_type(*val);
+                let stored = ctx.backend.array_store_float(&z3_arr, &z3_idx_int, &z3_val, matches!(val_ty, Type::F32));
                 let __inner = ctx.backend.array_eq(&z3_dest, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -316,9 +318,10 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
+                let dest_ty = ctx.func.get_type(*dest);
                 let res = ctx
                     .backend
-                    .array_select_float(&z3_tensor_data, &z3_idx_int);
+                    .array_select_float(&z3_tensor_data, &z3_idx_int, matches!(dest_ty, Type::F32));
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -396,9 +399,10 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
+                let val_ty = ctx.func.get_type(*val);
                 let stored = ctx
                     .backend
-                    .array_store_float(&z3_tensor_data, &z3_idx_int, &z3_val);
+                    .array_store_float(&z3_tensor_data, &z3_idx_int, &z3_val, matches!(val_ty, Type::F32));
                 let __inner = ctx.backend.array_eq(&z3_dest_data, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -503,9 +507,10 @@ pub fn translate<
                                 ctx.backend
                                     .array_store_bv(&current_state, &z3_offset, &z3_v);
                         } else if let Some(z3_v) = ctx.z3_floats.get(p_val).cloned() {
+                            let p_ty = ctx.func.get_type(*p_val);
                             current_state =
                                 ctx.backend
-                                    .array_store_float(&current_state, &z3_offset, &z3_v);
+                                    .array_store_float(&current_state, &z3_offset, &z3_v, matches!(p_ty, Type::F32));
                         }
                     }
                     offset += f_ty.size(&ctx.func.struct_layouts);
@@ -524,7 +529,8 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
-                let res = ctx.backend.array_select_float(&z3_obj, &z3_offset);
+                let dest_ty = ctx.func.get_type(*dest);
+                let res = ctx.backend.array_select_float(&z3_obj, &z3_offset, matches!(dest_ty, Type::F32));
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -548,7 +554,8 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
-                let stored = ctx.backend.array_store_float(&z3_obj, &z3_offset, &z3_val);
+                let val_ty = ctx.func.get_type(*val);
+                let stored = ctx.backend.array_store_float(&z3_obj, &z3_offset, &z3_val, matches!(val_ty, Type::F32));
                 let __inner = ctx.backend.array_eq(&z3_dest, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -664,12 +671,17 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else {
                 // Primitive load
-                if dest_ty.is_float() {
-                    // Floats not yet supported in heap model
-                } else if let Some(dest_bv) = ctx.z3_bvs.get(dest).cloned() {
+                if let Some(dest_bv) = ctx.z3_bvs.get(dest).cloned() {
                     let zero_idx = ctx.backend.int_from_i64(0);
                     let res = ctx.backend.array_select_bv(&ptr_payload, &zero_idx);
                     let __inner = ctx.backend.bv_eq(&dest_bv, &res);
+                    let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                    ctx.backend.assert(&__tmp);
+                } else if let Some(dest_float) = ctx.z3_floats.get(dest).cloned() {
+                    let zero_idx = ctx.backend.int_from_i64(0);
+                    let dest_ty = ctx.func.get_type(*dest);
+                    let res = ctx.backend.array_select_float(&ptr_payload, &zero_idx, matches!(dest_ty, Type::F32));
+                    let __inner = ctx.backend.float_eq(&dest_float, &res);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                     ctx.backend.assert(&__tmp);
                 }
@@ -699,12 +711,14 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else {
                 // Primitive store
-                if val_ty.is_float() {
-                    // Floats not yet supported in heap model
-                } else if let Some(val_bv) = ctx.z3_bvs.get(val).cloned() {
+                if let Some(val_bv) = ctx.z3_bvs.get(val).cloned() {
                     let zero_idx = ctx.backend.int_from_i64(0);
                     let new_payload = ctx.backend.array_store_bv(&ptr_payload, &zero_idx, &val_bv);
                     // We need to update the ptr_payload mapping.
+                    ctx.z3_arrays.insert(*ptr, new_payload);
+                } else if let Some(val_float) = ctx.z3_floats.get(val).cloned() {
+                    let zero_idx = ctx.backend.int_from_i64(0);
+                    let new_payload = ctx.backend.array_store_float(&ptr_payload, &zero_idx, &val_float, matches!(val_ty, Type::F32));
                     ctx.z3_arrays.insert(*ptr, new_payload);
                 }
             }

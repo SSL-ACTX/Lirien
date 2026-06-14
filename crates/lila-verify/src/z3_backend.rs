@@ -481,6 +481,29 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         }
     }
 
+    fn bv_bitcast_to_float(&mut self, a: &Self::BV, is_f32: bool) -> Self::Float {
+        let sort = if is_f32 {
+            z3::Sort::float32()
+        } else {
+            z3::Sort::double()
+        };
+        unsafe {
+            let conv = z3_sys::Z3_mk_fpa_to_fp_bv(
+                self.ctx.get_z3_context(),
+                a.get_z3_ast(),
+                sort.get_z3_sort(),
+            );
+            Float::wrap(self.ctx, conv.expect("Z3_mk_fpa_to_fp_bv failed"))
+        }
+    }
+
+    fn float_bitcast_to_bv(&mut self, a: &Self::Float) -> Self::BV {
+        unsafe {
+            let conv = z3_sys::Z3_mk_fpa_to_ieee_bv(self.ctx.get_z3_context(), a.get_z3_ast());
+            BV::wrap(self.ctx, conv.expect("Z3_mk_fpa_to_ieee_bv failed"))
+        }
+    }
+
     fn array_const(&mut self, name: &str, is_float: bool, bit_width: u32) -> Self::Array {
         let domain = z3::Sort::int();
         let range = if is_float {
@@ -499,8 +522,32 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         a.select(index).as_bv().expect("array_select_bv failed")
     }
 
-    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int) -> Self::Float {
-        a.select(index).as_float().expect("array_select_float failed")
+    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int, is_f32: bool) -> Self::Float {
+        let res = a.select(index);
+        let sort = res.get_sort();
+        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), sort.get_z3_sort()) };
+        
+        if kind == z3_sys::SortKind::FloatingPoint {
+            res.as_float().expect("array_select_float: expected float")
+        } else if kind == z3_sys::SortKind::Bv {
+            let bv = res.as_bv().expect("array_select_float failed: expected bv");
+            let bv_size = bv.get_size();
+            let target_size = if is_f32 { 32 } else { 64 };
+            
+            if bv_size == target_size {
+                self.bv_bitcast_to_float(&bv, is_f32)
+            } else if bv_size > target_size {
+                // Extract lower bits and bitcast
+                let extracted = self.bv_extract(&bv, target_size - 1, 0);
+                self.bv_bitcast_to_float(&extracted, is_f32)
+            } else {
+                // Zero-extend and bitcast (unusual case)
+                let extended = self.bv_zext(&bv, target_size - bv_size);
+                self.bv_bitcast_to_float(&extended, is_f32)
+            }
+        } else {
+            panic!("array_select_float: unexpected sort kind {:?}", kind);
+        }
     }
 
     fn array_select_int(&mut self, a: &Self::Array, index: &Self::Int) -> Self::Int {
@@ -513,7 +560,26 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         index: &Self::Int,
         val: &Self::BV,
     ) -> Self::Array {
-        a.store(index, val)
+        let array_sort = a.get_sort();
+        let array_range_sort = array_sort.array_range().unwrap();
+        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+        
+        if kind == z3_sys::SortKind::Bv {
+            let bv_size = unsafe { z3_sys::Z3_get_bv_sort_size(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+            let val_size = val.get_size();
+            if bv_size == val_size {
+                a.store(index, val)
+            } else if val_size > bv_size {
+                let truncated = self.bv_extract(val, bv_size - 1, 0);
+                a.store(index, &truncated)
+            } else {
+                let extended = self.bv_zext(val, bv_size - val_size);
+                a.store(index, &extended)
+            }
+        } else {
+             // Fallback
+             a.store(index, val)
+        }
     }
 
     fn array_store_float(
@@ -521,8 +587,31 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         a: &Self::Array,
         index: &Self::Int,
         val: &Self::Float,
+        is_f32: bool,
     ) -> Self::Array {
-        a.store(index, val)
+        let array_sort = a.get_sort();
+        let array_range_sort = array_sort.array_range().unwrap();
+        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+        
+        if kind == z3_sys::SortKind::FloatingPoint {
+            a.store(index, val)
+        } else if kind == z3_sys::SortKind::Bv {
+            let bv_size = unsafe { z3_sys::Z3_get_bv_sort_size(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+            let mut bv_val = self.float_bitcast_to_bv(val);
+            let target_size = if is_f32 { 32 } else { 64 };
+            
+            // Adjust bv_val if float bit width doesn't match target bv width
+            if bv_size != target_size {
+                 if target_size > bv_size {
+                     bv_val = self.bv_extract(&bv_val, bv_size - 1, 0);
+                 } else {
+                     bv_val = self.bv_zext(&bv_val, bv_size - target_size);
+                 }
+            }
+            a.store(index, &bv_val)
+        } else {
+            a.store(index, val)
+        }
     }
 
     fn array_store_int(

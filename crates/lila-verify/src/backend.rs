@@ -74,10 +74,12 @@ pub trait SolverBackend {
     fn float_to_bv(&mut self, a: &Self::Float, is_signed: bool, bit_width: u32) -> Self::BV;
     fn float_to_float(&mut self, a: &Self::Float, is_f32: bool) -> Self::Float;
     fn bv_to_float(&mut self, a: &Self::BV, is_signed: bool, is_f32: bool) -> Self::Float;
+    fn bv_bitcast_to_float(&mut self, a: &Self::BV, is_f32: bool) -> Self::Float;
+    fn float_bitcast_to_bv(&mut self, a: &Self::Float) -> Self::BV;
 
     fn array_const(&mut self, name: &str, is_float: bool, bit_width: u32) -> Self::Array;
     fn array_select_bv(&mut self, a: &Self::Array, index: &Self::Int) -> Self::BV;
-    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int) -> Self::Float;
+    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int, is_f32: bool) -> Self::Float;
     fn array_select_int(&mut self, a: &Self::Array, index: &Self::Int) -> Self::Int;
     fn array_store_bv(&mut self, a: &Self::Array, index: &Self::Int, val: &Self::BV)
         -> Self::Array;
@@ -86,6 +88,7 @@ pub trait SolverBackend {
         a: &Self::Array,
         index: &Self::Int,
         val: &Self::Float,
+        is_f32: bool,
     ) -> Self::Array;
     fn array_store_int(
         &mut self,

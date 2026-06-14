@@ -1,6 +1,5 @@
 use super::TranslationContext;
-use lila_ir::ir::{Instruction, InstructionKind};
-use z3::ast::Bool;
+use lila_ir::ir::{Instruction, InstructionKind, Type};
 
 pub fn translate<
     B: crate::backend::SolverBackend<
@@ -11,112 +10,68 @@ pub fn translate<
         Array = z3::ast::Array,
     >,
 >(
-    ctx: &mut TranslationContext<'_, B>,
+    ctx: &mut TranslationContext<B>,
     inst: &Instruction,
-    path_cond: &Bool,
-) -> Result<(), String> {
+    path_cond: &z3::ast::Bool,
+) {
     match &inst.kind {
-        InstructionKind::TupleCreate(dest, elts) => {
-            if let Some(z3_dest) = ctx.z3_arrays.get(dest).cloned() {
-                let z3_zero_arr = ctx.backend.array_const(
-                    &format!("{}_v{}_zero_{}", ctx.func.name, dest.0, ctx.uid),
-                    false,
-                    64,
-                );
-                let mut current_state = z3_zero_arr.clone();
-                let ty = ctx.func.get_type(*dest);
+        InstructionKind::TupleCreate(dest, elements) => {
+            let z3_dest = ctx.z3_arrays.get(dest).cloned().unwrap();
+            let mut current_state = z3_dest;
+            let mut offset = 0;
 
-                if let lila_ir::ir::Type::Tuple(elt_types) = ty {
-                    let mut offset = 0;
-                    for (i, elt) in elts.iter().enumerate() {
-                        let elt_ty = &elt_types[i];
-                        let elt_align = elt_ty.align(&ctx.func.struct_layouts);
-                        offset = (offset + elt_align - 1) & !(elt_align - 1);
+            for elt in elements {
+                let elt_ty = ctx.func.get_type(*elt);
+                let z3_offset = ctx.backend.int_from_i64(offset as i64);
 
-                        if elt_ty.is_composite() {
-                            current_state = super::copy_composite(
-                                ctx,
-                                current_state,
-                                *elt,
-                                elt_ty,
-                                offset as i64,
-                            );
-                        } else {
-                            let z3_offset = ctx.backend.int_from_i64(offset as i64);
-                            if let Some(v) = ctx.z3_bvs.get(elt).cloned() {
-                                current_state =
-                                    ctx.backend.array_store_bv(&current_state, &z3_offset, &v);
-                            } else if let Some(v) = ctx.z3_floats.get(elt).cloned() {
-                                current_state =
-                                    ctx.backend
-                                        .array_store_float(&current_state, &z3_offset, &v);
-                            } else if let Some(v) = ctx.z3_ints.get(elt).cloned() {
-                                current_state =
-                                    ctx.backend.array_store_int(&current_state, &z3_offset, &v);
-                            } else {
-                                continue;
-                            };
-                        }
-                        offset += elt_ty.size(&ctx.func.struct_layouts);
-                    }
-
-                    let __tmp = ctx.backend.array_eq(&z3_dest, &current_state);
-                    let __tmp2 = ctx.backend.bool_implies(path_cond, &__tmp);
-                    ctx.backend.assert(&__tmp2);
+                if let Some(z3_val) = ctx.z3_bvs.get(elt).cloned() {
+                    current_state = ctx.backend.array_store_bv(&current_state, &z3_offset, &z3_val);
+                } else if let Some(z3_val) = ctx.z3_floats.get(elt).cloned() {
+                    current_state = ctx.backend.array_store_float(&current_state, &z3_offset, &z3_val, matches!(elt_ty, Type::F32));
+                } else if let Some(z3_val) = ctx.z3_arrays.get(elt).cloned() {
+                    let __inner = ctx.backend.array_eq(&current_state, &z3_val);
+                    let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                    ctx.backend.assert(&__tmp);
                 }
+
+                offset += elt_ty.size(&ctx.func.struct_layouts);
             }
         }
-        InstructionKind::TupleExtract(dest, src, idx) => {
-            let ty = ctx.func.get_type(*src);
-            if let lila_ir::ir::Type::Tuple(elt_types) = ty {
-                let mut offset = 0;
-                for elt_ty in elt_types.iter().take(*idx) {
-                    let elt_align = elt_ty.align(&ctx.func.struct_layouts);
-                    offset = (offset + elt_align - 1) & !(elt_align - 1);
-                    offset += elt_ty.size(&ctx.func.struct_layouts);
-                }
-                let target_ty = &elt_types[*idx];
-                let target_align = target_ty.align(&ctx.func.struct_layouts);
-                offset = (offset + target_align - 1) & !(target_align - 1);
+        InstructionKind::TupleExtract(dest, src, index) => {
+            let z3_src = ctx.z3_arrays.get(src).cloned().unwrap();
+            let src_ty = ctx.func.get_type(*src);
 
-                if let Some(z3_src) = ctx.z3_arrays.get(src).cloned() {
-                    if target_ty.is_composite() {
-                        if let Some(z3_dest) = ctx.z3_arrays.get(dest).cloned() {
-                            let current_state = super::copy_composite(
-                                ctx,
-                                z3_dest.clone(),
-                                *src,
-                                target_ty,
-                                -(offset as i64),
-                            );
-                            let __tmp = ctx.backend.array_eq(&z3_dest, &current_state);
-                            let __tmp2 = ctx.backend.bool_implies(path_cond, &__tmp);
-                            ctx.backend.assert(&__tmp2);
-                        }
-                    } else {
+            if let Type::Tuple(tys) = src_ty {
+                let mut offset = 0;
+                for (i, f_ty) in tys.iter().enumerate() {
+                    if i == *index {
                         let z3_offset = ctx.backend.int_from_i64(offset as i64);
 
-                        if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
-                            let res = ctx.backend.array_select_bv(&z3_src, &z3_offset);
-                            let __tmp = ctx.backend.bv_eq(&z3_dest, &res);
-                            let __tmp2 = ctx.backend.bool_implies(path_cond, &__tmp);
-                            ctx.backend.assert(&__tmp2);
-                        } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
-                            let res = ctx.backend.array_select_float(&z3_src, &z3_offset);
-                            let __tmp = ctx.backend.float_eq(&z3_dest, &res);
-                            let __tmp2 = ctx.backend.bool_implies(path_cond, &__tmp);
-                            ctx.backend.assert(&__tmp2);
-                        } else if let Some(z3_dest) = ctx.z3_ints.get(dest).cloned() {
-                            let res = ctx.backend.array_select_int(&z3_src, &z3_offset);
-                            let __tmp = ctx.backend.int_eq(&z3_dest, &res);
-                            let __tmp2 = ctx.backend.bool_implies(path_cond, &__tmp);
-                            ctx.backend.assert(&__tmp2);
+                        if f_ty.is_composite() {
+                            if let Some(z3_dest) = ctx.z3_arrays.get(dest).cloned() {
+                                let __inner = ctx.backend.array_eq(&z3_dest, &z3_src);
+                                let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+                                ctx.backend.assert(&__tmp);
+                            }
+                        } else {
+                            if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
+                                let res = ctx.backend.array_select_bv(&z3_src, &z3_offset);
+                                let __inner = ctx.backend.bv_eq(&z3_dest, &res);
+                                let __tmp2 = ctx.backend.bool_implies(path_cond, &__inner);
+                                ctx.backend.assert(&__tmp2);
+                            } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
+                                let res = ctx.backend.array_select_float(&z3_src, &z3_offset, matches!(f_ty, Type::F32));
+                                let __inner = ctx.backend.float_eq(&z3_dest, &res);
+                                let __tmp2 = ctx.backend.bool_implies(path_cond, &__inner);
+                                ctx.backend.assert(&__tmp2);
+                            }
                         }
+                        break;
                     }
+                    offset += f_ty.size(&ctx.func.struct_layouts);
                 }
             }
         }
         _ => {}
     }
-    Ok(())
 }

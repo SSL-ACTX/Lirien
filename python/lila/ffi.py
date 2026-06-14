@@ -37,6 +37,13 @@ def _map_ctypes_arguments(
 
         # Unwrap Refined type if necessary
         actual_ann = getattr(ann, "base_type", ann)
+
+        # Resolve actual_ann from type_mapping if it was substituted
+        if isinstance(actual_ann, type) and actual_ann.__name__ in (type_mapping or {}):
+            actual_ann = type_mapping[actual_ann.__name__]
+        elif type_mapping and getattr(actual_ann, "__name__", None) in type_mapping:
+            actual_ann = type_mapping[actual_ann.__name__]
+
         ann_str = _get_type_name(actual_ann, type_mapping).lower()
 
         from typing import get_origin, Annotated

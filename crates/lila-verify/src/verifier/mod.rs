@@ -552,7 +552,7 @@ fn translate_instructions<
                     memory::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::TupleCreate(..) | InstructionKind::TupleExtract(..) => {
-                    tuples::translate(t_ctx, inst, &path_cond)?;
+                    tuples::translate(t_ctx, inst, &path_cond);
                 }
                 InstructionKind::Call(..) => {
                     calls::translate(t_ctx, inst, &path_cond)?;

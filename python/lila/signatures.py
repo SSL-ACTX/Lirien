@@ -202,6 +202,11 @@ def _discover_types(
     except:
         pass
 
+    if type_mapping:
+        for val in type_mapping.values():
+            if hasattr(val, "__name__"):
+                scope[val.__name__] = val
+
     for name, obj in scope.items():
         if getattr(obj, "__lila_struct__", False) and name not in struct_layouts:
             struct_layouts[name] = [
@@ -360,5 +365,7 @@ class TypeSubstitutor(ast.NodeTransformer):
 
     def visit_Name(self, node):
         if node.id in self.mapping:
-            return ast.Name(id=self.mapping[node.id], ctx=node.ctx)
+            val = self.mapping[node.id]
+            name = getattr(val, "__name__", str(val))
+            return ast.Name(id=name, ctx=node.ctx)
         return self.generic_visit(node)
