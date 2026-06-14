@@ -391,7 +391,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             if let SsaType::NamedTuple(_) = dest_ty {
                 let mut field_vals = Vec::new();
                 for arg in args {
-                    field_vals.push(get_val(&ctx.values, arg));
+                    field_vals.extend(super::get_all_cl_values(ctx, arg));
                 }
                 ctx.unpacked_values.insert(*dest, field_vals);
                 return Ok(());
@@ -440,18 +440,10 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 ) {
                     let flat_vals = ctx.unpacked_values.get(obj).unwrap();
                     let extracted = flat_vals[start_idx..start_idx + expected_count].to_vec();
-                    if let SsaType::NamedTuple(_) = dest_ty {
+                    if dest_ty.is_composite() {
                         ctx.unpacked_values.insert(*dest, extracted);
                     } else {
-                        if expected_count == 1 {
-                            ctx.values.insert(*dest, extracted[0]);
-                        } else if let SsaType::Buffer(_) = dest_ty {
-                            ctx.values.insert(*dest, extracted[0]);
-                            ctx.buffer_lengths.insert(*dest, extracted[1]);
-                        } else if let SsaType::Tensor(_, _dims) = dest_ty {
-                            ctx.values.insert(*dest, extracted[0]);
-                            ctx.tensor_dims.insert(*dest, extracted[1..].to_vec());
-                        }
+                        ctx.values.insert(*dest, extracted[0]);
                     }
                     return Ok(());
                 }

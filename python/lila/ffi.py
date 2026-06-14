@@ -6,6 +6,9 @@ from typing import (
     List,
     Tuple,
     Callable,
+    get_origin,
+    get_args,
+    Tuple as typing_Tuple,
 )
 from .types import TYPE_MAP, Buffer, SizedArray, Closure, FnPointer, Box, Tensor
 from .signatures import _get_type_name, _value_to_lila_type, is_named_tuple
@@ -51,6 +54,7 @@ def _get_flattened_ctypes_types(
 ) -> List[Any]:
     """Recursively discover all basic ctypes types for a given Lila type."""
     from .types import i64
+    from typing import Tuple as typing_Tuple, get_origin
 
     if is_named_tuple(ty):
         res = []
@@ -58,43 +62,62 @@ def _get_flattened_ctypes_types(
             f_ann = ty.__annotations__.get(f_name, i64)
             res.extend(_get_flattened_ctypes_types(f_ann, type_mapping))
         return res
-    else:
-        ty_str = _get_type_name(ty, type_mapping).lower()
-        return [_get_ctypes_type(ty_str)]
+
+    origin = get_origin(ty)
+    if origin is tuple or origin is typing_Tuple:
+        args = get_args(ty)
+        res = []
+        for arg in args:
+            res.extend(_get_flattened_ctypes_types(arg, type_mapping))
+        return res
+
+    ty_str = _get_type_name(ty, type_mapping).lower()
+    return [_get_ctypes_type(ty_str)]
 
 
-def _flatten_named_tuple_values(obj: Any) -> List[Any]:
-    """Recursively flatten all values in a NamedTuple tree."""
+def _flatten_values(obj: Any) -> List[Any]:
+    """Recursively flatten all values in a Tuple or NamedTuple tree."""
     res = []
-    for val in obj:
-        if is_named_tuple(type(val)):
-            res.extend(_flatten_named_tuple_values(val))
-        else:
-            res.append(val)
+    if is_named_tuple(type(obj)) or isinstance(obj, (list, tuple)):
+        for val in obj:
+            if is_named_tuple(type(val)) or isinstance(val, (list, tuple)):
+                res.extend(_flatten_values(val))
+            else:
+                res.append(val)
+    else:
+        res.append(obj)
     return res
 
 
-def _unflatten_named_tuple(ty: Any, flattened_values: List[Any]) -> Any:
-    """Recursively reconstruct a NamedTuple from flattened values."""
+def _unflatten_values(ty: Any, flattened_values: List[Any]) -> Any:
+    """Recursively reconstruct a Tuple or NamedTuple from flattened values."""
     from .types import i64
+    from typing import Tuple as typing_Tuple, get_origin, get_args
 
     if is_named_tuple(ty):
         fields_vals = []
         idx = 0
         for f_name in ty._fields:
             f_ann = ty.__annotations__.get(f_name, i64)
-            if is_named_tuple(f_ann):
-                count = len(_get_flattened_ctypes_types(f_ann))
-                fields_vals.append(
-                    _unflatten_named_tuple(f_ann, flattened_values[idx : idx + count])
-                )
-                idx += count
-            else:
-                fields_vals.append(flattened_values[idx])
-                idx += 1
+            count = len(_get_flattened_ctypes_types(f_ann))
+            fields_vals.append(
+                _unflatten_values(f_ann, flattened_values[idx : idx + count])
+            )
+            idx += count
         return ty(*fields_vals)
-    else:
-        return flattened_values[0]
+
+    origin = get_origin(ty)
+    if origin is tuple or origin is typing_Tuple:
+        args = get_args(ty)
+        res = []
+        idx = 0
+        for arg in args:
+            count = len(_get_flattened_ctypes_types(arg))
+            res.append(_unflatten_values(arg, flattened_values[idx : idx + count]))
+            idx += count
+        return tuple(res)
+
+    return flattened_values[0]
 
 
 def _map_ctypes_arguments(
@@ -138,6 +161,16 @@ def _map_ctypes_arguments(
             start_idx = len(c_args)
             c_args.extend(flattened_ctypes)
             arg_map.append(("named_tuple", start_idx, len(flattened_ctypes)))
+            continue
+
+        from typing import Tuple as typing_Tuple
+
+        if origin is tuple or origin is typing_Tuple:
+            # Unpack standard Tuple into multiple arguments recursively
+            flattened_ctypes = _get_flattened_ctypes_types(actual_ann, type_mapping)
+            start_idx = len(c_args)
+            c_args.extend(flattened_ctypes)
+            arg_map.append(("tuple", start_idx, len(flattened_ctypes)))
             continue
 
         is_buffer = (
@@ -378,22 +411,31 @@ def _handle_pointer_return(
 
     from .types import i64
 
-    # For NamedTuple, we prefer returning by value (in registers) if possible,
-    # because Challenge 2 specifically asks for register-allocated structs.
-    # ctypes supports Structure return values, which often use registers.
-    if is_named_tuple(ret_ann):
+    if is_named_tuple(ret_ann) or get_origin(ret_ann) in [tuple, typing_Tuple]:
         flattened_ctypes = _get_flattened_ctypes_types(ret_ann, type_mapping)
 
-        class NamedTupleResult(ctypes.Structure):
+        class TupleResult(ctypes.Structure):
             _fields_ = [(f"f{i}", cty) for i, cty in enumerate(flattened_ctypes)]
 
-        # Use flattened_ctypes as the tuple_types so that _create_wrapper
-        # knows how many fields to extract from the returned structure.
-        return False, NamedTupleResult, c_args, arg_map, flattened_ctypes
+        if len(flattened_ctypes) <= 2:
+            # Return by registers
+            return False, TupleResult, c_args, arg_map, flattened_ctypes
+        else:
+            # Return by pointer (SRet)
+            c_args.insert(0, ctypes.POINTER(TupleResult))
+            # Shift existing arg_map indices
+            new_arg_map = []
+            for item in arg_map:
+                if item[0] == "named_tuple" or item[0] == "tuple":
+                    new_arg_map.append((item[0], item[1] + 1, item[2]))
+                else:
+                    new_arg_map.append((item[0], item[1] + 1))
+            return True, TupleResult, c_args, new_arg_map, flattened_ctypes
 
     try:
         ResultStruct = None
         tuple_types = []
+
         if is_tuple:
             # Try to extract inner types for Tuple
             if hasattr(ret_ann, "__args__"):
@@ -488,6 +530,12 @@ def _create_jit_wrapper(
             start_idx = len(c_args)
             c_args.extend(flattened_ctypes)
             arg_map.append(("named_tuple", start_idx, len(flattened_ctypes)))
+        elif get_origin(ty) is tuple or get_origin(ty) is typing_Tuple:
+            # Unpack standard Tuple recursively
+            flattened_ctypes = _get_flattened_ctypes_types(ty, type_mapping)
+            start_idx = len(c_args)
+            c_args.extend(flattened_ctypes)
+            arg_map.append(("tuple", start_idx, len(flattened_ctypes)))
         else:
             c_args.append(_get_ctypes_type(ty_str))
             arg_map.append(("value", len(c_args) - 1))
@@ -536,17 +584,22 @@ def _create_jit_wrapper(
 
         res = c_func(*processed_args)
 
-        if is_named_tuple(ret_type) and not is_ptr_return:
-            # Construct NamedTuple from registers
+        if (
+            is_named_tuple(ret_type) or get_origin(ret_type) in [tuple, typing_Tuple]
+        ) and not is_ptr_return:
+            # Construct Tuple/NamedTuple from registers
             flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
-            return _unflatten_named_tuple(ret_type, flattened_res)
+            return _unflatten_values(ret_type, flattened_res)
 
         if is_ptr_return:
-            if is_named_tuple(ret_type):
+            if is_named_tuple(ret_type) or get_origin(ret_type) in [
+                tuple,
+                typing_Tuple,
+            ]:
                 flattened_res = [
                     getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
                 ]
-                return _unflatten_named_tuple(ret_type, flattened_res)
+                return _unflatten_values(ret_type, flattened_res)
             elif "tuple" in str(ret_type).lower():
                 # Convert ctypes structure back to Python tuple
                 return tuple(
@@ -674,10 +727,10 @@ def _prepare_runtime_args(
                 processed_args.append(ctypes.c_void_p(ctypes.addressof(arg)))
             else:
                 processed_args.append(arg)
-        elif arg_type == "named_tuple":
+        elif arg_type in ["named_tuple", "tuple"]:
             start_c_idx = arg_info[1]
             total_count = arg_info[2]
-            flattened = _flatten_named_tuple_values(arg)
+            flattened = _flatten_values(arg)
             for j in range(total_count):
                 field_val = flattened[j]
                 target_cty = c_args[start_c_idx + j]
@@ -869,7 +922,10 @@ def _create_wrapper(
     type_mapping: Dict[str, str] = None,
 ):
     """Generate the final Python wrapper that handles runtime checks and interop."""
-    if is_named_tuple(sig.return_annotation) and not is_ptr_return:
+    if (
+        is_named_tuple(sig.return_annotation)
+        or get_origin(sig.return_annotation) in [tuple, typing_Tuple]
+    ) and not is_ptr_return:
         c_ret = TupleReturn
     else:
         c_ret = (
@@ -888,20 +944,25 @@ def _create_wrapper(
 
         res = c_func(*processed_args)
 
-        if is_named_tuple(sig.return_annotation) and not is_ptr_return:
-            # Construct NamedTuple from registers
+        if (
+            is_named_tuple(sig.return_annotation)
+            or get_origin(sig.return_annotation) in [tuple, typing_Tuple]
+        ) and not is_ptr_return:
+            # Construct Tuple/NamedTuple from registers
             flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
-            return _unflatten_named_tuple(sig.return_annotation, flattened_res)
+            return _unflatten_values(sig.return_annotation, flattened_res)
 
         if is_ptr_return:
             ret_ann_str = _get_type_name(sig.return_annotation, type_mapping).lower()
             raw_ann_str = str(sig.return_annotation).lower()
-            if is_named_tuple(sig.return_annotation):
-                # Construct NamedTuple
+            if is_named_tuple(sig.return_annotation) or get_origin(
+                sig.return_annotation
+            ) in [tuple, typing_Tuple]:
+                # Construct Tuple/NamedTuple
                 flattened_res = [
                     getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
                 ]
-                return _unflatten_named_tuple(sig.return_annotation, flattened_res)
+                return _unflatten_values(sig.return_annotation, flattened_res)
             elif "tuple" in raw_ann_str or (
                 ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
             ):

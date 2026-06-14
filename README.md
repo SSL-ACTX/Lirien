@@ -6,7 +6,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Z3](https://img.shields.io/badge/Solver-Z3_4.12+-red.svg)](https://github.com/Z3Prover/z3)
 [![Cranelift](https://img.shields.io/badge/JIT-Cranelift-purple.svg)](https://cranelift.dev/)
 
@@ -292,6 +292,30 @@ def sum_list(n: Node) -> i64:
             return 0
 ```
 
+#### Verified Tuples & NamedTuples: Zero-Overhead Aggregates
+Lila provides full support for standard `Tuple` and `NamedTuple`. Unlike CPython, where tuples are heap-allocated objects, Lila **recursively flattens** tuples into individual CPU registers or stack slots. This ensures that passing a nested structure like `Tuple[Tuple[i64, i64], i64]` is as efficient as passing three raw integers.
+
+*   **Recursive Flattening:** Tuples of any depth are expanded into their primitive constituents.
+*   **Register-Based ABI:** Small tuples (up to 16 bytes) are passed directly in registers.
+*   **Formal Verification:** Z3 proves the safety of tuple destructuring and element access.
+
+```python
+from typing import NamedTuple, Tuple
+from lila import verify, i64
+
+class Point(NamedTuple):
+    x: i64
+    y: i64
+
+@verify
+def scale_nested(data: Tuple[Point, i64]) -> Point:
+    p, factor = data
+    return Point(p.x * factor, p.y * factor)
+
+# Lila flattens this into 3 register arguments (x, y, factor)
+# and returns 2 register values (new_x, new_y).
+```
+
 #### Verified Buffer and NumPy Interop
 Seamlessly operate on high-performance memory buffers (like NumPy arrays) with Z3-proven bounds checking.
 ```python
@@ -420,7 +444,7 @@ graph TD
 
 ### Prerequisites
 - **Rust Toolchain** (latest stable)
-- **Python 3.8+**
+- **Python 3.10+**
 - **Z3 Solver** (shared library v4.12+)
 
 ### Installation and Testing

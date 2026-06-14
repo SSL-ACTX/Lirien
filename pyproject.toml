@@ -9,22 +9,19 @@ description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 
 authors = [{name = "Seuriin", email = "seuriin@gmail.com"}]
 maintainers = [{name = "Seuriin", email = "seuriin@gmail.com"}]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "AGPL-3.0"}
 keywords = ["compiler", "verification", "jit", "python", "z3", "cranelift"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Compilers",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
-dependencies = [
-    "typing_extensions; python_version < '3.9'",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/SSL-ACTX/Lila"

@@ -228,54 +228,18 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     let mut ctx = module.make_context();
     let mut func_ctx = FunctionBuilderContext::new();
 
-    let mut sig = module.make_signature();
-    let mut is_ptr_return = false;
-
-    if let SsaType::Tuple(_) = ssa_func.return_type {
-        sig.params.push(AbiParam::new(types::I64));
-        is_ptr_return = true;
-    } else if let SsaType::NamedTuple(_) = ssa_func.return_type {
-        let cl_types = lower::get_flattened_types(ssa_func, &ssa_func.return_type);
-        for cl_ty in cl_types {
-            sig.returns.push(AbiParam::new(cl_ty));
-        }
-    } else if ssa_func.return_type.is_simd() {
-        sig.params.push(AbiParam::new(types::I64));
-        is_ptr_return = true;
-    }
-
+    let mut arg_types = Vec::new();
     for i in 0..ssa_func.arg_count {
-        let ty = ssa_func.get_type(SsaValue(i));
-        match ty {
-            SsaType::Buffer(_) => {
-                sig.params.push(AbiParam::new(types::I64)); // Ptr
-                sig.params.push(AbiParam::new(types::I64)); // Len
-            }
-            SsaType::Tensor(_, ref dims) => {
-                sig.params.push(AbiParam::new(types::I64)); // Ptr
-                for _ in 0..dims.len() {
-                    sig.params.push(AbiParam::new(types::I64)); // Dim length
-                }
-            }
-            SsaType::NamedTuple(_) => {
-                let cl_types = lower::get_flattened_types(ssa_func, &ty);
-                for cl_ty in cl_types {
-                    sig.params.push(AbiParam::new(cl_ty));
-                }
-            }
-            _ if ty.is_simd() => {
-                sig.params.push(AbiParam::new(types::I64)); // Pass by pointer for interop
-            }
-            _ => {
-                sig.params.push(AbiParam::new(translate_type(&ty)));
-            }
-        }
+        arg_types.push(ssa_func.get_type(SsaValue(i)));
     }
 
-    if ssa_func.return_type != SsaType::Unknown && !is_ptr_return && !matches!(ssa_func.return_type, SsaType::NamedTuple(_)) {
-        sig.returns
-            .push(AbiParam::new(translate_type(&ssa_func.return_type)));
-    }
+    let (mut sig, is_ptr_return, _) = lower::build_cranelift_signature(
+        ssa_func,
+        &arg_types,
+        &ssa_func.return_type,
+        false,
+        &module,
+    );
 
     let func_id = module
         .declare_function(&ssa_func.name, Linkage::Export, &sig)
@@ -450,7 +414,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                             cg_ctx.tensor_dims.insert(val, dim_vals);
                             p_idx += 1 + dims.len();
                         }
-                        SsaType::NamedTuple(_) => {
+                        SsaType::NamedTuple(_) | SsaType::Tuple(_) => {
                             let cl_types = lower::get_flattened_types(ssa_func, &ty);
                             let mut field_vals = Vec::new();
                             for _ in cl_types {

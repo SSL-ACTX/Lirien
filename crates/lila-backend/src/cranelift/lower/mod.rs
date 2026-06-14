@@ -78,6 +78,13 @@ pub fn get_flattened_types(
             }
             res
         }
+        lila_ir::ir::Type::Tuple(ref types) => {
+            let mut res = Vec::new();
+            for t in types {
+                res.extend(get_flattened_types(ssa_func, t));
+            }
+            res
+        }
         lila_ir::ir::Type::Buffer(_) => vec![types::I64, types::I64],
         lila_ir::ir::Type::Tensor(_, ref dims) => {
             let mut res = vec![types::I64];
@@ -117,6 +124,13 @@ pub fn get_field_info(
                 }
             }
         }
+        lila_ir::ir::Type::Tuple(ref types) => {
+            for t in types {
+                if let Some(res) = get_field_info(ssa_func, t, target_offset, expected_count, current_offset, val_idx) {
+                    return Some(res);
+                }
+            }
+        }
         lila_ir::ir::Type::Buffer(_) => {
             *current_offset += 16;
             *val_idx += 2;
@@ -150,6 +164,11 @@ pub fn store_to_stack_recursive<M: Module>(
             let fields = ctx.ssa_func.struct_layouts.get(name).unwrap();
             for (_, f_ty) in fields {
                 store_to_stack_recursive(ctx, f_ty, flat_vals, slot, current_offset, val_idx);
+            }
+        }
+        lila_ir::ir::Type::Tuple(ref types) => {
+            for t in types {
+                store_to_stack_recursive(ctx, t, flat_vals, slot, current_offset, val_idx);
             }
         }
         lila_ir::ir::Type::Buffer(_) => {
@@ -191,10 +210,19 @@ pub fn store_to_stack<M: Module>(
     slot_offset: i32,
 ) {
     let ty = ctx.ssa_func.get_type(src);
-    let flat_vals = get_all_cl_values(ctx, &src);
-    let mut current_offset = slot_offset;
-    let mut val_idx = 0;
-    store_to_stack_recursive(ctx, &ty, &flat_vals, slot, &mut current_offset, &mut val_idx);
+    if let Some(flat_vals) = ctx.unpacked_values.get(&src).cloned() {
+        let mut current_offset = slot_offset;
+        let mut val_idx = 0;
+        store_to_stack_recursive(ctx, &ty, &flat_vals, slot, &mut current_offset, &mut val_idx);
+    } else {
+        let val = get_val(&ctx.values, &src);
+        let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;
+        if ty.is_composite() {
+            copy_to_stack(&mut ctx.builder, val, slot, slot_offset, size as usize);
+        } else {
+            ctx.builder.ins().stack_store(val, slot, slot_offset);
+        }
+    }
 }
 
 pub fn store_to_memory_recursive<M: Module>(
@@ -214,6 +242,11 @@ pub fn store_to_memory_recursive<M: Module>(
             let fields = ctx.ssa_func.struct_layouts.get(name).unwrap();
             for (_, f_ty) in fields {
                 store_to_memory_recursive(ctx, f_ty, flat_vals, dest_ptr, current_offset, val_idx);
+            }
+        }
+        lila_ir::ir::Type::Tuple(ref types) => {
+            for t in types {
+                store_to_memory_recursive(ctx, t, flat_vals, dest_ptr, current_offset, val_idx);
             }
         }
         lila_ir::ir::Type::Buffer(_) => {
@@ -257,10 +290,86 @@ pub fn store_to_memory<M: Module>(
     dest_offset: i32,
 ) {
     let ty = ctx.ssa_func.get_type(src);
-    let flat_vals = get_all_cl_values(ctx, &src);
-    let mut current_offset = dest_offset;
-    let mut val_idx = 0;
-    store_to_memory_recursive(ctx, &ty, &flat_vals, dest_ptr, &mut current_offset, &mut val_idx);
+    if let Some(flat_vals) = ctx.unpacked_values.get(&src).cloned() {
+        let mut current_offset = dest_offset;
+        let mut val_idx = 0;
+        store_to_memory_recursive(ctx, &ty, &flat_vals, dest_ptr, &mut current_offset, &mut val_idx);
+    } else {
+        let val = get_val(&ctx.values, &src);
+        let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;
+        if ty.is_composite() {
+            let size_val = ctx.builder.ins().iconst(types::I64, size as i64);
+            let dest_addr = ctx.builder.ins().iadd_imm(dest_ptr, dest_offset as i64);
+            ctx.builder.call_memcpy(ctx.module.target_config(), dest_addr, val, size_val);
+        } else {
+            ctx.builder.ins().store(MemFlags::new(), val, dest_ptr, dest_offset);
+        }
+    }
+}
+
+pub fn build_cranelift_signature(
+    ssa_func: &SsaFunction,
+    arg_types: &[lila_ir::ir::Type],
+    ret_ty: &lila_ir::ir::Type,
+    is_closure: bool,
+    module: &impl Module,
+) -> (Signature, bool, bool) {
+    let mut sig = module.make_signature();
+    let mut is_sret = false;
+    let mut is_register_composite_ret = false;
+
+    // 1. Handle Return Type
+    if matches!(ret_ty, lila_ir::ir::Type::NamedTuple(_) | lila_ir::ir::Type::Tuple(_)) {
+        let cl_types = get_flattened_types(ssa_func, ret_ty);
+        if cl_types.len() <= 2 {
+            for cl_ty in cl_types {
+                sig.returns.push(AbiParam::new(cl_ty));
+            }
+            is_register_composite_ret = true;
+        } else {
+            sig.params.push(AbiParam::new(types::I64)); // SRet pointer
+            is_sret = true;
+        }
+    } else if ret_ty.is_simd() {
+        sig.params.push(AbiParam::new(types::I64)); // SRet pointer
+        is_sret = true;
+    } else if *ret_ty != lila_ir::ir::Type::Unknown {
+        sig.returns.push(AbiParam::new(translate_type(ret_ty)));
+    }
+
+    // 2. Handle Arguments
+    if is_closure {
+        sig.params.push(AbiParam::new(types::I64)); // context pointer
+    }
+
+    for arg_ty in arg_types {
+        match arg_ty {
+            lila_ir::ir::Type::NamedTuple(_) | lila_ir::ir::Type::Tuple(_) => {
+                let cl_types = get_flattened_types(ssa_func, arg_ty);
+                for cl_ty in cl_types {
+                    sig.params.push(AbiParam::new(cl_ty));
+                }
+            }
+            lila_ir::ir::Type::Buffer(_) => {
+                sig.params.push(AbiParam::new(types::I64)); // Ptr
+                sig.params.push(AbiParam::new(types::I64)); // Len
+            }
+            lila_ir::ir::Type::Tensor(_, dims) => {
+                sig.params.push(AbiParam::new(types::I64)); // Ptr
+                for _ in 0..dims.len() {
+                    sig.params.push(AbiParam::new(types::I64)); // Dim length
+                }
+            }
+            _ if arg_ty.is_simd() => {
+                sig.params.push(AbiParam::new(types::I64)); // Pass by pointer
+            }
+            _ => {
+                sig.params.push(AbiParam::new(translate_type(arg_ty)));
+            }
+        }
+    }
+
+    (sig, is_sret, is_register_composite_ret)
 }
 
 pub fn lower_instruction<M: Module>(
@@ -464,11 +573,11 @@ pub fn get_val(values: &std::collections::HashMap<SsaValue, Value>, val: &SsaVal
 pub fn get_all_cl_values<M: Module>(ctx: &CodegenContext<M>, val: &SsaValue) -> Vec<Value> {
     let ty = ctx.ssa_func.get_type(*val);
     match ty {
-        lila_ir::ir::Type::NamedTuple(_) => ctx
+        lila_ir::ir::Type::NamedTuple(_) | lila_ir::ir::Type::Tuple(_) => ctx
             .unpacked_values
             .get(val)
             .cloned()
-            .unwrap_or_else(|| panic!("Unpacked values for v{} not found", val.0)),
+            .unwrap_or_else(|| vec![get_val(&ctx.values, val)]),
         lila_ir::ir::Type::Buffer(_) => vec![
             get_val(&ctx.values, val),
             *ctx.buffer_lengths

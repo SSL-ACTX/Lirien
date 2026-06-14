@@ -27,6 +27,11 @@ Lila structs are compiled to flat, C-compatible memory layouts.
 *   **Zero-Overhead Optionals:** `Optional[Box[T]]` and `Box[T] | None` must be represented as raw 64-bit pointers where `None` is `0x0`.
 *   **Mandatory Verification:** The Z3 verifier MUST prove non-nullity before any `PointerLoad` or `PointerStore` instruction. The IR builder must automatically insert these checks for `.val` or field access.
 
+### 1.6 Recursive Register-Allocated Tuples
+*   **Flattening:** Both `NamedTuple` and standard `Tuple` must be recursively flattened into individual primitive values for function parameters and return values.
+*   **ABI Consistency:** Small aggregates (<= 16 bytes, or 2 registers) are passed by value in registers. Larger aggregates must use return-by-pointer (SRet) but remain flattened as arguments.
+*   **Unpacking Support:** The IR must support `TupleExtract` for both memory-allocated and register-flattened tuples by correctly identifying the register slice or memory offset.
+
 ## 2. Python DSL Guidelines
 
 ### 2.1 Zero-Boilerplate Experience

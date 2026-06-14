@@ -23,40 +23,13 @@ pub fn lower<M: Module>(
         }
     };
 
-    let mut sig = ctx.module.make_signature();
-    let mut is_sret = false;
-    let mut is_named_tuple_ret = false;
-
-    if let SsaType::NamedTuple(_) = ret_ty {
-        for cl_ty in get_flattened_types(ctx.ssa_func, &ret_ty) {
-            sig.returns.push(AbiParam::new(cl_ty));
-        }
-        is_named_tuple_ret = true;
-    } else if let SsaType::Tuple(_) | SsaType::Struct(_) = ret_ty {
-        sig.params.push(AbiParam::new(types::I64)); // sret pointer
-        is_sret = true;
-    }
-
-    if is_closure {
-        sig.params.push(AbiParam::new(types::I64)); // context pointer (closure itself)
-    }
-
-    for arg_ty in &arg_types {
-        if let SsaType::NamedTuple(_) = arg_ty {
-            for cl_ty in get_flattened_types(ctx.ssa_func, arg_ty) {
-                sig.params.push(AbiParam::new(cl_ty));
-            }
-        } else {
-            sig.params.push(AbiParam::new(translate_type(arg_ty)));
-            if let SsaType::Buffer(_) = arg_ty {
-                sig.params.push(AbiParam::new(types::I64));
-            }
-        }
-    }
-
-    if !is_sret && !is_named_tuple_ret && ret_ty != SsaType::Unknown {
-        sig.returns.push(AbiParam::new(translate_type(&ret_ty)));
-    }
+    let (sig, is_sret, is_register_composite_ret) = super::build_cranelift_signature(
+        ctx.ssa_func,
+        &arg_types,
+        &ret_ty,
+        is_closure,
+        ctx.module,
+    );
 
     let cl_fn_val = get_val(&ctx.values, &fn_ptr);
     let cl_fn_ptr = if is_closure {
@@ -96,7 +69,7 @@ pub fn lower<M: Module>(
 
     if is_sret {
         ctx.values.insert(dest, sret_addr.unwrap());
-    } else if is_named_tuple_ret {
+    } else if is_register_composite_ret {
         let res_vals = ctx.builder.inst_results(call).to_vec();
         ctx.unpacked_values.insert(dest, res_vals);
     } else if ret_ty != SsaType::Unknown {

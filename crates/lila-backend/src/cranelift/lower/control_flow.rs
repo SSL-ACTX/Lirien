@@ -108,12 +108,20 @@ pub fn lower<M: Module>(
             }
         }
         InstructionKind::Return(val) => {
-            if let SsaType::NamedTuple(_) = ctx.ssa_func.return_type {
+            if matches!(ctx.ssa_func.return_type, SsaType::NamedTuple(_) | SsaType::Tuple(_)) {
                 let mut cl_vals = Vec::new();
                 if let Some(v) = val {
                     cl_vals.extend(get_all_cl_values(ctx, v));
                 }
-                ctx.builder.ins().return_(&cl_vals);
+                
+                if let Some(sret_ptr) = ctx.sret_ptr {
+                    let mut current_offset = 0;
+                    let mut val_idx = 0;
+                    super::store_to_memory_recursive(ctx, &ctx.ssa_func.return_type, &cl_vals, sret_ptr, &mut current_offset, &mut val_idx);
+                    ctx.builder.ins().return_(&[]);
+                } else {
+                    ctx.builder.ins().return_(&cl_vals);
+                }
             } else if ctx.ssa_func.return_type.is_simd() {
                 if let Some(v) = val {
                     let vec_val = get_val(&ctx.values, v);
