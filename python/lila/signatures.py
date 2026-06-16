@@ -14,7 +14,8 @@ from typing import (
     get_args,
     Annotated,
 )
-from .types import Box, TYPE_MAP
+from .types.base import TYPE_MAP
+from .types.memory import Box
 
 
 def is_named_tuple(cls):
@@ -25,6 +26,11 @@ def is_named_tuple(cls):
         and hasattr(cls, "_fields")
         and hasattr(cls, "__annotations__")
     )
+
+
+def is_typed_dict(cls):
+    """Check if a class is a typing.TypedDict."""
+    return hasattr(cls, "__annotations__") and hasattr(cls, "__total__")
 
 
 def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
@@ -199,10 +205,11 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
 
 def _discover_types(
     func: Callable, initial_struct_layouts: Dict, type_mapping: Dict[str, str] = None
-) -> Tuple[Dict, Dict, Dict]:
+) -> Tuple[Dict, Dict, Dict, Dict]:
     """Scan for struct layouts, enum layouts, and type aliases referenced in the function's scope."""
     struct_layouts = initial_struct_layouts.copy() if initial_struct_layouts else {}
     enum_layouts = {}
+    typed_dict_layouts = {}
     type_aliases = {}
 
     # Combine globals and closure variables
@@ -246,6 +253,33 @@ def _discover_types(
                 ]
             # Tag it so we can separate it later
             obj.__lila_named_tuple__ = True
+        elif is_typed_dict(obj) and name not in typed_dict_layouts:
+            # It's a TypedDict
+            typed_dict_layouts[name] = [
+                (
+                    f_name,
+                    _get_type_name(f_ty, type_mapping),
+                )
+                for f_name, f_ty in obj.__annotations__.items()
+            ]
+
+            # Generate a ctypes structure for interop
+            fields = []
+            for f_name, f_ty in obj.__annotations__.items():
+                ty_name = _get_type_name(f_ty, type_mapping).lower()
+                # Find the best match in TYPE_MAP
+                cty = TYPE_MAP.get("i64")  # default
+                for match_name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
+                    if match_name in ty_name:
+                        cty = TYPE_MAP[match_name]
+                        break
+                fields.append((f_name, cty))
+
+            class TypedDictStruct(ctypes.Structure):
+                _fields_ = fields
+
+            obj.__lila_ctypes__ = TypedDictStruct
+            obj.__lila_typed_dict__ = True
         elif getattr(obj, "__lila_struct__", False) and name not in struct_layouts:
             struct_layouts[name] = [
                 (f_name, _get_type_name(f_ty, type_mapping))
@@ -297,7 +331,7 @@ def _discover_types(
                 type_aliases[name] = f"Refined[{base_ty_name}, {pred_src}]"
             except (TypeError, AttributeError, SyntaxError, OSError):
                 pass
-    return struct_layouts, enum_layouts, type_aliases
+    return struct_layouts, enum_layouts, type_aliases, typed_dict_layouts
 
 
 def _value_to_lila_type(val: Any) -> str:

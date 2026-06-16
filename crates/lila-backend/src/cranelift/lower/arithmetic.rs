@@ -1,52 +1,59 @@
-use super::{get_val, CodegenContext};
+use super::{get_val, CodegenContext, LoweringError};
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lila_ir::ir::{InstructionKind, Type};
 
-pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), String> {
+pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), LoweringError> {
+    macro_rules! bin_op {
+        ($dest:expr, $lhs:expr, $rhs:expr, $op:ident) => {{
+            let l = get_val(&ctx.values, $lhs);
+            let r = get_val(&ctx.values, $rhs);
+            let res = ctx.builder.ins().$op(l, r);
+            ctx.values.insert(*$dest, res);
+        }};
+    }
+
+    fn lower_cmp<M: Module>(
+        ctx: &mut CodegenContext<M>,
+        dest: &lila_ir::ir::Value,
+        lhs: &lila_ir::ir::Value,
+        rhs: &lila_ir::ir::Value,
+        int_cc: IntCC,
+        float_cc: FloatCC,
+    ) {
+        let l = get_val(&ctx.values, lhs);
+        let r = get_val(&ctx.values, rhs);
+        let l_ty = ctx.builder.func.dfg.value_type(l);
+        let res = if l_ty.is_float() {
+            ctx.builder.ins().fcmp(float_cc, l, r)
+        } else {
+            ctx.builder.ins().icmp(int_cc, l, r)
+        };
+        let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
+        let res_final = ctx.builder.ins().bmask(res_ty, res);
+        ctx.values.insert(*dest, res_final);
+    }
+
     match kind {
-        InstructionKind::Add(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().iadd(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::Sub(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().isub(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::Mul(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().imul(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::SDiv(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().sdiv(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::UDiv(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().udiv(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::SRem(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().srem(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::URem(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().urem(l, r);
-            ctx.values.insert(*dest, res);
-        }
+        InstructionKind::Add(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, iadd),
+        InstructionKind::Sub(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, isub),
+        InstructionKind::Mul(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, imul),
+        InstructionKind::SDiv(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, sdiv),
+        InstructionKind::UDiv(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, udiv),
+        InstructionKind::SRem(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, srem),
+        InstructionKind::URem(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, urem),
+        InstructionKind::And(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, band),
+        InstructionKind::Or(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, bor),
+        InstructionKind::Xor(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, bxor),
+        InstructionKind::Shl(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, ishl),
+        InstructionKind::LShr(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, ushr),
+        InstructionKind::AShr(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, sshr),
+
+        InstructionKind::FAdd(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, fadd),
+        InstructionKind::FSub(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, fsub),
+        InstructionKind::FMul(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, fmul),
+        InstructionKind::FDiv(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, fdiv),
+
         InstructionKind::Abs(dest, src) => {
             let s = get_val(&ctx.values, src);
             let ssa_ty = ctx.ssa_func.get_type(*src);
@@ -97,36 +104,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             };
             ctx.values.insert(*dest, res);
         }
-        InstructionKind::Avg(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().avg_round(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::FAdd(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fadd(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::FSub(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fsub(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::FMul(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fmul(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::FDiv(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fdiv(l, r);
-            ctx.values.insert(*dest, res);
-        }
+        InstructionKind::Avg(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, avg_round),
         InstructionKind::FSqrt(dest, src) => {
             let s = get_val(&ctx.values, src);
             let res = ctx.builder.ins().sqrt(s);
@@ -158,192 +136,94 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             ctx.values.insert(*dest, res);
         }
 
-        InstructionKind::And(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().band(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::Or(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().bor(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::Xor(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().bxor(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::Shl(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().ishl(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::LShr(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().ushr(l, r);
-            ctx.values.insert(*dest, res);
-        }
-        InstructionKind::AShr(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().sshr(l, r);
-            ctx.values.insert(*dest, res);
-        }
         InstructionKind::Not(dest, src) => {
             let s = get_val(&ctx.values, src);
             let res = ctx.builder.ins().bnot(s);
             ctx.values.insert(*dest, res);
         }
         InstructionKind::Eq(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::Equal, l, r)
-            } else {
-                ctx.builder.ins().icmp(IntCC::Equal, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::Equal)
         }
         InstructionKind::Ne(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::NotEqual, l, r)
-            } else {
-                ctx.builder.ins().icmp(IntCC::NotEqual, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual)
         }
         InstructionKind::SLt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::LessThan, l, r)
-            } else {
-                ctx.builder.ins().icmp(IntCC::SignedLessThan, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::SignedLessThan, FloatCC::LessThan)
         }
         InstructionKind::SLe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r)
-            } else {
-                ctx.builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::SignedLessThanOrEqual,
+                FloatCC::LessThanOrEqual,
+            )
         }
         InstructionKind::SGt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::GreaterThan, l, r)
-            } else {
-                ctx.builder.ins().icmp(IntCC::SignedGreaterThan, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::SignedGreaterThan,
+                FloatCC::GreaterThan,
+            )
         }
         InstructionKind::SGe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let l_ty = ctx.builder.func.dfg.value_type(l);
-            let res = if l_ty.is_float() {
-                ctx.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r)
-            } else {
-                ctx.builder.ins()
-                    .icmp(IntCC::SignedGreaterThanOrEqual, l, r)
-            };
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::SignedGreaterThanOrEqual,
+                FloatCC::GreaterThanOrEqual,
+            )
         }
         InstructionKind::FLt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fcmp(FloatCC::LessThan, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::LessThan)
         }
         InstructionKind::FLe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fcmp(FloatCC::LessThanOrEqual, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::LessThanOrEqual)
         }
         InstructionKind::FGt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fcmp(FloatCC::GreaterThan, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::GreaterThan)
         }
         InstructionKind::FGe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().fcmp(FloatCC::GreaterThanOrEqual, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::GreaterThanOrEqual)
         }
         InstructionKind::ULt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::UnsignedLessThan, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(ctx, dest, lhs, rhs, IntCC::UnsignedLessThan, FloatCC::Equal)
         }
         InstructionKind::ULe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::UnsignedLessThanOrEqual, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::UnsignedLessThanOrEqual,
+                FloatCC::Equal,
+            )
         }
         InstructionKind::UGt(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx.builder.ins().icmp(IntCC::UnsignedGreaterThan, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::UnsignedGreaterThan,
+                FloatCC::Equal,
+            )
         }
         InstructionKind::UGe(dest, lhs, rhs) => {
-            let l = get_val(&ctx.values, lhs);
-            let r = get_val(&ctx.values, rhs);
-            let res = ctx
-                .builder
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThanOrEqual, l, r);
-            let res_ty = super::translate_type(&ctx.ssa_func.get_type(*dest));
-            let res_final = ctx.builder.ins().bmask(res_ty, res);
-            ctx.values.insert(*dest, res_final);
+            lower_cmp(
+                ctx,
+                dest,
+                lhs,
+                rhs,
+                IntCC::UnsignedGreaterThanOrEqual,
+                FloatCC::Equal,
+            )
         }
         InstructionKind::IToF(dest, src, ty) => {
             let s = get_val(&ctx.values, src);
@@ -368,7 +248,7 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             };
             ctx.values.insert(*dest, res);
         }
-        _ => return Err(format!("Not an arithmetic instruction: {:?}", kind)),
+        _ => return Err(LoweringError::InstructionNotSupported(format!("{:?}", kind), None)),
     }
     Ok(())
 }

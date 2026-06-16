@@ -4,26 +4,28 @@ use crate::ir::{BlockId, InstructionKind, Type, Value};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
 use std::collections::HashMap;
+use crate::builder::error::BuilderResult;
+use crate::{push_inst, builder_error};
 
 impl CFGBuilder {
-    pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> Result<(), String> {
+    pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> BuilderResult<()> {
         self.update_location(s.range().start().to_usize());
         self.func.arg_count = s.args.args.len();
 
         if let Some(returns) = &s.returns {
-            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names)?;
+            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names)?;
             self.func.return_type = ret_ty;
             self.func.ret_refinement =
-                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names)?;
+                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names)?;
         }
 
         for arg in s.args.args {
             let val = self.func.next_value();
             if let Some(annotation) = &arg.def.annotation {
-                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names)?;
+                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names)?;
                 self.func.set_type(val, ty);
                 if let Some(refinement) =
-                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names)?
+                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names)?
                 {
                     self.func.set_refinement(val, refinement);
                 }
@@ -41,28 +43,28 @@ impl CFGBuilder {
                 let zero = self.func.next_value();
                 match self.func.return_type {
                     Type::F32 | Type::F64 => {
-                        self.add_instruction(InstructionKind::ConstFloat(zero, 0.0));
+                        push_inst!(self, InstructionKind::ConstFloat(zero, 0.0));
                     }
                     _ => {
-                        self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                        push_inst!(self, InstructionKind::ConstInt(zero, 0));
                     }
                 }
                 Some(zero)
             } else {
                 None
             };
-            self.add_instruction(InstructionKind::Return(ret_val));
+            push_inst!(self, InstructionKind::Return(ret_val));
         }
 
         Ok(())
     }
 
-    pub fn visit_stmt(&mut self, stmt: ast::Stmt) -> Result<(), String> {
+    pub fn visit_stmt(&mut self, stmt: ast::Stmt) -> BuilderResult<()> {
         self.update_location(stmt.range().start().to_usize());
         match stmt {
             ast::Stmt::Assign(s) => {
                 if s.targets.len() != 1 {
-                    return Err("Only single targets supported".to_string());
+                    return Err(builder_error!(UnsupportedStatement, "Only single targets supported"));
                 }
                 let target = &s.targets[0];
                 let value = self.visit_expr(*s.value)?;
@@ -76,7 +78,7 @@ impl CFGBuilder {
                 let lhs = self.visit_expr(target.clone())?;
                 let dest = self.func.next_value();
                 let kind = self.build_binop(s.op, lhs, value, dest)?;
-                self.add_instruction(kind);
+                push_inst!(self, kind);
                 self.handle_assignment_target(&target, dest)?;
                 Ok(())
             }
@@ -85,11 +87,11 @@ impl CFGBuilder {
                     let mut value = self.visit_expr(*value_expr)?;
                     value = self.auto_load(value);
 
-                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names) {
+                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names) {
                         let val_ty = self.func.get_type(value);
                         if ann_ty.is_float() && val_ty.is_int() {
                             let converted = self.func.next_value();
-                            self.add_instruction(InstructionKind::IToF(
+                            push_inst!(self, InstructionKind::IToF(
                                 converted,
                                 value,
                                 ann_ty.clone(),
@@ -117,18 +119,18 @@ impl CFGBuilder {
                     let ret_ty = self.func.return_type.clone();
                     if ret_ty.is_float() && val_ty.is_int() {
                         let converted = self.func.next_value();
-                        self.add_instruction(InstructionKind::IToF(converted, v, ret_ty.clone()));
+                        push_inst!(self, InstructionKind::IToF(converted, v, ret_ty.clone()));
                         self.func.set_type(converted, ret_ty);
                         val = Some(converted);
                     } else if ret_ty.is_int() && val_ty.is_float() {
                         let converted = self.func.next_value();
-                        self.add_instruction(InstructionKind::FToI(converted, v, ret_ty.clone()));
+                        push_inst!(self, InstructionKind::FToI(converted, v, ret_ty.clone()));
                         self.func.set_type(converted, ret_ty);
                         val = Some(converted);
                     }
                 }
 
-                self.add_instruction(InstructionKind::Return(val));
+                push_inst!(self, InstructionKind::Return(val));
                 Ok(())
             }
             ast::Stmt::If(s) => {
@@ -155,7 +157,7 @@ impl CFGBuilder {
                 let false_block = self.create_block();
                 let merge_block = self.create_block();
 
-                self.add_instruction(InstructionKind::Branch(cond, true_block, false_block));
+                push_inst!(self, InstructionKind::Branch(cond, true_block, false_block));
                 self.link_blocks(prev_block, true_block);
                 self.link_blocks(prev_block, false_block);
 
@@ -163,24 +165,24 @@ impl CFGBuilder {
                 self.seal_block(false_block)?;
 
                 self.start_block(true_block);
-                self.add_instruction(InstructionKind::Nop())
+                push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} true)", cond));
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
                 if !self.is_terminated(self.current_block) {
-                    self.add_instruction(InstructionKind::Jump(merge_block));
+                    push_inst!(self, InstructionKind::Jump(merge_block));
                     self.link_blocks(self.current_block, merge_block);
                 }
 
                 self.start_block(false_block);
-                self.add_instruction(InstructionKind::Nop())
+                push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} false)", cond));
                 for stmt in s.orelse {
                     self.visit_stmt(stmt)?;
                 }
                 if !self.is_terminated(self.current_block) {
-                    self.add_instruction(InstructionKind::Jump(merge_block));
+                    push_inst!(self, InstructionKind::Jump(merge_block));
                     self.link_blocks(self.current_block, merge_block);
                 }
 
@@ -194,33 +196,33 @@ impl CFGBuilder {
                 let exit_block = self.create_block();
 
                 let prev_block = self.current_block;
-                self.add_instruction(InstructionKind::Jump(header_block));
+                push_inst!(self, InstructionKind::Jump(header_block));
                 self.link_blocks(prev_block, header_block);
 
                 self.loop_stack.push((header_block, exit_block));
 
                 self.start_block(header_block);
                 let cond = self.visit_expr(*s.test)?;
-                self.add_instruction(InstructionKind::Branch(cond, body_block, exit_block));
+                push_inst!(self, InstructionKind::Branch(cond, body_block, exit_block));
                 self.link_blocks(header_block, body_block);
                 self.link_blocks(header_block, exit_block);
 
                 self.seal_block(body_block)?;
                 self.start_block(body_block);
-                self.add_instruction(InstructionKind::Nop())
+                push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} true)", cond));
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
                 if !self.is_terminated(self.current_block) {
-                    self.add_instruction(InstructionKind::Jump(header_block));
+                    push_inst!(self, InstructionKind::Jump(header_block));
                     self.link_blocks(self.current_block, header_block);
                 }
 
                 self.loop_stack.pop();
                 self.seal_block(header_block)?;
                 self.start_block(exit_block);
-                self.add_instruction(InstructionKind::Nop())
+                push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} false)", cond));
                 self.seal_block(exit_block)?;
                 Ok(())
@@ -249,21 +251,21 @@ impl CFGBuilder {
                                     self.visit_expr(call.args[1].clone())?,
                                     Some(self.visit_expr(call.args[2].clone())?),
                                 ),
-                                _ => return Err("Unsupported range() signature".to_string()),
+                                _ => return Err(builder_error!(UnsupportedStatement, "Unsupported range() signature")),
                             };
 
                             let start_v = if let Some(v) = start {
                                 v
                             } else {
                                 let zero = self.func.next_value();
-                                self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                                push_inst!(self, InstructionKind::ConstInt(zero, 0));
                                 zero
                             };
                             let step_v = if let Some(v) = step {
                                 v
                             } else {
                                 let one = self.func.next_value();
-                                self.add_instruction(InstructionKind::ConstInt(one, 1));
+                                push_inst!(self, InstructionKind::ConstInt(one, 1));
                                 one
                             };
                             (start_v, end, step_v, false)
@@ -273,24 +275,24 @@ impl CFGBuilder {
                             let buf_val = self.visit_expr(call.args[0].clone())?;
                             let buf_ty = self.func.get_type(buf_val);
                             let zero = self.func.next_value();
-                            self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                            push_inst!(self, InstructionKind::ConstInt(zero, 0));
                             let one = self.func.next_value();
-                            self.add_instruction(InstructionKind::ConstInt(one, 1));
+                            push_inst!(self, InstructionKind::ConstInt(one, 1));
                             let len = self.func.next_value();
                             if let Type::Buffer(_) = buf_ty {
-                                self.add_instruction(InstructionKind::BufferLen(len, buf_val));
+                                push_inst!(self, InstructionKind::BufferLen(len, buf_val));
                             } else if let Type::Array(_, Some(size)) = buf_ty {
-                                self.add_instruction(InstructionKind::ConstInt(len, size as i64));
+                                push_inst!(self, InstructionKind::ConstInt(len, size as i64));
                             } else {
-                                return Err("Cannot iterate over unknown size array".to_string());
+                                return Err(builder_error!(General, "Cannot iterate over unknown size array"));
                             }
                             self.func.set_type(len, Type::I64);
                             (zero, len, one, true)
                         } else {
-                            return Err(format!("Unsupported function in for loop: {}", n.id));
+                            return Err(builder_error!(UnsupportedStatement, "Unsupported function in for loop: {}", n.id));
                         }
                     } else {
-                        return Err("Only range() or direct iteration supported".to_string());
+                        return Err(builder_error!(UnsupportedStatement, "Only range() or direct iteration supported"));
                     }
                 } else {
                     // Potential direct iteration: for x in buf
@@ -299,21 +301,21 @@ impl CFGBuilder {
                     match buf_ty {
                         Type::Buffer(_) | Type::Array(_, _) => {
                             let zero = self.func.next_value();
-                            self.add_instruction(InstructionKind::ConstInt(zero, 0));
+                            push_inst!(self, InstructionKind::ConstInt(zero, 0));
                             let one = self.func.next_value();
-                            self.add_instruction(InstructionKind::ConstInt(one, 1));
+                            push_inst!(self, InstructionKind::ConstInt(one, 1));
                             let len = self.func.next_value();
                             if let Type::Buffer(_) = buf_ty {
-                                self.add_instruction(InstructionKind::BufferLen(len, buf_val));
+                                push_inst!(self, InstructionKind::BufferLen(len, buf_val));
                             } else if let Type::Array(_, Some(size)) = buf_ty {
-                                self.add_instruction(InstructionKind::ConstInt(len, size as i64));
+                                push_inst!(self, InstructionKind::ConstInt(len, size as i64));
                             } else {
-                                return Err("Cannot iterate over unknown size array".to_string());
+                                return Err(builder_error!(General, "Cannot iterate over unknown size array"));
                             }
                             self.func.set_type(len, Type::I64);
                             (zero, len, one, true)
                         }
-                        _ => return Err(format!("Cannot iterate over type {:?}", buf_ty)),
+                        _ => return Err(builder_error!(General, "Cannot iterate over type {:?}", buf_ty)),
                     }
                 };
 
@@ -353,7 +355,7 @@ impl CFGBuilder {
                             } else if let ast::Expr::Name(n) = target.clone() {
                                 n.id.to_string()
                             } else {
-                                return Err("Unsupported loop target".to_string());
+                                return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
                             };
 
                             // UNROLL!
@@ -371,7 +373,7 @@ impl CFGBuilder {
                                 };
 
                                 // Connect previous block to this iteration's body
-                                self.add_instruction(InstructionKind::Jump(iteration_body_block));
+                                push_inst!(self, InstructionKind::Jump(iteration_body_block));
                                 self.link_blocks(self.current_block, iteration_body_block);
                                 self.seal_block(iteration_body_block)?;
                                 self.start_block(iteration_body_block);
@@ -383,13 +385,13 @@ impl CFGBuilder {
                                     .push((next_iteration_block, final_exit_block));
 
                                 let curr_idx = self.func.next_value();
-                                self.add_instruction(InstructionKind::ConstInt(
+                                push_inst!(self, InstructionKind::ConstInt(
                                     curr_idx,
                                     current_idx_const,
                                 ));
                                 self.func.set_type(curr_idx, Type::I64);
                                 // Inject refinement for Z3 to know the exact loop index
-                                self.add_instruction(InstructionKind::Nop()).add_constraint(
+                                push_inst!(self, InstructionKind::Nop()).add_constraint(
                                     format!("(= {} {})", curr_idx, current_idx_const),
                                 );
 
@@ -397,7 +399,7 @@ impl CFGBuilder {
 
                                 if is_direct_iter {
                                     let buf_expr = if is_enumerate {
-                                        enum_buf_expr.clone().unwrap()
+                                        enum_buf_expr.clone().ok_or_else(|| builder_error!(General, "Missing enum buffer expression"))?
                                     } else {
                                         iter_expr.clone()
                                     };
@@ -406,13 +408,13 @@ impl CFGBuilder {
                                     let element = self.func.next_value();
                                     match buf_ty {
                                         Type::Buffer(inner) => {
-                                            self.add_instruction(InstructionKind::BufferLoad(
+                                            push_inst!(self, InstructionKind::BufferLoad(
                                                 element, buf_val, curr_idx,
                                             ));
                                             self.func.set_type(element, *inner);
                                         }
                                         Type::Array(inner, _) => {
-                                            self.add_instruction(InstructionKind::ArrayLoad(
+                                            push_inst!(self, InstructionKind::ArrayLoad(
                                                 element, buf_val, curr_idx,
                                             ));
                                             self.func.set_type(element, *inner);
@@ -423,10 +425,7 @@ impl CFGBuilder {
                                     if is_enumerate {
                                         if let ast::Expr::Tuple(t) = target.clone() {
                                             if t.elts.len() != 2 {
-                                                return Err(
-                                                    "enumerate() requires a tuple of 2 elements"
-                                                        .to_string(),
-                                                );
+                                                return Err(builder_error!(General, "enumerate() requires a tuple of 2 elements"));
                                             }
                                             self.handle_assignment_target(&t.elts[0], curr_idx)?;
                                             self.handle_assignment_target(&t.elts[1], element)?;
@@ -442,7 +441,7 @@ impl CFGBuilder {
 
                                 // If not terminated (no break/return/continue), jump to next iteration
                                 if !self.is_terminated(self.current_block) {
-                                    self.add_instruction(InstructionKind::Jump(
+                                    push_inst!(self, InstructionKind::Jump(
                                         next_iteration_block,
                                     ));
                                     self.link_blocks(self.current_block, next_iteration_block);
@@ -477,13 +476,13 @@ impl CFGBuilder {
                 } else if let ast::Expr::Name(n) = target.clone() {
                     n.id.to_string()
                 } else {
-                    return Err("Unsupported loop target".to_string());
+                    return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
                 };
 
                 self.write_variable(idx_name.clone(), self.current_block, start_val);
 
                 let prev_block = self.current_block;
-                self.add_instruction(InstructionKind::Jump(header_block));
+                push_inst!(self, InstructionKind::Jump(header_block));
                 self.link_blocks(prev_block, header_block);
 
                 self.loop_stack.push((increment_block, exit_block));
@@ -501,11 +500,11 @@ impl CFGBuilder {
                 }
 
                 if use_sgt {
-                    self.add_instruction(InstructionKind::SGt(cond, curr_idx, end_val));
+                    push_inst!(self, InstructionKind::SGt(cond, curr_idx, end_val));
                 } else {
-                    self.add_instruction(InstructionKind::SLt(cond, curr_idx, end_val));
+                    push_inst!(self, InstructionKind::SLt(cond, curr_idx, end_val));
                 }
-                self.add_instruction(InstructionKind::Branch(cond, body_block, exit_block));
+                push_inst!(self, InstructionKind::Branch(cond, body_block, exit_block));
                 self.link_blocks(header_block, body_block);
                 self.link_blocks(header_block, exit_block);
 
@@ -515,7 +514,7 @@ impl CFGBuilder {
                 if is_direct_iter {
                     // For direct iter, load the value into the target variable
                     let buf_expr = if is_enumerate {
-                        enum_buf_expr.unwrap()
+                        enum_buf_expr.ok_or_else(|| builder_error!(General, "Missing enum buffer expression"))?
                     } else {
                         iter_expr.clone()
                     };
@@ -524,13 +523,13 @@ impl CFGBuilder {
                     let element = self.func.next_value();
                     match buf_ty {
                         Type::Buffer(inner) => {
-                            self.add_instruction(InstructionKind::BufferLoad(
+                            push_inst!(self, InstructionKind::BufferLoad(
                                 element, buf_val, curr_idx,
                             ));
                             self.func.set_type(element, *inner);
                         }
                         Type::Array(inner, _) => {
-                            self.add_instruction(InstructionKind::ArrayLoad(
+                            push_inst!(self, InstructionKind::ArrayLoad(
                                 element, buf_val, curr_idx,
                             ));
                             self.func.set_type(element, *inner);
@@ -541,19 +540,17 @@ impl CFGBuilder {
                     if is_enumerate {
                         if let ast::Expr::Tuple(t) = target {
                             if t.elts.len() != 2 {
-                                return Err(
-                                    "enumerate() requires a tuple of 2 elements".to_string()
-                                );
+                                return Err(builder_error!(General, "enumerate() requires a tuple of 2 elements"));
                             }
                             self.handle_assignment_target(&t.elts[0], curr_idx)?;
                             self.handle_assignment_target(&t.elts[1], element)?;
                         } else {
-                            return Err("enumerate() requires a tuple target".to_string());
+                            return Err(builder_error!(UnsupportedStatement, "enumerate() requires a tuple target"));
                         }
                     } else if let ast::Expr::Name(n) = target {
                         self.write_variable(n.id.to_string(), self.current_block, element);
                     } else {
-                        return Err("Unsupported loop target".to_string());
+                        return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
                     }
                 }
 
@@ -562,7 +559,7 @@ impl CFGBuilder {
                 }
 
                 if !self.is_terminated(self.current_block) {
-                    self.add_instruction(InstructionKind::Jump(increment_block));
+                    push_inst!(self, InstructionKind::Jump(increment_block));
                     self.link_blocks(self.current_block, increment_block);
                 }
 
@@ -570,9 +567,9 @@ impl CFGBuilder {
                 self.start_block(increment_block);
                 let next_idx = self.func.next_value();
                 let updated_idx = self.read_variable(idx_name.clone(), increment_block)?;
-                self.add_instruction(InstructionKind::Add(next_idx, updated_idx, step_val));
+                push_inst!(self, InstructionKind::Add(next_idx, updated_idx, step_val));
                 self.write_variable(idx_name, increment_block, next_idx);
-                self.add_instruction(InstructionKind::Jump(header_block));
+                push_inst!(self, InstructionKind::Jump(header_block));
                 self.link_blocks(increment_block, header_block);
 
                 self.loop_stack.pop();
@@ -593,10 +590,7 @@ impl CFGBuilder {
                         name
                     }
                     _ => {
-                        return Err(format!(
-                            "match statement currently only supported for Enums, found {:?}",
-                            subject_ty
-                        ))
+                        return Err(builder_error!(UnsupportedStatement, "match statement currently only supported for Enums, found {:?}", subject_ty));
                     }
                 };
 
@@ -604,7 +598,7 @@ impl CFGBuilder {
                 let start_block = self.current_block;
 
                 let tag_val = self.func.next_value();
-                self.add_instruction(InstructionKind::EnumGetTag(tag_val, subject_val));
+                push_inst!(self, InstructionKind::EnumGetTag(tag_val, subject_val));
                 self.func.set_type(tag_val, Type::U8);
 
                 let variants = self
@@ -612,7 +606,7 @@ impl CFGBuilder {
                     .enum_layouts
                     .get(&enum_name)
                     .cloned()
-                    .ok_or_else(|| format!("Unknown enum layout for '{}'", enum_name))?;
+                    .ok_or_else(|| builder_error!(General, "Unknown enum layout for '{}'", enum_name))?;
 
                 // Group cases by tag
                 let mut tag_to_cases: HashMap<usize, Vec<ast::MatchCase>> = HashMap::new();
@@ -636,7 +630,7 @@ impl CFGBuilder {
                                     let attr = match &*p.cls {
                                         ast::Expr::Attribute(a) => a,
                                         _ => {
-                                            return Err("Expected Enum.Variant pattern".to_string())
+                                            return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern"));
                                         }
                                     };
                                     Some(attr.attr.to_string())
@@ -645,7 +639,7 @@ impl CFGBuilder {
                                     let attr = match &*p.value {
                                         ast::Expr::Attribute(a) => a,
                                         _ => {
-                                            return Err("Expected Enum.Variant pattern".to_string())
+                                            return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern"));
                                         }
                                     };
                                     Some(attr.attr.to_string())
@@ -659,10 +653,7 @@ impl CFGBuilder {
                                 if let Some(tag_idx) = tag_idx {
                                     tag_to_cases.entry(tag_idx).or_default().push(case);
                                 } else {
-                                    return Err(format!(
-                                        "Unknown variant '{}' for enum '{}'",
-                                        variant_name, enum_name
-                                    ));
+                                    return Err(builder_error!(General, "Unknown variant '{}' for enum '{}'", variant_name, enum_name));
                                 }
                             } else {
                                 // This is a non-variant pattern (e.g. MatchAs with a name/guard).
@@ -670,7 +661,7 @@ impl CFGBuilder {
                                 // Currently, Lila uses a single jump table for all variant-based cases.
                                 // Interleaving generic patterns (like `case x if cond:`) between variants
                                 // is not yet supported because it would require multiple sequential jump tables.
-                                return Err("Lila currently requires all Enum variant patterns to come before any guarded catch-all patterns.".to_string());
+                                return Err(builder_error!(UnsupportedStatement, "Lila currently requires all Enum variant patterns to come before any guarded catch-all patterns."));
                             }
                         }
                     }
@@ -707,7 +698,7 @@ impl CFGBuilder {
 
                         if !pattern_args.is_empty() {
                             let payload = self.func.next_value();
-                            self.add_instruction(InstructionKind::EnumExtract(
+                            push_inst!(self, InstructionKind::EnumExtract(
                                 payload,
                                 subject_val,
                                 tag_idx,
@@ -725,7 +716,7 @@ impl CFGBuilder {
                                 if let Type::Tuple(ref types) = variant_ty {
                                     for (j, p_arg) in pattern_args.iter().enumerate() {
                                         let elt = self.func.next_value();
-                                        self.add_instruction(InstructionKind::TupleExtract(
+                                        push_inst!(self, InstructionKind::TupleExtract(
                                             elt, payload, j,
                                         ));
                                         self.func.set_type(elt, types[j].clone());
@@ -742,7 +733,7 @@ impl CFGBuilder {
                         // 1.2. Guard check
                         if let Some(guard_expr) = &case.guard {
                             let cond = self.visit_expr(*guard_expr.clone())?;
-                            self.add_instruction(InstructionKind::Branch(
+                            push_inst!(self, InstructionKind::Branch(
                                 cond,
                                 body_block,
                                 next_in_chain,
@@ -750,7 +741,7 @@ impl CFGBuilder {
                             self.link_blocks(current_chain_block, body_block);
                             self.link_blocks(current_chain_block, next_in_chain);
                         } else {
-                            self.add_instruction(InstructionKind::Jump(body_block));
+                            push_inst!(self, InstructionKind::Jump(body_block));
                             self.link_blocks(current_chain_block, body_block);
                         }
                         self.seal_block(current_chain_block)?;
@@ -761,7 +752,7 @@ impl CFGBuilder {
                             self.visit_stmt(stmt.clone())?;
                         }
                         if !self.is_terminated(self.current_block) {
-                            self.add_instruction(InstructionKind::Jump(exit_block));
+                            push_inst!(self, InstructionKind::Jump(exit_block));
                             self.link_blocks(self.current_block, exit_block);
                         }
                         self.seal_block(body_block)?;
@@ -786,18 +777,18 @@ impl CFGBuilder {
                         self.visit_stmt(stmt.clone())?;
                     }
                     if !self.is_terminated(self.current_block) {
-                        self.add_instruction(InstructionKind::Jump(exit_block));
+                        push_inst!(self, InstructionKind::Jump(exit_block));
                         self.link_blocks(self.current_block, exit_block);
                     }
                 } else {
-                    self.add_instruction(InstructionKind::Jump(exit_block));
+                    push_inst!(self, InstructionKind::Jump(exit_block));
                     self.link_blocks(default_block, exit_block);
                 }
                 self.seal_block(default_block)?;
 
                 // Finalize start block
                 self.start_block(start_block);
-                self.add_instruction(InstructionKind::Match(
+                push_inst!(self, InstructionKind::Match(
                     tag_val,
                     cases_map,
                     default_block,
@@ -825,28 +816,28 @@ impl CFGBuilder {
             ast::Stmt::Break(_) => {
                 if let Some((_, exit_block)) = self.loop_stack.last() {
                     let eb = *exit_block;
-                    self.add_instruction(InstructionKind::Jump(eb));
+                    push_inst!(self, InstructionKind::Jump(eb));
                     self.link_blocks(self.current_block, eb);
                     Ok(())
                 } else {
-                    Err("break outside of loop".to_string())
+                    Err(builder_error!(General, "break outside of loop"))
                 }
             }
             ast::Stmt::Continue(_) => {
                 if let Some((header_block, _)) = self.loop_stack.last() {
                     let hb = *header_block;
-                    self.add_instruction(InstructionKind::Jump(hb));
+                    push_inst!(self, InstructionKind::Jump(hb));
                     self.link_blocks(self.current_block, hb);
                     Ok(())
                 } else {
-                    Err("continue outside of loop".to_string())
+                    Err(builder_error!(General, "continue outside of loop"))
                 }
             }
             ast::Stmt::Expr(s) => {
                 self.visit_expr(*s.value)?;
                 Ok(())
             }
-            _ => Err(format!("Statement type {:?} not yet supported", stmt)),
+            _ => Err(builder_error!(UnsupportedStatement, "Statement type {:?} not yet supported", stmt)),
         }
     }
 
@@ -855,12 +846,12 @@ impl CFGBuilder {
         pattern: &ast::Pattern,
         val: Value,
         block: BlockId,
-    ) -> Result<(), String> {
+    ) -> BuilderResult<()> {
         let ty = self.func.get_type(val);
         if let Type::Pointer(inner) = ty {
             // Automatically dereference pointers for matching
             let deref_val = self.func.next_value();
-            self.add_instruction(InstructionKind::PointerLoad(deref_val, val));
+            push_inst!(self, InstructionKind::PointerLoad(deref_val, val));
             self.func.set_type(deref_val, (*inner).clone());
             return self.handle_nested_pattern(pattern, deref_val, block);
         }
@@ -868,7 +859,7 @@ impl CFGBuilder {
         match pattern {
             ast::Pattern::MatchAs(p) => {
                 if p.pattern.is_some() {
-                    return Err("Nested patterns in MatchAs not yet supported".to_string());
+                    return Err(builder_error!(UnsupportedStatement, "Nested patterns in MatchAs not yet supported"));
                 }
                 if let Some(name) = &p.name {
                     self.write_variable(name.to_string(), block, val);
@@ -885,14 +876,9 @@ impl CFGBuilder {
                             .struct_layouts
                             .get(name)
                             .cloned()
-                            .ok_or_else(|| format!("Unknown struct layout for '{}'", name))?;
+                            .ok_or_else(|| builder_error!(General, "Unknown struct layout for '{}'", name))?;
                         if p.patterns.len() > fields.len() {
-                            return Err(format!(
-                                "Struct '{}' has {} fields, but pattern has {}",
-                                name,
-                                fields.len(),
-                                p.patterns.len()
-                            ));
+                            return Err(builder_error!(General, "Struct '{}' has {} fields, but pattern has {}", name, fields.len(), p.patterns.len()));
                         }
                         let mut current_offset = 0;
                         for (i, sub_pattern) in p.patterns.iter().enumerate() {
@@ -902,13 +888,13 @@ impl CFGBuilder {
 
                             let field_val = self.func.next_value();
                             if field_ty.is_composite() {
-                                self.add_instruction(InstructionKind::StructOffset(
+                                push_inst!(self, InstructionKind::StructOffset(
                                     field_val,
                                     val,
                                     current_offset,
                                 ));
                             } else {
-                                self.add_instruction(InstructionKind::StructLoad(
+                                push_inst!(self, InstructionKind::StructLoad(
                                     field_val,
                                     val,
                                     current_offset,
@@ -924,23 +910,23 @@ impl CFGBuilder {
                     Type::Enum(ref name) => {
                         let variant_name = match &*p.cls {
                             ast::Expr::Attribute(a) => a.attr.to_string(),
-                            _ => return Err("Expected Enum.Variant pattern".to_string()),
+                            _ => return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern")),
                         };
                         let variants = self
                             .func
                             .enum_layouts
                             .get(name)
                             .cloned() // Clone to avoid borrowing self.func
-                            .ok_or_else(|| format!("Unknown enum layout for '{}'", name))?;
+                            .ok_or_else(|| builder_error!(General, "Unknown enum layout for '{}'", name))?;
                         let tag_idx = variants
                             .iter()
                             .position(|(n, _)| *n == variant_name)
                             .ok_or_else(|| {
-                                format!("Unknown variant '{}' for enum '{}'", variant_name, name)
+                                builder_error!(General, "Unknown variant '{}' for enum '{}'", variant_name, name)
                             })?;
 
                         let payload = self.func.next_value();
-                        self.add_instruction(InstructionKind::EnumExtract(payload, val, tag_idx));
+                        push_inst!(self, InstructionKind::EnumExtract(payload, val, tag_idx));
                         let variant_ty = variants[tag_idx].1.clone();
                         self.func.set_type(payload, variant_ty.clone()); // Clone to avoid move
 
@@ -949,38 +935,29 @@ impl CFGBuilder {
                         } else if !p.patterns.is_empty() {
                             if let Type::Tuple(ref types) = variant_ty {
                                 if types.len() != p.patterns.len() {
-                                    return Err(format!(
-                                        "Variant '{}' has {} fields, but pattern has {}",
-                                        variant_name,
-                                        types.len(),
-                                        p.patterns.len()
-                                    ));
+                                    return Err(builder_error!(General, "Variant '{}' has {} fields, but pattern has {}", variant_name, types.len(), p.patterns.len()));
                                 }
                                 for (i, sub_p) in p.patterns.iter().enumerate() {
                                     let elt = self.func.next_value();
-                                    self.add_instruction(InstructionKind::TupleExtract(
+                                    push_inst!(self, InstructionKind::TupleExtract(
                                         elt, payload, i,
                                     ));
                                     self.func.set_type(elt, types[i].clone());
                                     self.handle_nested_pattern(sub_p, elt, block)?;
                                 }
                             } else {
-                                return Err(format!(
-                                    "Variant '{}' has a non-tuple payload, but pattern has {} fields",
-                                    variant_name,
-                                    p.patterns.len()
-                                ));
+                                return Err(builder_error!(General, "Variant '{}' has a non-tuple payload, but pattern has {} fields", variant_name, p.patterns.len()));
                             }
                         }
                         Ok(())
                     }
-                    _ => Err(format!("Cannot destructure type {:?}", ty)),
+                    _ => Err(builder_error!(General, "Cannot destructure type {:?}", ty)),
                 }
             }
             ast::Pattern::MatchValue(_) => {
-                Err("Literal matching not yet supported in nested patterns".to_string())
+                Err(builder_error!(UnsupportedStatement, "Literal matching not yet supported in nested patterns"))
             }
-            _ => Err(format!("Unsupported nested pattern type: {:?}", pattern)),
+            _ => Err(builder_error!(UnsupportedStatement, "Unsupported nested pattern type: {:?}", pattern)),
         }
     }
 }

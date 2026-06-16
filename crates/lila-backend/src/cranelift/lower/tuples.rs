@@ -1,4 +1,4 @@
-use super::{get_val, CodegenContext};
+use super::{get_val, CodegenContext, LoweringError};
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lila_ir::ir::InstructionKind;
@@ -6,7 +6,7 @@ use lila_ir::ir::InstructionKind;
 pub fn lower<M: Module>(
     ctx: &mut CodegenContext<M>,
     inst_kind: &InstructionKind,
-) -> Result<(), String> {
+) -> Result<(), LoweringError> {
     match inst_kind {
         InstructionKind::TupleCreate(dest, elts) => {
             let tuple_ty = ctx.ssa_func.get_type(*dest);

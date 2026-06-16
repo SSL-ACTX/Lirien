@@ -78,6 +78,7 @@ pub fn compute_hash_full(
     enum_layouts: &HashMap<String, Vec<(String, String)>>,
     type_aliases: &HashMap<String, String>,
     named_tuple_layouts: &HashMap<String, Vec<(String, String)>>,
+    typed_dict_layouts: &HashMap<String, Vec<(String, String)>>,
 ) -> u64 {
     let mut hasher = SeaHasher::new();
 
@@ -127,6 +128,16 @@ pub fn compute_hash_full(
     for k in nt_keys {
         k.hash(&mut hasher);
         for (f_name, f_type) in &named_tuple_layouts[k] {
+            f_name.hash(&mut hasher);
+            f_type.hash(&mut hasher);
+        }
+    }
+
+    let mut td_keys: Vec<_> = typed_dict_layouts.keys().collect();
+    td_keys.sort();
+    for k in td_keys {
+        k.hash(&mut hasher);
+        for (f_name, f_type) in &typed_dict_layouts[k] {
             f_name.hash(&mut hasher);
             f_type.hash(&mut hasher);
         }

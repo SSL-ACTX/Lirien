@@ -7,13 +7,8 @@ from lila import verify, i64
 def add_nested_tuples(
     t1: Tuple[Tuple[i64, i64], i64], t2: Tuple[Tuple[i64, i64], i64]
 ) -> Tuple[Tuple[i64, i64], i64]:
-    # Lila IR currently supports basic arithmetic on tuple elements via destructuring in Python
-    # But wait, Lila DSL might not support nested destructuring well yet.
-    # Let's use simple access if supported, or just construct new ones.
-    x1, y1 = t1[0]
-    z1 = t1[1]
-    x2, y2 = t2[0]
-    z2 = t2[1]
+    ((x1, y1), z1) = t1
+    ((x2, y2), z2) = t2
     return ((x1 + x2, y1 + y2), z1 + z2)
 
 
@@ -27,7 +22,17 @@ def add_tuples_2(t1: Tuple[i64, i64], t2: Tuple[i64, i64]) -> Tuple[i64, i64]:
     return (t1[0] + t2[0], t1[1] + t2[1])
 
 
+@verify
+def nested_destructuring(t: Tuple[Tuple[i64, i64], i64]) -> i64:
+    ((x, y), z) = t
+    return x + y + z
+
+
 class TestNestedTuple(unittest.TestCase):
+    def test_nested_destructuring(self):
+        res = nested_destructuring(((1, 2), 3))
+        self.assertEqual(res, 6)
+
     def test_tuples_2(self):
         t1 = (1, 2)
         t2 = (10, 20)

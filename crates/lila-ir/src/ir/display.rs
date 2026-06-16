@@ -31,6 +31,7 @@ impl fmt::Display for Type {
             Type::Buffer(t) => write!(f, "Buffer<{}>", t),
             Type::Tensor(t, dims) => write!(f, "Tensor<{}, {}>", t, dims.join(", ")),
             Type::Struct(name) => write!(f, "Struct<{}>", name),
+            Type::TypedDict(name) => write!(f, "TypedDict<{}>", name),
             Type::NamedTuple(name) => write!(f, "NamedTuple<{}>", name),
             Type::Enum(name) => write!(f, "Enum<{}>", name),
             Type::Tuple(types) => {
@@ -241,11 +242,44 @@ impl fmt::Display for Instruction {
             InstructionKind::FCos(d, s) => {
                 write!(f, "  {} = cos {}{}{}", d, s, loc_str, constraints_str)
             }
+            InstructionKind::FTan(d, s) => {
+                write!(f, "  {} = tan {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FAsin(d, s) => {
+                write!(f, "  {} = asin {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FAcos(d, s) => {
+                write!(f, "  {} = acos {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FAtan(d, s) => {
+                write!(f, "  {} = atan {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FExp(d, s) => {
+                write!(f, "  {} = exp {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FLog(d, s) => {
+                write!(f, "  {} = log {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FLog10(d, s) => {
+                write!(f, "  {} = log10 {}{}{}", d, s, loc_str, constraints_str)
+            }
             InstructionKind::FPow(d, b, e) => write!(
                 f,
                 "  {} = pow {}, {}{}{}",
                 d, b, e, loc_str, constraints_str
             ),
+            InstructionKind::FFloor(d, s) => {
+                write!(f, "  {} = floor {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FCeil(d, s) => {
+                write!(f, "  {} = ceil {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FTrunc(d, s) => {
+                write!(f, "  {} = trunc {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::FNearest(d, s) => {
+                write!(f, "  {} = nearest {}{}{}", d, s, loc_str, constraints_str)
+            }
             InstructionKind::Eq(d, l, r) => {
                 write!(f, "  {} = eq {}, {}{}{}", d, l, r, loc_str, constraints_str)
             }

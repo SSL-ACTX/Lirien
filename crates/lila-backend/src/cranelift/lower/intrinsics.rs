@@ -1,4 +1,4 @@
-use super::{get_all_cl_values, CodegenContext};
+use super::{get_all_cl_values, CodegenContext, LoweringError};
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use lila_ir::ir::{Type as SsaType, Value};
@@ -8,7 +8,7 @@ pub fn lower<M: Module>(
     dest: Value,
     func: &str,
     args: &[Value],
-) -> Result<(), String> {
+) -> Result<(), LoweringError> {
     let mut arg_types = Vec::new();
     for arg in args {
         arg_types.push(ctx.ssa_func.get_type(*arg));
@@ -25,8 +25,7 @@ pub fn lower<M: Module>(
 
     let callee = ctx
         .module
-        .declare_function(func, Linkage::Import, &cl_sig)
-        .map_err(|e| e.to_string())?;
+        .declare_function(func, Linkage::Import, &cl_sig)?;
     let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
 
     let mut arg_vals = Vec::new();

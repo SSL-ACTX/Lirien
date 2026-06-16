@@ -1,0 +1,65 @@
+use lila_ir::ir::Value;
+use std::collections::HashMap;
+use z3::ast::{Array, Bool, Float, Int, BV};
+
+pub struct Resolver<'a> {
+    pub ints: &'a HashMap<Value, Int>,
+    pub floats: &'a HashMap<Value, Float>,
+    pub bvs: &'a HashMap<Value, BV>,
+    pub arrays: &'a HashMap<Value, Array>,
+}
+
+impl<'a> Resolver<'a> {
+    pub fn resolve_bool(&self, name: &str) -> Option<Bool> {
+        if name == "true" {
+            return Some(Bool::from_bool(true));
+        }
+        if name == "false" {
+            return Some(Bool::from_bool(false));
+        }
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
+                let v = Value(id);
+                // In Lila, booleans are often modeled as BV1 or Int(0/1)
+                if let Some(bv) = self.bvs.get(&v) {
+                    if bv.get_size() == 1 {
+                        let zero = BV::from_i64(0, 1);
+                        return Some(bv.eq(&zero).not());
+                    }
+                }
+                if let Some(i) = self.ints.get(&v) {
+                    let zero = Int::from_i64(0);
+                    return Some(i.eq(&zero).not());
+                }
+            }
+        }
+        None
+    }
+
+    pub fn resolve_int(&self, name: &str) -> Option<Int> {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
+                return self.ints.get(&Value(id)).cloned();
+            }
+        }
+        None
+    }
+
+    pub fn resolve_bv(&self, name: &str) -> Option<BV> {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
+                return self.bvs.get(&Value(id)).cloned();
+            }
+        }
+        None
+    }
+
+    pub fn resolve_float(&self, name: &str) -> Option<Float> {
+        if let Some(stripped) = name.strip_prefix('v') {
+            if let Ok(id) = stripped.parse::<usize>() {
+                return self.floats.get(&Value(id)).cloned();
+            }
+        }
+        None
+    }
+}

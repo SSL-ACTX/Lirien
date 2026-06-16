@@ -1,5 +1,5 @@
 use super::TranslationContext;
-use crate::refinement_parser::{parse_array_refinement, parse_refinement};
+use crate::refinement::{parse_array_refinement, parse_refinement};
 use lila_ir::ir::{Instruction, InstructionKind, Type, Value};
 
 pub fn init_values<
@@ -18,6 +18,7 @@ pub fn init_values<
         let ty = ctx.func.get_type(val);
 
         let mut is_mem_obj = false;
+        let mut is_non_nullable = false;
         let mut curr_ty = ty.clone();
         let mut inner_ty = ty.clone();
         let mut propagated_constraint = None;
@@ -33,9 +34,15 @@ pub fn init_values<
                     inner_ty = *inner;
                     break;
                 }
-                Type::Struct(_) | Type::Tuple(_) => {
+                Type::Pointer(_) | Type::Struct(_) | Type::TypedDict(_) => {
                     is_mem_obj = true;
-                    // Composite types and pointers are modeled as Int -> BV.
+                    is_non_nullable = true;
+                    inner_ty = Type::I64;
+                    break;
+                }
+                Type::Tuple(_) | Type::NullablePointer(_) => {
+                    is_mem_obj = true;
+                    is_non_nullable = false;
                     inner_ty = Type::I64;
                     break;
                 }
@@ -65,6 +72,18 @@ pub fn init_values<
             }
 
             ctx.z3_arrays.insert(val, z3_val);
+
+            // Also create a BV for the address (required for null checks)
+            let z3_ptr = ctx.backend.bv_const(&format!("{}_v{}_addr_{}", ctx.func.name, i, ctx.uid), 64);
+
+            if is_non_nullable {
+                let zero = ctx.backend.bv_from_i64(0, 64);
+                let is_null = ctx.backend.bv_eq(&z3_ptr, &zero);
+                let not_null = ctx.backend.bool_not(&is_null);
+                ctx.backend.assert(&not_null);
+            }
+
+            ctx.z3_bvs.insert(val, z3_ptr);
         } else if let Type::Enum(ref name) = inner_ty {
             // Model Enums as a tag (BV) and a payload (Array)
             let tag_val = ctx
@@ -91,14 +110,14 @@ pub fn init_values<
             let mut z3_dims = Vec::new();
             let zero = ctx.backend.int_from_i64(0);
             for dim_name in dims.iter() {
-                // Ensure unique name across different tensors sharing same dim name string
-                // Wait, if two tensors have "M", they MUST share the same size. 
-                // We should scope it globally per function.
-                let z3_dim = ctx.backend.int_const(dim_name);
+                // Symbolic dimensions with the same name (e.g., "M") MUST share the same size
+                // within a function.
+                let z3_dim = ctx.get_dim_var(dim_name);
                 let __tmp = ctx.backend.int_lt(&zero, &z3_dim);
                 ctx.backend.assert(&__tmp);
                 z3_dims.push(z3_dim);
             }
+
             ctx.z3_tensor_dims.insert(val, z3_dims);
 
             let bit_width = base_ty.int_bit_width().unwrap_or(64);
@@ -159,13 +178,13 @@ pub fn init_values<
 
             if let Some(refinement) = ctx.func.refinements.get(&val) {
                 let ref_expr =
-                    crate::refinement_parser::parse_float_refinement(refinement, &z3_val)?;
+                    crate::refinement::parse_float_refinement(refinement, &z3_val)?;
                 ctx.backend.assert(&ref_expr);
                 ctx.has_refinements = true;
             }
             if let Some(constraint) = &propagated_constraint {
                 let ref_expr =
-                    crate::refinement_parser::parse_float_refinement(constraint, &z3_val)?;
+                    crate::refinement::parse_float_refinement(constraint, &z3_val)?;
                 ctx.backend.assert(&ref_expr);
             }
             ctx.z3_floats.insert(val, z3_val);
@@ -301,7 +320,7 @@ pub fn translate<
                     path_cond,
                     &z3_idx,
                     z3_dim_int,
-                    dest.0,
+                    tensor.0,
                     inst.location,
                 )?;
 
@@ -380,7 +399,7 @@ pub fn translate<
                     path_cond,
                     &z3_idx,
                     z3_dim_int,
-                    dest.0,
+                    tensor.0,
                     inst.location,
                 )?;
 
@@ -537,11 +556,25 @@ pub fn translate<
             if let Type::NamedTuple(_) = obj_ty {
                 return Ok(());
             }
+            if let Type::TypedDict(_) = obj_ty {
+                 // TypedDict is modeled as an array (memory object)
+            }
             let z3_obj = ctx.z3_arrays.get(obj).cloned().unwrap();
             let z3_offset = ctx.backend.int_from_i64(*offset as i64);
             if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
                 let res = ctx.backend.array_select_bv(&z3_obj, &z3_offset);
-                let __inner = ctx.backend.bv_eq(&z3_dest, &res);
+                let dest_width = z3_dest.get_size();
+                let res_width = res.get_size();
+
+                let res_adjusted = if dest_width < res_width {
+                    ctx.backend.bv_extract(&res, dest_width - 1, 0)
+                } else if dest_width > res_width {
+                    ctx.backend.bv_zext(&res, dest_width - res_width)
+                } else {
+                    res
+                };
+
+                let __inner = ctx.backend.bv_eq(&z3_dest, &res_adjusted);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {

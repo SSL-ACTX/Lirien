@@ -1,5 +1,6 @@
 use crate::builder::CFGBuilder;
 use crate::ir::{InstructionKind, SourceLocation, Value};
+use crate::push_inst;
 
 impl CFGBuilder {
     pub(super) fn get_constant_int(&self, val: Value) -> Option<i64> {
@@ -44,12 +45,12 @@ impl CFGBuilder {
     pub(super) fn resolve_dim(&mut self, tensor: Value, dim_str: &str, index: usize) -> Value {
         if let Ok(val) = dim_str.parse::<i64>() {
             let dest = self.func.next_value();
-            self.add_instruction(InstructionKind::ConstInt(dest, val));
+            push_inst!(self, InstructionKind::ConstInt(dest, val));
             self.func.set_type(dest, crate::ir::Type::I64);
             dest
         } else {
             let dest = self.func.next_value();
-            self.add_instruction(InstructionKind::TensorDim(dest, tensor, index));
+            push_inst!(self, InstructionKind::TensorDim(dest, tensor, index));
             self.func.set_type(dest, crate::ir::Type::I64);
             dest
         }

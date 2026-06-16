@@ -3,6 +3,7 @@ pub mod ir;
 pub mod optimization;
 pub mod registry;
 
+use self::builder::error::BuilderError;
 use self::builder::CFGBuilder;
 use self::ir::Function;
 use rustpython_ast as ast;
@@ -16,7 +17,8 @@ pub fn transform(
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
     named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
-) -> Result<Vec<Function>, String> {
+    typed_dict_layouts: HashMap<String, Vec<(String, String)>>,
+) -> Result<Vec<Function>, BuilderError> {
     info!(target: "lila::ssa", "Transforming AST to IR for '{}'...", name);
 
     let mut builder = CFGBuilder::new(
@@ -25,6 +27,7 @@ pub fn transform(
         enum_layouts,
         type_aliases,
         named_tuple_layouts,
+        typed_dict_layouts,
     );
     builder.build(suite)?;
 

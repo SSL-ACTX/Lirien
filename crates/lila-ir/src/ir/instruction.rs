@@ -223,10 +223,87 @@ macro_rules! lila_instructions {
                 side_effects: false,
                 category: Float
             },
+            FTan(dest: Value, src: Value) {
+                display: "{} = tan {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FAsin(dest: Value, src: Value) {
+                display: "{} = asin {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FAcos(dest: Value, src: Value) {
+                display: "{} = acos {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FAtan(dest: Value, src: Value) {
+                display: "{} = atan {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FExp(dest: Value, src: Value) {
+                display: "{} = exp {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FLog(dest: Value, src: Value) {
+                display: "{} = log {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FLog10(dest: Value, src: Value) {
+                display: "{} = log10 {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
             FPow(dest: Value, lhs: Value, rhs: Value) {
                 display: "{} = pow {}, {}",
                 def: Some(*dest),
                 uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Float
+            },
+            FFloor(dest: Value, src: Value) {
+                display: "{} = floor {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FCeil(dest: Value, src: Value) {
+                display: "{} = ceil {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FTrunc(dest: Value, src: Value) {
+                display: "{} = trunc {}",
+                def: Some(*dest),
+                uses: [*src],
+                side_effects: false,
+                category: Float
+            },
+            FNearest(dest: Value, src: Value) {
+                display: "{} = nearest {}",
+                def: Some(*dest),
+                uses: [*src],
                 side_effects: false,
                 category: Float
             },

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 #[pyfunction]
-#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), timeout_ms=5000))]
+#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), typed_dict_layouts=HashMap::new(), timeout_ms=5000))]
 pub fn verify_and_compile(
     source: String,
     func_name: String,
@@ -15,12 +15,14 @@ pub fn verify_and_compile(
     enum_layouts: HashMap<String, Vec<(String, String)>>,
     type_aliases: HashMap<String, String>,
     named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
+    typed_dict_layouts: HashMap<String, Vec<(String, String)>>,
     timeout_ms: u32,
 ) -> PyResult<usize> {
     info!(target: "lila::bridge", "Received source for '{}'", func_name);
     debug!(target: "lila::bridge", "Struct layouts: {:?}", struct_layouts);
     debug!(target: "lila::bridge", "Enum layouts: {:?}", enum_layouts);
     debug!(target: "lila::bridge", "Named Tuple layouts: {:?}", named_tuple_layouts);
+    debug!(target: "lila::bridge", "Typed Dict layouts: {:?}", typed_dict_layouts);
     debug!(target: "lila::bridge", "Type aliases: {:?}", type_aliases);
     debug!(target: "lila::bridge", "Timeout ms: {}", timeout_ms);
 
@@ -31,6 +33,7 @@ pub fn verify_and_compile(
         &enum_layouts,
         &type_aliases,
         &named_tuple_layouts,
+        &typed_dict_layouts,
     );
 
     let ssa_list = if let Some(cached_funcs) = cache::load_ir(cache_hash) {
@@ -51,6 +54,7 @@ pub fn verify_and_compile(
             enum_layouts,
             type_aliases,
             named_tuple_layouts,
+            typed_dict_layouts,
         )
         .map_err(|e| {
             eprintln!(
@@ -58,7 +62,7 @@ pub fn verify_and_compile(
                 func_name, e
             );
             cache::invalidate(cache_hash);
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e)
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
         })?;
 
         for ssa in &mut funcs {

@@ -10,8 +10,15 @@ from typing import (
     get_args,
     Tuple as typing_Tuple,
 )
-from .types import TYPE_MAP, Buffer, SizedArray, Closure, FnPointer, Box, Tensor
-from .signatures import _get_type_name, _value_to_lila_type, is_named_tuple
+from .types.base import TYPE_MAP
+from .types.memory import Buffer, SizedArray, Box, Tensor
+from .types.functions import Closure, FnPointer
+from .signatures import (
+    _get_type_name,
+    _value_to_lila_type,
+    is_named_tuple,
+    is_typed_dict,
+)
 
 
 def _get_ctypes_type(ann_str: str) -> Any:
@@ -361,9 +368,10 @@ def _map_ctypes_arguments(
             is_ptr_wrapper
             or getattr(actual_ann, "__lila_struct__", False)
             or getattr(actual_ann, "__lila_enum__", False)
+            or is_typed_dict(actual_ann)
         ):
             c_args.append(ctypes.c_void_p)
-            arg_map.append(("pointer", len(c_args) - 1))
+            arg_map.append(("pointer", len(c_args) - 1, actual_ann))
         elif is_named_tuple(actual_ann):
             # Unpack NamedTuple into multiple arguments recursively
             flattened_ctypes = _get_flattened_ctypes_types(actual_ann, type_mapping)
@@ -573,7 +581,7 @@ def _create_jit_wrapper(
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(actual_fn_ptr)
 
     def jit_call(*args):
-        processed_args, ret_struct, anchors = _prepare_runtime_args(
+        processed_args, ret_struct, anchors, sync_backs = _prepare_runtime_args(
             args, arg_map, c_args, is_ptr_return, TupleReturn
         )
         if is_closure:
@@ -583,6 +591,11 @@ def _create_jit_wrapper(
             processed_args.insert(insert_idx, code_ptr)
 
         res = c_func(*processed_args)
+
+        # Sync back changes for TypedDict
+        for target_dict, struct_obj in sync_backs:
+            for field_name, _ in struct_obj._fields_:
+                target_dict[field_name] = getattr(struct_obj, field_name)
 
         if (
             is_named_tuple(ret_type) or get_origin(ret_type) in [tuple, typing_Tuple]
@@ -654,10 +667,11 @@ def _prepare_runtime_args(
     c_args: List[Any],
     is_ptr_return: bool,
     TupleReturn: Any,
-) -> Tuple[List[Any], Any, List[Any]]:
-    """Map Python arguments to ctypes arguments, tracking anchors for lifetime."""
+) -> Tuple[List[Any], Any, List[Any], List[Any]]:
+    """Map Python arguments to ctypes arguments, tracking anchors for lifetime and sync-backs."""
     processed_args = []
     anchors = []
+    sync_backs = []
     ret_struct = None
 
     if is_ptr_return:
@@ -723,6 +737,20 @@ def _prepare_runtime_args(
                     c_val = c_ty(arg.value)
                     processed_args.append(ctypes.byref(c_val))
                     anchors.append(c_val)
+            elif (
+                isinstance(arg, dict)
+                and len(arg_info) > 2
+                and is_typed_dict(arg_info[2])
+            ):
+                # Convert dict to TypedDict structure
+                TD = arg_info[2]
+                if hasattr(TD, "__lila_ctypes__"):
+                    struct_obj = TD.__lila_ctypes__(**arg)
+                    processed_args.append(ctypes.c_void_p(ctypes.addressof(struct_obj)))
+                    anchors.append(struct_obj)
+                    sync_backs.append((arg, struct_obj))
+                else:
+                    processed_args.append(arg)
             elif isinstance(arg, ctypes.Structure):
                 processed_args.append(ctypes.c_void_p(ctypes.addressof(arg)))
             else:
@@ -759,7 +787,7 @@ def _prepare_runtime_args(
             else:
                 processed_args.append(target_cty(arg))
 
-    return processed_args, ret_struct, anchors
+    return processed_args, ret_struct, anchors, sync_backs
 
 
 def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
@@ -938,11 +966,16 @@ def _create_wrapper(
     def wrapper(*args):
         _check_runtime_refinements(sig, args)
 
-        processed_args, ret_struct, anchors = _prepare_runtime_args(
+        processed_args, ret_struct, anchors, sync_backs = _prepare_runtime_args(
             args, arg_map, c_args, is_ptr_return, TupleReturn
         )
 
         res = c_func(*processed_args)
+
+        # Sync back changes for TypedDict
+        for target_dict, struct_obj in sync_backs:
+            for field_name, _ in struct_obj._fields_:
+                target_dict[field_name] = getattr(struct_obj, field_name)
 
         if (
             is_named_tuple(sig.return_annotation)

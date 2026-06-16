@@ -1,4 +1,4 @@
-use super::{get_all_cl_values, get_val, CodegenContext};
+use super::{get_all_cl_values, get_val, CodegenContext, LoweringError};
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lila_ir::ir::{BlockId as SsaBlockId, InstructionKind, Type as SsaType};
@@ -8,7 +8,7 @@ pub fn lower<M: Module>(
     ctx: &mut CodegenContext<M>,
     kind: &InstructionKind,
     current_ssa_block_id: SsaBlockId,
-) -> Result<(), String> {
+) -> Result<(), LoweringError> {
     match kind {
         InstructionKind::Jump(target) => {
             let dest_block = ctx.blocks[target];
@@ -117,7 +117,15 @@ pub fn lower<M: Module>(
                 if let Some(sret_ptr) = ctx.sret_ptr {
                     let mut current_offset = 0;
                     let mut val_idx = 0;
-                    super::store_to_memory_recursive(ctx, &ctx.ssa_func.return_type, &cl_vals, sret_ptr, &mut current_offset, &mut val_idx);
+                    let dest = super::StorageDest::Addr(sret_ptr);
+                    super::store_recursive(
+                        ctx,
+                        &ctx.ssa_func.return_type,
+                        &cl_vals,
+                        &dest,
+                        &mut current_offset,
+                        &mut val_idx,
+                    );
                     ctx.builder.ins().return_(&[]);
                 } else {
                     ctx.builder.ins().return_(&cl_vals);
@@ -172,7 +180,7 @@ pub fn lower<M: Module>(
                 ctx.builder.ins().return_(&cl_vals);
             }
         }
-        _ => return Err(format!("Not a control flow instruction: {:?}", kind)),
+        _ => return Err(LoweringError::InstructionNotSupported(format!("{:?}", kind), None)),
     }
     Ok(())
 }

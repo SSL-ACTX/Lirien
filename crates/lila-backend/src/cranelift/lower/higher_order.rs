@@ -1,4 +1,4 @@
-use super::{get_all_cl_values, get_flattened_types, get_val, translate_type, CodegenContext};
+use super::{get_all_cl_values, get_flattened_types, get_val, translate_type, CodegenContext, LoweringError};
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use lila_ir::ir::{Type as SsaType, Value as SsaValue};
@@ -8,7 +8,7 @@ pub fn lower<M: Module>(
     dest: SsaValue,
     fn_ptr: SsaValue,
     args: &[SsaValue],
-) -> Result<(), String> {
+) -> Result<(), LoweringError> {
     let fn_ty = ctx.ssa_func.get_type(fn_ptr);
     let (arg_types, ret_ty, is_closure) = match fn_ty {
         SsaType::FnPointer(ref args, ref ret) => (args.clone(), (**ret).clone(), false),
@@ -89,14 +89,18 @@ pub fn lower_lambda<M: Module>(
     dest: SsaValue,
     func_name: &str,
     captures: &[SsaValue],
-) -> Result<(), String> {
+) -> Result<(), LoweringError> {
     let mut sig = ctx.module.make_signature();
     let fn_ty = ctx.ssa_func.get_type(dest);
 
     let (arg_types, ret_ty) = if let SsaType::Closure(_, args, ret) = fn_ty {
         (args, *ret)
     } else {
-        return Err("Lambda must result in a Closure type".to_string());
+        return Err(LoweringError::TypeMismatch {
+            expected: "Closure".to_string(),
+            found: format!("{:?}", fn_ty),
+            location: None,
+        });
     };
 
     // Closure Signature: (ctx_ptr, ...args) -> ret

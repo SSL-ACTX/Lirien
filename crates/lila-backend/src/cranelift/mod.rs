@@ -43,6 +43,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         | SsaType::Buffer(_)
         | SsaType::Tensor(_, _)
         | SsaType::Struct(_)
+        | SsaType::TypedDict(_)
         | SsaType::NamedTuple(_)
         | SsaType::Enum(_)
         | SsaType::Pointer(_)
@@ -90,7 +91,18 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     }
     extern "C" fn lila_sin(x: f64) -> f64 { x.sin() }
     extern "C" fn lila_cos(x: f64) -> f64 { x.cos() }
+    extern "C" fn lila_tan(x: f64) -> f64 { x.tan() }
+    extern "C" fn lila_asin(x: f64) -> f64 { x.asin() }
+    extern "C" fn lila_acos(x: f64) -> f64 { x.acos() }
+    extern "C" fn lila_atan(x: f64) -> f64 { x.atan() }
+    extern "C" fn lila_exp(x: f64) -> f64 { x.exp() }
+    extern "C" fn lila_log(x: f64) -> f64 { x.ln() }
+    extern "C" fn lila_log10(x: f64) -> f64 { x.log10() }
     extern "C" fn lila_pow(x: f64, y: f64) -> f64 { x.powf(y) }
+    extern "C" fn lila_floor(x: f64) -> f64 { x.floor() }
+    extern "C" fn lila_ceil(x: f64) -> f64 { x.ceil() }
+    extern "C" fn lila_trunc(x: f64) -> f64 { x.trunc() }
+    extern "C" fn lila_nearest(x: f64) -> f64 { x.round() }
     
     // Naive math kernel for testing dependent types execution
     extern "C" fn lila_matmul_alloc_f32(a: *const f32, b: *const f32, m: usize, n: usize, k: usize) -> *mut f32 {
@@ -217,7 +229,18 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("memcpy", memcpy as *const u8);
     jit_builder.symbol("sin", lila_sin as *const u8);
     jit_builder.symbol("cos", lila_cos as *const u8);
+    jit_builder.symbol("tan", lila_tan as *const u8);
+    jit_builder.symbol("asin", lila_asin as *const u8);
+    jit_builder.symbol("acos", lila_acos as *const u8);
+    jit_builder.symbol("atan", lila_atan as *const u8);
+    jit_builder.symbol("exp", lila_exp as *const u8);
+    jit_builder.symbol("log", lila_log as *const u8);
+    jit_builder.symbol("log10", lila_log10 as *const u8);
     jit_builder.symbol("pow", lila_pow as *const u8);
+    jit_builder.symbol("floor", lila_floor as *const u8);
+    jit_builder.symbol("ceil", lila_ceil as *const u8);
+    jit_builder.symbol("trunc", lila_trunc as *const u8);
+    jit_builder.symbol("nearest", lila_nearest as *const u8);
     jit_builder.symbol("lila_matmul_alloc_f32", lila_matmul_alloc_f32 as *const u8);
     jit_builder.symbol("lila_tensor_arith_f32", lila_tensor_arith_f32 as *const u8);
     jit_builder.symbol("lila_tensor_reduce_f32", lila_tensor_reduce_f32 as *const u8);
@@ -233,7 +256,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         arg_types.push(ssa_func.get_type(SsaValue(i)));
     }
 
-    let (mut sig, is_ptr_return, _) = lower::build_cranelift_signature(
+    let (sig, is_ptr_return, _) = lower::build_cranelift_signature(
         ssa_func,
         &arg_types,
         &ssa_func.return_type,
@@ -439,7 +462,8 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             }
 
             for inst in &ssa_block.instructions {
-                lower::lower_instruction(&mut cg_ctx, inst, ssa_block.id)?;
+                lower::lower_instruction(&mut cg_ctx, inst, ssa_block.id)
+                    .map_err(|e| e.to_string())?;
             }
         }
 

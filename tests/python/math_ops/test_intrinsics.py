@@ -48,6 +48,40 @@ class TestNewIntrinsics(unittest.TestCase):
 
         self.assertAlmostEqual(compute_pow(2.0, 3.0), 8.0)
 
+    def test_more_math_intrinsics(self):
+        @verify
+        def more_math(x: f64) -> f64:
+            return (
+                math.tan(x)
+                + math.asin(0.5)
+                + math.acos(0.5)
+                + math.atan(x)
+                + math.exp(x)
+                + math.log(x)
+                + math.log10(x)
+            )
+
+        x = 0.5
+        expected = (
+            math.tan(x)
+            + math.asin(0.5)
+            + math.acos(0.5)
+            + math.atan(x)
+            + math.exp(x)
+            + math.log(x)
+            + math.log10(x)
+        )
+        self.assertAlmostEqual(more_math(x), expected)
+
+    def test_rounding_intrinsics(self):
+        @verify
+        def round_ops(x: f64) -> f64:
+            return math.floor(x) + math.ceil(x) + math.trunc(x)
+
+        x = 1.7
+        expected = math.floor(x) + math.ceil(x) + math.trunc(x)
+        self.assertAlmostEqual(round_ops(x), expected)
+
     def test_new_scalar_intrinsics(self):
         @verify
         def scalar_ops(a: i64, b: i64) -> i64:

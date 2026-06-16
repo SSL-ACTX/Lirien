@@ -737,10 +737,33 @@ pub fn translate<
         }
         InstructionKind::FSqrt(dest, s_val)
         | InstructionKind::FSin(dest, s_val)
-        | InstructionKind::FCos(dest, s_val) => {
+        | InstructionKind::FCos(dest, s_val)
+        | InstructionKind::FTan(dest, s_val)
+        | InstructionKind::FAsin(dest, s_val)
+        | InstructionKind::FAcos(dest, s_val)
+        | InstructionKind::FAtan(dest, s_val)
+        | InstructionKind::FExp(dest, s_val)
+        | InstructionKind::FLog(dest, s_val)
+        | InstructionKind::FLog10(dest, s_val)
+        | InstructionKind::FFloor(dest, s_val)
+        | InstructionKind::FCeil(dest, s_val)
+        | InstructionKind::FTrunc(dest, s_val)
+        | InstructionKind::FNearest(dest, s_val) => {
             if let Some(_z3_dest) = ctx.z3_floats.get(dest) {
                 match &inst.kind {
-                    InstructionKind::FSin(_, _) | InstructionKind::FCos(_, _) => {}
+                    InstructionKind::FSin(_, _)
+                    | InstructionKind::FCos(_, _)
+                    | InstructionKind::FTan(_, _)
+                    | InstructionKind::FAsin(_, _)
+                    | InstructionKind::FAcos(_, _)
+                    | InstructionKind::FAtan(_, _)
+                    | InstructionKind::FExp(_, _)
+                    | InstructionKind::FLog(_, _)
+                    | InstructionKind::FLog10(_, _)
+                    | InstructionKind::FFloor(_, _)
+                    | InstructionKind::FCeil(_, _)
+                    | InstructionKind::FTrunc(_, _)
+                    | InstructionKind::FNearest(_, _) => {}
                     InstructionKind::FSqrt(_, _) => {
                         if let Some(z3_src) = ctx.z3_floats.get(s_val) {
                             let ty = ctx.func.get_type(*s_val);

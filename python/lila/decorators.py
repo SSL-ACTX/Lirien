@@ -14,7 +14,7 @@ from typing import (
     Annotated,
 )
 from . import lila_bridge
-from .types import Buffer, Box, Tensor, SizedArray
+from .types.memory import Buffer, Box, Tensor, SizedArray
 from .signatures import (
     _get_type_name,
     _discover_types,
@@ -465,8 +465,8 @@ class MonomorphizedFunction:
 
         log_lvl, old_log = _setup_logging(self.log_level)
         try:
-            struct_layouts, enum_layouts, type_aliases = _discover_types(
-                self.func, self.struct_layouts, mapping
+            struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
+                _discover_types(self.func, self.struct_layouts, mapping)
             )
 
             # Separate NamedTuple layouts
@@ -497,6 +497,7 @@ class MonomorphizedFunction:
                 enum_layouts,
                 type_aliases,
                 named_tuple_layouts,
+                typed_dict_layouts,
                 self.timeout,
             )
         except Exception as e:
@@ -696,8 +697,8 @@ class OverloadedFunction:
 
         log_lvl, old_log = _setup_logging(self.log_level)
         try:
-            struct_layouts, enum_layouts, type_aliases = _discover_types(
-                self.func, self.struct_layouts
+            struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
+                _discover_types(self.func, self.struct_layouts)
             )
 
             # Separate NamedTuple layouts
@@ -723,6 +724,7 @@ class OverloadedFunction:
                 enum_layouts,
                 type_aliases,
                 named_tuple_layouts,
+                typed_dict_layouts,
                 self.timeout,
             )
         except Exception as e:
@@ -816,8 +818,8 @@ def verify(
         )
 
         try:
-            struct_layouts, enum_layouts, type_aliases = _discover_types(
-                func, _struct_layouts
+            struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
+                _discover_types(func, _struct_layouts)
             )
 
             # Separate NamedTuple layouts from struct_layouts
@@ -844,6 +846,7 @@ def verify(
                     enum_layouts,
                     type_aliases,
                     named_tuple_layouts,
+                    typed_dict_layouts,
                     timeout,
                 )
             finally:
