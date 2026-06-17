@@ -2,7 +2,7 @@
 
 # Lila
 
-**A Formally Verified JIT Compiler for Python**
+**A Verifying JIT Compiler for Python**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org/)
@@ -26,6 +26,8 @@ Lila exists to break this dichotomy. It takes Python's "hints" and turns them in
 *   **Verified Tensors:** Formally verified element-wise arithmetic and reductions with Z3 shape-aware validation.
 *   **Bare-Metal Performance:** Bypasses the CPython interpreter and GIL entirely using the Cranelift JIT.
 *   **Flat Value Types:** Stack-allocated, non-boxed structs (`@value`) for zero-overhead data processing and cache-efficient layouts.
+*   **Const Generics & Type-Level Arithmetic:** Static binding of integer dimensions and symbolic arithmetic (e.g., `N + 1`) within type annotations.
+*   **Rank-Polymorphism & Variadic Generics:** Generic dimension sequences using `TypeVarTuple` and `Unpack` for high-dimensional tensor logic.
 *   **Runtime Monomorphization:** Specialized JIT compilation for generic functions using Python `TypeVar` for zero-overhead abstractions.
 *   **Native SIMD:** Direct access to CPU vector registers (`f32x4`, `i32x4`, etc.) from within Python.
 *   **Verified Loop Unrolling:** Compile-time constant tracking and CFG unrolling for optimized execution using `Literal` types.
@@ -146,25 +148,27 @@ def sum_list(n: Optional[Box[Node]]) -> i64:
     return n.val + sum_list(n.next) # Safety proved by Z3
 ```
 
-#### Runtime Monomorphization
-Lila uses Python's `typing.TypeVar` and `Ellipsis` to implement zero-overhead generics and rank-polymorphism. Functions are lazily specialized and JIT-compiled for specific types and tensor ranks at the first call site, similar to C++ templates.
+#### Runtime Monomorphization & Const Generics
+Lila uses Python's `typing.TypeVar` and `Ellipsis` to implement zero-overhead generics. Functions are lazily specialized for specific types, constant integers (Const Generics), and symbolic arithmetic expressions at the first call site.
+
 ```python
 from typing import TypeVar
-from lila import verify, i64, f64, Tensor
+from lila import verify, i64, f64, SizedArray
 
 T = TypeVar("T", i64, f64)
+N = TypeVar("N") # Const Generic
 
 @verify
-def identity(x: T) -> T:
-    return x
+def pad_one(x: SizedArray[T, N], out: SizedArray[T, N + 1]) -> i64:
+    # Lila evaluates N + 1 at JIT-time and specializes the machine code
+    for i in range(N):
+        out[i] = x[i]
+    return N + 1
 
-# Lila generates specialized machine code for each variant
-res_int = identity(42)    # specialized for i64
-res_flt = identity(3.14)  # specialized for f64
-
-@verify
-def first_elt(a: Tensor[f64, ...]) -> f64:
-    return a[0, 0] # Specialized for the specific rank at runtime
+# Specialized for SizedArray[i64, 4] -> SizedArray[i64, 5]
+arr4 = SizedArray[i64, 4](1, 2, 3, 4)
+arr5 = SizedArray[i64, 5](0, 0, 0, 0, 0)
+pad_one(arr4, arr5) 
 ```
 
 #### True Multiple Dispatch
@@ -260,23 +264,31 @@ def process_points(data: Buffer[Point3D]) -> None:
         total = data[i].x + 1
 ```
 
-#### Verified Tensors
-Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches and mathematical violations. It supports **Rank-Polymorphism** using `...`, allowing a single function to operate on tensors of any rank that satisfy a suffix shape.
+#### Verified Tensors: Rank-Polymorphism
+Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches. It supports **Variadic Rank-Polymorphism** using `TypeVarTuple` and `Unpack`, allowing a single function to operate on tensors of any rank while capturing their specific dimensions.
 ```python
-from lila import verify, Tensor, f32
+from typing import TypeVarTuple, Unpack
+from lila import verify, Tensor, f32, i64
+
+Shape = TypeVarTuple("Shape")
 
 @verify
-def rank_poly_compute(a: Tensor[f32, ..., "N"], b: Tensor[f32, ..., "N"]) -> f32:
-    # Lila proves that 'a' and 'b' have the same rank and that their 
-    # last dimensions match 'N' at runtime via monomorphization.
-    res = (a + b) * 2.0
-    return res.sum()
+def get_rank(a: Tensor[f32, Unpack[Shape]]) -> i64:
+    # 'Shape' captures all dimensions as a compile-time tuple
+    return len(Shape)
+
+t1 = Tensor.alloc((10,), f32)
+get_rank(t1) # Returns 1
+
+t3 = Tensor.alloc((2, 3, 4), f32)
+get_rank(t3) # Returns 3
 ```
 
-#### Recursive ADTs: Formally Verified Linked Lists
-Lila supports heap-allocated recursive data structures with full formal verification of their variant access.
+#### Recursive ADTs & Tagged Unions
+Lila supports heap-allocated recursive data structures and tagged unions (Enums/Results) with full formal verification of variant access.
+
 ```python
-from lila import verify, i64, adt, Box
+from lila import verify, i64, adt, Box, Result, Ok, Err
 
 @adt
 class Node:
@@ -290,6 +302,12 @@ def sum_list(n: Node) -> i64:
             return val + sum_list(next)
         case Node.Nil:
             return 0
+
+@verify
+def safe_div(a: i64, b: i64) -> Result[i64, i64]:
+    if b == 0:
+        return Err(0)
+    return Ok(a // b)
 ```
 
 #### Verified Tuples & NamedTuples: Zero-Overhead Aggregates
@@ -326,6 +344,20 @@ def scale_vector(vec: Buffer[f64], factor: f64) -> None:
     # Lila proves 'i' is always within [0, len(vec))
     for i in range(len(vec)):
         vec[i] *= factor
+```
+
+#### Formally Verified Slicing
+Lila supports Python's slicing syntax for `Buffer` and `SizedArray`. Slicing operations are zero-copy (pointer arithmetic) and formally verified to ensure that the resulting slice is always within the bounds of the original buffer.
+
+```python
+@verify
+def sum_slice(data: Buffer[i64], start: i64) -> i64:
+    # Lila proves 'start' is safe and 'data[start:]' is a valid view
+    view = data[start:]
+    total = 0
+    for i in range(len(view)):
+        total += view[i]
+    return total
 ```
 
 ---
@@ -427,11 +459,12 @@ graph TD
 | :--- | :--- |
 | **Core Architecture** | Multi-crate Rust Workspace (`lila-core`, `lila-ir`, `lila-verify`, `lila-backend`, `lila-bridge`) |
 | **Numeric Types** | `i8` through `u64`, `f32`, `f64`, `SIMD (f32x4, etc.)` |
-| **Generics** | Runtime Monomorphization (`TypeVar`) |
+| **Arithmetic** | **Const Generics**, **Type-Level Arithmetic (Symbolic Expressions)** |
+| **Generics** | Runtime Monomorphization (`TypeVar`, `TypeVarTuple`) |
 | **Functional Types**| `FnPointer`, `Closure`, `Callable` |
-| **Complex Types** | Structs, Tensors, Tagged Unions (ADTs), Tuples, Boxed Types |
+| **Complex Types** | Structs, Tensors, ADTs (**Result**), Tuples, **SizedArray**, Box |
 | **Concurrency** | GIL-less multi-threading (`parallel_for`) |
-| **Logic Solver** | Z3 SMT Solver v4.12+ (BV & Float Theories) |
+| **Logic Solver** | Z3 SMT Solver v4.12+ (**BV, Float, & Array Theories**) |
 | **JIT Backend** | Cranelift 0.100+ |
 | **AOT Caching** | Binary IR Serialization (`bincode`, `seahash`) |
 | **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |
@@ -460,6 +493,9 @@ PYTHONPATH=./python python -m unittest discover tests/python
 ---
 
 ## Limitations & Roadmap
+
+### Verifying vs. Verified
+Lila is a **verifying compiler**, meaning it uses formal logic to prove the safety of the input Python code at JIT-time. It is **not** a "formally verified compiler" like CompCert; the compiler's own Rust implementation has not been formally proven correct against a specification.
 
 ### The "Closed World Assumption"
 To maintain mathematical soundness, Lila imposes strict constraints:
