@@ -121,21 +121,44 @@ impl CFGBuilder {
         }
 
         // Check for Enum Creation
-        if let Some(enum_name) = func_name.split('_').next() {
-            if self.func.enum_layouts.contains_key(enum_name) && method_obj.is_none() {
-                let variant_name =
-                    func_name.split('_').skip(1).collect::<Vec<_>>().join("_");
-                let variants = self.func.enum_layouts.get(enum_name).unwrap();
+        let mut enum_info = None;
+        for (name, variants) in &self.func.enum_layouts {
+            let prefix = format!("{}_", name);
+            if func_name.starts_with(&prefix) {
+                let v_name = &func_name[prefix.len()..];
+                if variants.iter().any(|(n, _)| n == v_name) {
+                    enum_info = Some((name.clone(), v_name.to_string()));
+                    break;
+                }
+            }
+        }
+
+        // Special case for direct Ok/Err calls if return type is Result-like
+        if enum_info.is_none() && (func_name == "Ok" || func_name == "Err") && method_obj.is_none() {
+            let enum_name = match self.func.return_type {
+                Type::Enum(ref name) => Some(name.clone()),
+                Type::Struct(ref name) if self.func.enum_layouts.contains_key(name) => {
+                    Some(name.clone())
+                }
+                _ => None,
+            };
+
+            if let Some(name) = enum_name {
+                if let Some(variants) = self.func.enum_layouts.get(&name) {
+                    if variants.iter().any(|(v_name, _)| v_name == &func_name) {
+                        enum_info = Some((name.clone(), func_name.clone()));
+                    }
+                }
+            }
+        }
+
+        if let Some((enum_name, variant_name)) = enum_info {
+            if method_obj.is_none() {
+                let variants = self.func.enum_layouts.get(&enum_name).unwrap();
                 let tag_idx = variants
                     .iter()
                     .position(|(name, _)| name == &variant_name)
-                    .ok_or_else(|| {
-                        builder_error!(
-                            General,
-                            "Unknown variant '{}' for enum '{}'",
-                            variant_name, enum_name
-                        )
-                    })?;
+                    .unwrap();
 
                 let variant_ty = variants[tag_idx].1.clone();
                 let payload = if s.args.is_empty() {

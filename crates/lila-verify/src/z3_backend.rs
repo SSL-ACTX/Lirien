@@ -145,6 +145,14 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         Int::from_i64(val)
     }
 
+    fn int_add(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Int {
+        Int::add(&[a, b])
+    }
+
+    fn int_sub(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Int {
+        Int::sub(&[a, b])
+    }
+
     fn int_eq(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Bool {
         a.eq(b)
     }

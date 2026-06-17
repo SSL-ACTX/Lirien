@@ -19,6 +19,10 @@ Lila is an experimental formal verification and JIT compiler for a safe subset o
 - [x] **IEEE 754 Floating-Point Verification**: Formal proofs for float operations, including div-by-zero and domain checks.
 - [x] **GIL-less Parallelism**: `parallel_for` on raw memory buffers.
 - [x] **Liquid Types**: Base support for formal verification with Z3.
+- [x] **Type-Level Arithmetic (`N + 1`)**: Symbolic shape constraints and arithmetic on TypeVars for rank-polymorphic generic code.
+- [x] **Zero-Copy Array Slicing (`arr[start:end]`)**: First-class IR support for memory views, fully verified by Z3 to be safe and in-bounds.
+- [x] **Pythonic Result ADTs**: Generic `Result[T, E]` type with `Ok()` and `Err()` constructors, leveraging optimized match dispatch.
+- [x] **Cross-Function Type Inference**: Global registry for specialized function signatures, enabling zero-annotation composition.
 - [x] **Literal Types & Loop Unrolling**: Hijacking `typing.Literal` for "Const Generics" and AST-level unrolling.
 - [x] **Monomorphization (TypeVar)**: C++ style templates using Python's `TypeVar` for zero-overhead generic code.
 - [x] **Centralized Granular Tracing**: Rust & Python tracing system.

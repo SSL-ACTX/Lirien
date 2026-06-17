@@ -251,7 +251,10 @@ pub fn translate<
                 check_bounds(ctx, path_cond, &z3_idx, size as i64, dest.0, inst.location)?;
             }
 
-            let z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            let mut z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            if let Some(offset) = ctx.array_offsets.get(arr) {
+                z3_idx_int = ctx.backend.int_add(&z3_idx_int, offset);
+            }
 
             if let Some(z3_dest) = ctx.z3_bvs.get(dest).cloned() {
                 let res = ctx.backend.array_select_bv(&z3_arr, &z3_idx_int);
@@ -275,7 +278,10 @@ pub fn translate<
                 check_bounds(ctx, path_cond, &z3_idx, size as i64, dest.0, inst.location)?;
             }
 
-            let z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            let mut z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            if let Some(offset) = ctx.array_offsets.get(arr) {
+                z3_idx_int = ctx.backend.int_add(&z3_idx_int, offset);
+            }
 
             if let Some(z3_val) = ctx.z3_bvs.get(val).cloned() {
                 let stored = ctx.backend.array_store_bv(&z3_arr, &z3_idx_int, &z3_val);
@@ -293,6 +299,39 @@ pub fn translate<
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             }
+        }
+        InstructionKind::ArraySlice(dest, arr, start_idx) => {
+            let z3_arr = ctx
+                .z3_arrays
+                .get(arr)
+                .cloned()
+                .ok_or_else(|| format!("Array {} not modeled", arr))?;
+            let z3_idx = ctx
+                .z3_bvs
+                .get(start_idx)
+                .cloned()
+                .ok_or_else(|| format!("Index {} not modeled", start_idx))?;
+
+            // Assert start_idx is within bounds of original array
+            if let Type::Array(_, Some(size)) = ctx.func.get_type(*arr) {
+                check_slice_start_bounds(
+                    ctx,
+                    path_cond,
+                    &z3_idx,
+                    size as i64,
+                    dest.0,
+                    inst.location,
+                )?;
+            }
+
+            // Propagate the same array object but with an updated offset
+            ctx.z3_arrays.insert(*dest, z3_arr);
+
+            let mut new_offset = ctx.backend.bv_to_int(&z3_idx, true);
+            if let Some(base_offset) = ctx.array_offsets.get(arr) {
+                new_offset = ctx.backend.int_add(&new_offset, base_offset);
+            }
+            ctx.array_offsets.insert(*dest, new_offset);
         }
         InstructionKind::TensorLoad(dest, tensor, indices) => {
             let z3_tensor_data = ctx.z3_arrays.get(tensor).cloned().unwrap();
@@ -795,11 +834,7 @@ fn check_bounds<
     dest_id: usize,
     location: Option<lila_ir::ir::SourceLocation>,
 ) -> Result<(), String> {
-    let bit_width = ctx
-        .func
-        .get_type(lila_ir::ir::Value(dest_id))
-        .int_bit_width()
-        .unwrap_or(64);
+    let bit_width = 64;
     let zero = ctx.backend.bv_from_i64(0, bit_width);
 
     ctx.backend.push();
@@ -871,6 +906,54 @@ fn check_symbolic_bounds<
         let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
         return Err(format!(
             "Potential out-of-bounds access (index >= length) at v{}{}",
+            dest_id, loc_info
+        ));
+    }
+    ctx.backend.pop(1);
+    Ok(())
+}
+
+fn check_slice_start_bounds<
+    B: crate::backend::SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    ctx: &mut TranslationContext<'_, B>,
+    path_cond: &B::Bool,
+    idx: &B::BV,
+    size: i64,
+    dest_id: usize,
+    location: Option<lila_ir::ir::SourceLocation>,
+) -> Result<(), String> {
+    let bit_width = 64;
+    let zero = ctx.backend.bv_from_i64(0, bit_width);
+
+    ctx.backend.push();
+    ctx.backend.assert(path_cond);
+    let __tmp = ctx.backend.bv_slt(idx, &zero);
+    ctx.backend.assert(&__tmp);
+    if ctx.backend.check()? {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
+        return Err(format!(
+            "Potential out-of-bounds access (negative index) at v{}{}",
+            dest_id, loc_info
+        ));
+    }
+    ctx.backend.pop(1);
+
+    ctx.backend.push();
+    ctx.backend.assert(path_cond);
+    let check_len = ctx.backend.bv_from_i64(size, bit_width);
+    let __tmp2 = ctx.backend.bv_sgt(idx, &check_len);
+    ctx.backend.assert(&__tmp2);
+    if ctx.backend.check()? {
+        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
+        return Err(format!(
+            "Potential out-of-bounds access (index > length) at v{}{}",
             dest_id, loc_info
         ));
     }

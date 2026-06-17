@@ -91,6 +91,7 @@ pub struct TranslationContext<'a, B: SolverBackend> {
     pub z3_bvs: HashMap<Value, B::BV>,
     pub z3_arrays: HashMap<Value, B::Array>,
     pub z3_tensor_dims: HashMap<Value, Vec<B::Int>>,
+    pub array_offsets: HashMap<Value, B::Int>,
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
     pub block_conditions: HashMap<BlockId, B::Bool>,
     pub edge_conditions: HashMap<(BlockId, BlockId), B::Bool>,
@@ -128,6 +129,7 @@ pub fn verify_with_context<
         z3_bvs: HashMap::new(),
         z3_arrays: HashMap::new(),
         z3_tensor_dims: HashMap::new(),
+        array_offsets: HashMap::new(),
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
@@ -253,6 +255,7 @@ fn translate_instructions<
                 }
                 InstructionKind::ArrayLoad(..)
                 | InstructionKind::ArrayStore(..)
+                | InstructionKind::ArraySlice(..)
                 | InstructionKind::BufferLoad(..)
                 | InstructionKind::BufferStore(..)
                 | InstructionKind::TensorLoad(..)

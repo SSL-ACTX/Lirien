@@ -399,6 +399,19 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             super::store_to_memory(ctx, *val, addr, 0);
             ctx.values.insert(*dest, arr_ptr);
         }
+        InstructionKind::ArraySlice(dest, arr, start_idx) => {
+            let arr_ptr = get_val(&ctx.values, arr);
+            let idx_val = get_val(&ctx.values, start_idx);
+            let elem_size = match &ctx.ssa_func.get_type(*arr) {
+                SsaType::Array(inner, _) | SsaType::Buffer(inner) => {
+                    inner.size(&ctx.ssa_func.struct_layouts)
+                }
+                _ => 8,
+            };
+            let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
+            let addr = ctx.builder.ins().iadd(arr_ptr, offset);
+            ctx.values.insert(*dest, addr);
+        }
         InstructionKind::StructCreate(dest, struct_name, args) => {
             let dest_ty = ctx.ssa_func.get_type(*dest);
             if let SsaType::NamedTuple(_) = dest_ty {

@@ -500,6 +500,13 @@ macro_rules! lila_instructions {
                 side_effects: true,
                 category: Memory
             },
+            ArraySlice(dest: Value, arr: Value, start_idx: Value) {
+                display: "{} = slice {}[{}:]",
+                def: Some(*dest),
+                uses: [*arr, *start_idx],
+                side_effects: false,
+                category: Memory
+            },
             BufferLoad(dest: Value, buf: Value, idx: Value) {
                 display: "{} = bufload {}[{}]",
                 def: Some(*dest),

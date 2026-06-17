@@ -18,6 +18,24 @@ class TypeExpr:
     def __floordiv__(self, other):
         return TypeExpr("//", (self, other))
 
+    def __lt__(self, other):
+        return TypeExpr("<", (self, other))
+
+    def __le__(self, other):
+        return TypeExpr("<=", (self, other))
+
+    def __gt__(self, other):
+        return TypeExpr(">", (self, other))
+
+    def __ge__(self, other):
+        return TypeExpr(">=", (self, other))
+
+    def __and__(self, other):
+        return TypeExpr("&", (self, other))
+
+    def __or__(self, other):
+        return TypeExpr("|", (self, other))
+
     def __radd__(self, other):
         return TypeExpr("+", (other, self))
 
@@ -30,6 +48,24 @@ class TypeExpr:
     def __rfloordiv__(self, other):
         return TypeExpr("//", (other, self))
 
+    def __rlt__(self, other):
+        return TypeExpr("<", (other, self))
+
+    def __rle__(self, other):
+        return TypeExpr("<=", (other, self))
+
+    def __rgt__(self, other):
+        return TypeExpr(">", (other, self))
+
+    def __rge__(self, other):
+        return TypeExpr(">=", (other, self))
+
+    def __rand__(self, other):
+        return TypeExpr("&", (other, self))
+
+    def __ror__(self, other):
+        return TypeExpr("|", (other, self))
+
     def evaluate(self, mapping):
         eval_args = []
         for arg in self.args:
@@ -38,11 +74,21 @@ class TypeExpr:
             elif hasattr(arg, "__lila_typevar__"):
                 # It's a LilaTypeVar
                 name = arg.__name__
-                val = mapping.get(name, mapping.get(arg, arg))
-                eval_args.append(val)
+                # Try name first, then object itself
+                if name in mapping:
+                    eval_args.append(mapping[name])
+                elif arg in mapping:
+                    eval_args.append(mapping[arg])
+                else:
+                    eval_args.append(arg)
             elif isinstance(arg, typing.TypeVar):
-                val = mapping.get(arg.__name__, mapping.get(arg, arg))
-                eval_args.append(val)
+                name = arg.__name__
+                if name in mapping:
+                    eval_args.append(mapping[name])
+                elif arg in mapping:
+                    eval_args.append(mapping[arg])
+                else:
+                    eval_args.append(arg)
             else:
                 eval_args.append(arg)
 
@@ -53,7 +99,7 @@ class TypeExpr:
             or hasattr(a, "__lila_typevar__")
             or hasattr(b, "__lila_typevar__")
         ):
-            return self
+            return TypeExpr(self.op, (a, b))
 
         if self.op == "+":
             return a + b
@@ -63,7 +109,39 @@ class TypeExpr:
             return a * b
         if self.op == "//":
             return a // b
+        if self.op == "<":
+            return a < b
+        if self.op == "<=":
+            return a <= b
+        if self.op == ">":
+            return a > b
+        if self.op == ">=":
+            return a >= b
+        if self.op == "&":
+            return a & b
+        if self.op == "|":
+            return a | b
         return self
+
+    def __bool__(self):
+        # Strict evaluation: a TypeExpr cannot be used in a boolean context
+        # unless it has been fully evaluated to a concrete literal.
+        res = self.evaluate({})
+        if isinstance(res, TypeExpr):
+            raise RuntimeError(
+                f"Symbolic TypeExpr '{self.op}' with args {self.args} cannot be "
+                "evaluated to a boolean because it contains unresolved TypeVars. "
+                "This usually indicates a logic error in runtime refinement checks."
+            )
+        return bool(res)
+
+    def __eq__(self, other):
+        if not isinstance(other, TypeExpr):
+            return False
+        return self.op == other.op and self.args == other.args
+
+    def __hash__(self):
+        return hash((self.op, self.args))
 
 
 class LilaTypeVar:
@@ -84,6 +162,24 @@ class LilaTypeVar:
     def __floordiv__(self, other):
         return TypeExpr("//", (self, other))
 
+    def __lt__(self, other):
+        return TypeExpr("<", (self, other))
+
+    def __le__(self, other):
+        return TypeExpr("<=", (self, other))
+
+    def __gt__(self, other):
+        return TypeExpr(">", (self, other))
+
+    def __ge__(self, other):
+        return TypeExpr(">=", (self, other))
+
+    def __and__(self, other):
+        return TypeExpr("&", (self, other))
+
+    def __or__(self, other):
+        return TypeExpr("|", (self, other))
+
     def __radd__(self, other):
         return TypeExpr("+", (other, self))
 
@@ -96,11 +192,39 @@ class LilaTypeVar:
     def __rfloordiv__(self, other):
         return TypeExpr("//", (other, self))
 
+    def __rlt__(self, other):
+        return TypeExpr("<", (other, self))
+
+    def __rle__(self, other):
+        return TypeExpr("<=", (other, self))
+
+    def __rgt__(self, other):
+        return TypeExpr(">", (other, self))
+
+    def __rge__(self, other):
+        return TypeExpr(">=", (other, self))
+
+    def __rand__(self, other):
+        return TypeExpr("&", (other, self))
+
+    def __ror__(self, other):
+        return TypeExpr("|", (other, self))
+
     def __getattr__(self, name):
         return getattr(self._tvar, name)
 
     def __repr__(self):
         return f"LilaTypeVar({self.__name__})"
+
+    def __eq__(self, other):
+        if hasattr(other, "__lila_typevar__"):
+            return self.__name__ == other.__name__
+        if isinstance(other, typing.TypeVar):
+            return self.__name__ == other.__name__
+        return False
+
+    def __hash__(self):
+        return hash(self.__name__)
 
 
 if typing.TYPE_CHECKING:

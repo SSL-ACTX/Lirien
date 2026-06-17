@@ -147,6 +147,9 @@ impl CFGBuilder {
                         }
                     }
                     _ => {
+                        if let ast::Expr::Slice(slice_node) = &*s.slice {
+                            return self.visit_array_slice(arr, slice_node, dest);
+                        }
                         let mut idx = self.visit_expr(*s.slice)?;
                         idx = self.auto_load(idx);
                         match arr_ty {
@@ -195,5 +198,82 @@ impl CFGBuilder {
                 Ok(dest)
             }
         }
+    }
+}
+
+impl CFGBuilder {
+    pub(crate) fn visit_array_slice(
+        &mut self,
+        arr: Value,
+        slice: &ast::ExprSlice,
+        dest: Value,
+    ) -> BuilderResult<Value> {
+        let arr_ty = self.func.get_type(arr);
+        let (inner_ty, total_size) = match arr_ty {
+            Type::Array(inner, size) => (inner, size.map(|s| s as i64)),
+            Type::Buffer(inner) => (inner, None),
+            _ => {
+                return Err(builder_error!(
+                    General,
+                    "Slicing only supported on SizedArray and Buffer"
+                ))
+            }
+        };
+
+        let lower = if let Some(l) = &slice.lower {
+            let v = self.visit_expr(*l.clone())?;
+            self.auto_load(v)
+        } else {
+            let v = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(v, 0));
+            self.func.set_type(v, Type::I64);
+            v
+        };
+
+        let upper = if let Some(u) = &slice.upper {
+            let v = self.visit_expr(*u.clone())?;
+            self.auto_load(v)
+        } else if let Some(size) = total_size {
+            let v = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(v, size));
+            self.func.set_type(v, Type::I64);
+            v
+        } else {
+            return Err(builder_error!(General, "Slice end index required for Buffers"));
+        };
+
+        // TODO: Handle step
+        if slice.step.is_some() {
+            return Err(builder_error!(General, "Slice step not yet supported"));
+        }
+
+        push_inst!(self, InstructionKind::ArraySlice(dest, arr, lower));
+
+        // Infer new size if possible
+        let mut new_size = None;
+        let mut lower_val = None;
+        let mut upper_val = None;
+
+        for block in &self.func.blocks {
+            for inst in &block.instructions {
+                if let InstructionKind::ConstInt(v, val) = inst.kind {
+                    if v == lower {
+                        lower_val = Some(val);
+                    }
+                    if v == upper {
+                        upper_val = Some(val);
+                    }
+                }
+            }
+        }
+
+        if let (Some(l), Some(u)) = (lower_val, upper_val) {
+            if u >= l {
+                new_size = Some((u - l) as usize);
+            }
+        }
+
+        self.func.set_type(dest, Type::Array(inner_ty, new_size));
+        Ok(dest)
     }
 }

@@ -814,18 +814,31 @@ def _prepare_runtime_args(
     return processed_args, ret_struct, anchors, sync_backs
 
 
-def _check_runtime_refinements(sig: inspect.Signature, args: Tuple):
+def _check_runtime_refinements(
+    sig: inspect.Signature, args: Tuple, mapping: Dict[str, Any] = None
+):
     """Validate runtime refinements for arguments."""
     for i, param in enumerate(sig.parameters.values()):
         if i < len(args):
             ann = param.annotation
             if hasattr(ann, "predicate") and ann.predicate:
                 if callable(ann.predicate):
-                    if not ann.predicate(args[i]):
-                        raise ValueError(
-                            f"Runtime Refinement Violation for argument '{param.name}': "
-                            f"Value {args[i]} does not satisfy the predicate."
-                        )
+                    try:
+                        res = ann.predicate(args[i])
+                        # If it returned a symbolic TypeExpr, evaluate it using the current mapping
+                        if hasattr(res, "evaluate") and mapping:
+                            res = res.evaluate(mapping)
+
+                        if not res:
+                            raise ValueError(
+                                f"Runtime Refinement Violation for argument '{param.name}': "
+                                f"Value {args[i]} does not satisfy the predicate."
+                            )
+                    except NameError:
+                        # Cross-parameter refinement predicates might fail at runtime
+                        # because other parameters are not in the lambda's closure.
+                        # We skip these at runtime and rely on Z3's static proof.
+                        pass
 
 
 def _wrap_return_value(
@@ -997,7 +1010,7 @@ def _create_wrapper(
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
     def wrapper(*args):
-        _check_runtime_refinements(sig, args)
+        _check_runtime_refinements(sig, args, type_mapping)
 
         processed_args, ret_struct, anchors, sync_backs = _prepare_runtime_args(
             args, arg_map, c_args, is_ptr_return, TupleReturn
