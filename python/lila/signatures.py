@@ -442,11 +442,17 @@ def _value_to_lila_type(val: Any) -> str:
 
 
 def _find_typevars(ann, found):
-    """Recursively find all TypeVars and TypeVarTuples in a type annotation."""
+    """Recursively find all TypeVars, LilaTypeVars, and TypeVarTuples in a type annotation."""
     from typing import TypeVar
+    from .types.arithmetic import TypeExpr
 
-    if isinstance(ann, (TypeVar, TypeVarTuple)):
+    if isinstance(ann, (TypeVar, TypeVarTuple)) or hasattr(ann, "__lila_typevar__"):
         found.add(ann)
+        return
+
+    if isinstance(ann, TypeExpr):
+        for arg in ann.args:
+            _find_typevars(arg, found)
         return
 
     # Handle Unpack (for TypeVarTuple)
@@ -495,6 +501,43 @@ class TypeSubstitutor(ast.NodeTransformer):
                     if isinstance(val, (list, tuple)):
                         return ast.Constant(value=len(val))
         self.generic_visit(node)
+        return node
+
+    def visit_BinOp(self, node):
+        node = self.generic_visit(node)
+        # Constant fold arithmetic ops if both sides are now constants
+        if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
+            l, r = node.left.value, node.right.value
+            if isinstance(l, (int, float)) and isinstance(r, (int, float)):
+                res = None
+                if isinstance(node.op, ast.Add):
+                    res = l + r
+                elif isinstance(node.op, ast.Sub):
+                    res = l - r
+                elif isinstance(node.op, ast.Mult):
+                    res = l * r
+                elif isinstance(node.op, ast.FloorDiv):
+                    res = l // r
+                elif isinstance(node.op, ast.Div):
+                    res = l / r
+                elif isinstance(node.op, ast.Mod):
+                    res = l % r
+                elif isinstance(node.op, ast.Pow):
+                    res = l**r
+
+                if res is not None:
+                    return ast.Constant(value=res)
+        return node
+
+    def visit_UnaryOp(self, node):
+        node = self.generic_visit(node)
+        if isinstance(node.operand, ast.Constant):
+            val = node.operand.value
+            if isinstance(val, (int, float)):
+                if isinstance(node.op, ast.USub):
+                    return ast.Constant(value=-val)
+                elif isinstance(node.op, ast.UAdd):
+                    return ast.Constant(value=val)
         return node
 
     def visit_Name(self, node):

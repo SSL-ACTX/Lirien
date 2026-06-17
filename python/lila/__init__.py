@@ -30,6 +30,7 @@ from .types import (
     Closure,
     Tensor,
 )
+from .types.arithmetic import TypeExpr, TypeVar  # Lila TypeVar with arithmetic support
 from .decorators import (
     verify,
     parallel_for,

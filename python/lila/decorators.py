@@ -221,12 +221,26 @@ class MonomorphizedFunction:
         """Recursively match TypeVars and Protocols in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
         from typing import TypeVar, TypeVarTuple
+        from .types.arithmetic import TypeExpr
 
-        if isinstance(annotation, (TypeVar, TypeVarTuple)):
+        if (
+            isinstance(annotation, (TypeVar, TypeVarTuple))
+            or hasattr(annotation, "__lila_typevar__")
+            or isinstance(annotation, TypeExpr)
+        ):
+            if isinstance(annotation, TypeExpr):
+                # Try to evaluate it if mapping is already somewhat populated
+                # but we usually match against inputs which are base vars.
+                # If it's in the return type, we evaluate it after inputs are matched.
+                return
+
             name = annotation.__name__
             if name not in mapping:
                 # Support Const Generics: match integers or tuples of integers to TypeVars
-                if isinstance(val, (int, tuple, list)):
+                # Prevent NamedTuple instances from being mistaken for shape tuples
+                if isinstance(val, (int, list)) or (
+                    isinstance(val, tuple) and not is_named_tuple(val.__class__)
+                ):
                     mapping[name] = val
                     return
 
@@ -403,13 +417,25 @@ class MonomorphizedFunction:
         return types.MethodType(self.__call__, instance)
 
     def _specialize(self, mapping):
+        # 0. Evaluate symbolic expressions (TypeExpr) in the mapping
+        from .types.arithmetic import TypeExpr
+
+        # Ensure all base vars are in mapping before evaluating exprs
+        # (Already done by __call__)
+
+        # Replace TypeExprs in mapping with their evaluated values
+        new_mapping = mapping.copy()
+        for k, v in list(new_mapping.items()):
+            if isinstance(v, TypeExpr):
+                new_mapping[k] = v.evaluate(new_mapping)
+
         source, target_name = _prepare_source_and_name(
             self.func, self.class_name, self.method_name
         )
 
         # Specialized function name to avoid collisions
         suffix_parts = []
-        for k, v in sorted(mapping.items()):
+        for k, v in sorted(new_mapping.items()):
             if k.startswith("__ellipsis_"):
                 if all(isinstance(x, int) for x in v):
                     suffix_parts.append("rank" + str(len(v)))
@@ -604,10 +630,10 @@ class MonomorphizedFunction:
 
                 return node
 
-        tree = EllipsisExpander(mapping, self.func.__globals__).visit(tree)
+        tree = EllipsisExpander(new_mapping, self.func.__globals__).visit(tree)
 
         transformer = TypeSubstitutor(
-            {k: v for k, v in mapping.items() if not k.startswith("__ellipsis_")}
+            {k: v for k, v in new_mapping.items() if not k.startswith("__ellipsis_")}
         )
         tree = transformer.visit(tree)
         specialized_source = ast.unparse(tree)
@@ -615,7 +641,7 @@ class MonomorphizedFunction:
         log_lvl, old_log = _setup_logging(self.log_level)
         try:
             struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
-                _discover_types(self.func, self.struct_layouts, mapping)
+                _discover_types(self.func, self.struct_layouts, new_mapping)
             )
 
             # Separate NamedTuple layouts
@@ -630,7 +656,7 @@ class MonomorphizedFunction:
                 pass
 
             # Also add types from mapping
-            for val in mapping.values():
+            for val in new_mapping.values():
                 if hasattr(val, "__name__"):
                     scope[val.__name__] = val
 
@@ -662,16 +688,16 @@ class MonomorphizedFunction:
             _restore_logging(log_lvl, old_log)
 
         # Create specialized wrapper
-        c_args, arg_map = _map_ctypes_arguments(self.sig, self.class_name, mapping)
+        c_args, arg_map = _map_ctypes_arguments(self.sig, self.class_name, new_mapping)
 
         ret_ann = self.sig.return_annotation
-        if hasattr(ret_ann, "__name__") and ret_ann.__name__ in mapping:
-            ret_ann = mapping[ret_ann.__name__]
-        elif str(ret_ann) in mapping:
-            ret_ann = mapping[str(ret_ann)]
+        if hasattr(ret_ann, "__name__") and ret_ann.__name__ in new_mapping:
+            ret_ann = new_mapping[ret_ann.__name__]
+        elif str(ret_ann) in new_mapping:
+            ret_ann = new_mapping[str(ret_ann)]
 
         is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = (
-            _handle_pointer_return(ret_ann, c_args, arg_map, mapping)
+            _handle_pointer_return(ret_ann, c_args, arg_map, new_mapping)
         )
 
         return _create_wrapper(
@@ -683,7 +709,7 @@ class MonomorphizedFunction:
             is_ptr_return,
             TupleReturn,
             tuple_types,
-            mapping,
+            new_mapping,
         )
 
 
