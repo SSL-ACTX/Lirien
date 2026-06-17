@@ -37,7 +37,7 @@ class SizedArray(Generic[T]):
 
         base_type, size = params
 
-        if size is Ellipsis:
+        if size is Ellipsis or isinstance(size, TypeVar):
             return Annotated[cls, (base_type, size)]
 
         base_ty_str = getattr(base_type, "__name__", str(base_type)).lower()

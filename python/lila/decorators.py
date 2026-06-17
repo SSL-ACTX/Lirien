@@ -220,11 +220,16 @@ class MonomorphizedFunction:
     ):
         """Recursively match TypeVars and Protocols in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
-        from typing import TypeVar
+        from typing import TypeVar, TypeVarTuple
 
-        if isinstance(annotation, TypeVar):
+        if isinstance(annotation, (TypeVar, TypeVarTuple)):
             name = annotation.__name__
             if name not in mapping:
+                # Support Const Generics: match integers or tuples of integers to TypeVars
+                if isinstance(val, (int, tuple, list)):
+                    mapping[name] = val
+                    return
+
                 # Store the actual class if it's a Lila object or NamedTuple
                 cls = val.__class__
                 if (
@@ -279,8 +284,8 @@ class MonomorphizedFunction:
                     base_ty, shape = metadata[0]
                     self._match_typevars(base_ty, val, mapping, param_name)
 
+                    actual_shape = getattr(val, "shape", ())
                     if any(s is Ellipsis for s in shape):
-                        actual_shape = getattr(val, "shape", ())
                         if param_name:
                             # Match ellipsis
                             try:
@@ -296,7 +301,33 @@ class MonomorphizedFunction:
                                     )
                             except ValueError:
                                 pass
-                return
+                    else:
+                        # Match individual shape elements (Const Generics / Variadic)
+                        actual_idx = 0
+                        for s in shape:
+                            s_origin = get_origin(s)
+                            if s_origin is not None and "Unpack" in str(s_origin):
+                                # It's a TypeVarTuple
+                                s_args = get_args(s)
+                                if s_args:
+                                    # Calculate how many elements are left to match
+                                    # (This assumes only one Unpack per shape for now, which is standard)
+                                    num_others = len(shape) - 1
+                                    num_unpack = len(actual_shape) - num_others
+                                    unpack_val = actual_shape[
+                                        actual_idx : actual_idx + num_unpack
+                                    ]
+                                    self._match_typevars(
+                                        s_args[0], unpack_val, mapping, param_name
+                                    )
+                                    actual_idx += num_unpack
+                            else:
+                                if actual_idx < len(actual_shape):
+                                    self._match_typevars(
+                                        s, actual_shape[actual_idx], mapping, param_name
+                                    )
+                                    actual_idx += 1
+                    return
 
             # Box[T] -> Annotated[Box, T]
             if actual_origin is Box:
@@ -313,9 +344,16 @@ class MonomorphizedFunction:
             ):
                 if metadata and isinstance(metadata[0], tuple) and len(metadata[0]) > 0:
                     self._match_typevars(metadata[0][0], val, mapping, param_name)
-                    if len(metadata[0]) > 1 and metadata[0][1] is Ellipsis:
-                        if hasattr(val, "__len__") and param_name:
-                            mapping[f"__ellipsis_{param_name}"] = [len(val)]
+                    if len(metadata[0]) > 1:
+                        if metadata[0][1] is Ellipsis:
+                            if hasattr(val, "__len__") and param_name:
+                                mapping[f"__ellipsis_{param_name}"] = [len(val)]
+                        else:
+                            # Const generic size
+                            if hasattr(val, "__len__"):
+                                self._match_typevars(
+                                    metadata[0][1], len(val), mapping, param_name
+                                )
                 return
 
         # 3. Handle standard generics (Tuples)
@@ -383,12 +421,22 @@ class MonomorphizedFunction:
                 name = getattr(v, "__name__", str(v))
                 suffix_parts.append(name)
             else:
-                name = getattr(v, "__name__", str(v))
-                suffix_parts.append(name)
+                if isinstance(v, (list, tuple)):
+                    suffix_parts.append("rank" + str(len(v)))
+                else:
+                    name = getattr(v, "__name__", str(v))
+                    suffix_parts.append(name)
 
+        # Sanitize specialized name for Rust/Cranelift compatibility
         specialized_name = target_name + "_" + "_".join(suffix_parts)
-        # print(f"DEBUG: mapping={mapping}")
-        # print(f"DEBUG: specialized_name={specialized_name}")
+        specialized_name = (
+            specialized_name.replace("[", "_")
+            .replace("]", "_")
+            .replace(",", "_")
+            .replace(" ", "")
+            .replace("(", "_")
+            .replace(")", "_")
+        )
 
         tree = ast.parse(source)
         tree.body[0].name = specialized_name
@@ -429,19 +477,21 @@ class MonomorphizedFunction:
                 if isinstance(node.func, ast.Name):
                     func_name = node.func.id
                     func_obj = self.scope.get(func_name)
-                    
+
                     if isinstance(func_obj, MonomorphizedFunction):
                         call_mapping = {}
                         sig = inspect.signature(func_obj.func)
                         params = list(sig.parameters.items())
-                        
+
                         for i, arg in enumerate(node.args):
                             if i < len(params):
                                 p_name, _ = params[i]
                                 if isinstance(arg, ast.Name):
                                     mapping_key = f"__callable_{arg.id}"
                                     if mapping_key in self.mapping:
-                                        call_mapping[f"__callable_{p_name}"] = self.mapping[mapping_key]
+                                        call_mapping[f"__callable_{p_name}"] = (
+                                            self.mapping[mapping_key]
+                                        )
 
                         if call_mapping:
                             callee_target_name = func_obj.func.__name__
@@ -454,7 +504,9 @@ class MonomorphizedFunction:
                                 else:
                                     callee_suffix_parts.append(name)
 
-                            specialized_callee = f"{callee_target_name}_{'_'.join(callee_suffix_parts)}"
+                            specialized_callee = (
+                                f"{callee_target_name}_{'_'.join(callee_suffix_parts)}"
+                            )
                             node.func.id = specialized_callee
 
                             func_obj._specialize(call_mapping)
@@ -479,7 +531,7 @@ class MonomorphizedFunction:
                             node.slice = ast.Name(id=type_name, ctx=ast.Load())
                         return node
 
-                    # Handle Tuple with Ellipsis (Tensor[T, ...], SizedArray[T, ...])
+                    # Handle Tuple with Ellipsis or TypeVarTuple
                     if isinstance(node.slice, ast.Tuple):
                         new_elts = []
                         for elt in node.slice.elts:
@@ -487,13 +539,7 @@ class MonomorphizedFunction:
                                 ellipsis_key = f"__ellipsis_{self.current_param}"
                                 if ellipsis_key in self.mapping:
                                     for dim in self.mapping[ellipsis_key]:
-                                        if isinstance(dim, str):
-                                            # It's a type name (for rank-polymorphic types if we ever support that)
-                                            # or just a stringified dim.
-                                            # For Tensor/SizedArray, dims are ints or strings.
-                                            new_elts.append(ast.Constant(value=dim))
-                                        else:
-                                            new_elts.append(ast.Constant(value=dim))
+                                        new_elts.append(ast.Constant(value=dim))
                                 else:
                                     # Fallback to first ellipsis found if mapping by name fails
                                     for k, v in self.mapping.items():
@@ -501,6 +547,19 @@ class MonomorphizedFunction:
                                             for dim in v:
                                                 new_elts.append(ast.Constant(value=dim))
                                             break
+                            elif (
+                                isinstance(elt, ast.Subscript)
+                                and isinstance(elt.value, ast.Name)
+                                and elt.value.id == "Unpack"
+                            ):
+                                # It's Unpack[Shape]
+                                if isinstance(elt.slice, ast.Name):
+                                    shape_name = elt.slice.id
+                                    if shape_name in self.mapping:
+                                        dims = self.mapping[shape_name]
+                                        if isinstance(dims, (list, tuple)):
+                                            for dim in dims:
+                                                new_elts.append(ast.Constant(value=dim))
                             else:
                                 new_elts.append(elt)
                         node.slice.elts = new_elts

@@ -360,7 +360,26 @@ def _map_ctypes_arguments(
             if origin is Annotated and hasattr(actual_ann, "__metadata__"):
                 metadata = actual_ann.__metadata__[0]
                 if isinstance(metadata, tuple) and len(metadata) > 1:
-                    dim_count = len(metadata[1])  # length of the shape tuple
+                    shape = metadata[1]
+                    # Handle Unpack in shape
+                    resolved_dim_count = 0
+                    for s in shape:
+                        s_origin = get_origin(s)
+                        if s_origin is not None and "Unpack" in str(s_origin):
+                            s_args = get_args(s)
+                            if (
+                                s_args
+                                and type_mapping
+                                and s_args[0].__name__ in type_mapping
+                            ):
+                                unpack_val = type_mapping[s_args[0].__name__]
+                                if isinstance(unpack_val, (list, tuple)):
+                                    resolved_dim_count += len(unpack_val)
+                                else:
+                                    resolved_dim_count += 1
+                        else:
+                            resolved_dim_count += 1
+                    dim_count = resolved_dim_count
             for _ in range(dim_count):
                 c_args.append(ctypes.c_int64)
             arg_map.append(("tensor", len(c_args) - 1 - dim_count, dim_count))

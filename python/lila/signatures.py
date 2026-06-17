@@ -9,6 +9,7 @@ from typing import (
     Dict,
     Tuple,
     TypeVar,
+    TypeVarTuple,
     Union,
     get_origin,
     get_args,
@@ -441,11 +442,31 @@ def _value_to_lila_type(val: Any) -> str:
 
 
 def _find_typevars(ann, found):
-    """Recursively find all TypeVars in a type annotation."""
-    if isinstance(ann, TypeVar):
+    """Recursively find all TypeVars and TypeVarTuples in a type annotation."""
+    from typing import TypeVar
+
+    if isinstance(ann, (TypeVar, TypeVarTuple)):
         found.add(ann)
-    elif hasattr(ann, "__args__"):
+        return
+
+    # Handle Unpack (for TypeVarTuple)
+    origin = get_origin(ann)
+    if origin is not None and "Unpack" in str(origin):
+        args = get_args(ann)
+        if args:
+            _find_typevars(args[0], found)
+        return
+
+    if hasattr(ann, "__args__"):
         for arg in ann.__args__:
+            _find_typevars(arg, found)
+
+    if hasattr(ann, "__metadata__"):
+        for arg in ann.__metadata__:
+            _find_typevars(arg, found)
+
+    if isinstance(ann, (list, tuple)):
+        for arg in ann:
             _find_typevars(arg, found)
 
 
@@ -459,14 +480,28 @@ def _get_all_typevars(sig: inspect.Signature):
 
 
 class TypeSubstitutor(ast.NodeTransformer):
-    """AST visitor to replace TypeVar names with concrete type names."""
+    """AST visitor to replace TypeVar names with concrete type names or literals."""
 
-    def __init__(self, mapping: Dict[str, str]):
+    def __init__(self, mapping: Dict[str, Any]):
         self.mapping = mapping
+
+    def visit_Call(self, node):
+        # We MUST NOT call generic_visit first if we want to replace the whole Call node
+        if isinstance(node.func, ast.Name) and node.func.id == "len":
+            if len(node.args) == 1 and isinstance(node.args[0], ast.Name):
+                name = node.args[0].id
+                if name in self.mapping:
+                    val = self.mapping[name]
+                    if isinstance(val, (list, tuple)):
+                        return ast.Constant(value=len(val))
+        self.generic_visit(node)
+        return node
 
     def visit_Name(self, node):
         if node.id in self.mapping:
             val = self.mapping[node.id]
+            if isinstance(val, int):
+                return ast.Constant(value=val)
             name = getattr(val, "__name__", str(val))
             return ast.Name(id=name, ctx=node.ctx)
         return self.generic_visit(node)

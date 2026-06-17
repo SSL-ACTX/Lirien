@@ -1,14 +1,9 @@
 import unittest
-from lila import verify, i64, f64, f32x4, Buffer, Box
-from typing import TypeVar
 import numpy as np
+from lila import verify, i64, f64, Buffer, Box
+from typing import TypeVar
 
 T = TypeVar("T")
-
-
-@verify
-def add_anything(a: T, b: T) -> T:
-    return a + b
 
 
 @verify
@@ -24,24 +19,7 @@ def unbox_add(boxed: Box[T], val: T) -> T:
     return boxed.value + val
 
 
-class TestMonomorphization(unittest.TestCase):
-    def test_basic_monomorphization(self):
-        res_i64 = add_anything(10, 20)
-        self.assertEqual(res_i64, 30)
-
-        res_f64 = add_anything(1.5, 2.5)
-        self.assertEqual(res_f64, 4.0)
-
-    def test_simd_monomorphization(self):
-        v1 = f32x4(1.0, 2.0, 3.0, 4.0)
-        v2 = f32x4(10.0, 20.0, 30.0, 40.0)
-        res_simd = add_anything(v1, v2)
-
-        self.assertEqual(res_simd.f0, 11.0)
-        self.assertEqual(res_simd.f1, 22.0)
-        self.assertEqual(res_simd.f2, 33.0)
-        self.assertEqual(res_simd.f3, 44.0)
-
+class TestContainerMonomorphization(unittest.TestCase):
     def test_buffer_monomorphization(self):
         # Test with i64 buffer
         data_i64 = np.array([1, 2, 3, 4, 5], dtype=np.int64)
