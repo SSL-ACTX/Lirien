@@ -172,7 +172,7 @@ pub fn parse_type(
                 }
                 "fnpointer" | "callable" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
-                        if t.elts.len() == 2 {
+                        if t.elts.len() >= 2 {
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
@@ -182,14 +182,22 @@ pub fn parse_type(
                                 arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?);
                             }
                             let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names)?;
-                            return Ok(Type::FnPointer(arg_types, Box::new(ret_type)));
+                            let target = if t.elts.len() > 2 {
+                                if let ast::Expr::Constant(c) = &t.elts[2] {
+                                    match &c.value {
+                                        ast::Constant::Str(s) => Some(s.to_string()),
+                                        _ => None,
+                                    }
+                                } else { None }
+                            } else { None };
+                            return Ok(Type::FnPointer(arg_types, Box::new(ret_type), target));
                         }
                     }
-                    Err(BuilderError::General("FnPointer expects [[arg_types], ret_type]".to_string(), None))
+                    Err(BuilderError::General("FnPointer expects [[arg_types], ret_type, optional_target]".to_string(), None))
                 }
                 "closure" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
-                        if t.elts.len() == 2 {
+                        if t.elts.len() >= 2 {
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
@@ -199,14 +207,23 @@ pub fn parse_type(
                                 arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?);
                             }
                             let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names)?;
+                            let target = if t.elts.len() > 2 {
+                                if let ast::Expr::Constant(c) = &t.elts[2] {
+                                    match &c.value {
+                                        ast::Constant::Str(s) => Some(s.to_string()),
+                                        _ => None,
+                                    }
+                                } else { None }
+                            } else { None };
                             return Ok(Type::Closure(
                                 "".to_string(),
                                 arg_types,
                                 Box::new(ret_type),
+                                target,
                             ));
                         }
                     }
-                    Err(BuilderError::General("Closure expects [[arg_types], ret_type]".to_string(), None))
+                    Err(BuilderError::General("Closure expects [[arg_types], ret_type, optional_target]".to_string(), None))
                 }
                 "tuple" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
@@ -277,10 +294,17 @@ pub fn parse_type(
                 ), None)),
             }
         }
-        ast::Expr::Constant(c) => match &c.value {
-            ast::Constant::None => Ok(Type::Unknown),
-            _ => Err(BuilderError::General("Unsupported constant in type annotation".to_string(), None)),
-        },
+        ast::Expr::Constant(c) => {
+            match &c.value {
+                ast::Constant::Str(_) => Ok(Type::Unknown), // String literals in types are usually metadata
+                ast::Constant::Int(_) => Ok(Type::I64),
+                ast::Constant::Float(_) => Ok(Type::F64),
+                ast::Constant::Bool(_) => Ok(Type::Bool),
+                ast::Constant::None => Ok(Type::Unknown),
+                ast::Constant::Ellipsis => Ok(Type::Unknown),
+                _ => Err(BuilderError::General(format!("Unsupported constant in type annotation: {:?}", c.value), None)),
+            }
+        }
         ast::Expr::Tuple(t) => {
             let mut types = Vec::new();
             for elt in &t.elts {

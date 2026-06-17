@@ -33,8 +33,8 @@ pub enum Type {
     Tuple(Vec<Type>),
     Pointer(Box<Type>),
     NullablePointer(Box<Type>),
-    FnPointer(Vec<Type>, Box<Type>),
-    Closure(String, Vec<Type>, Box<Type>),
+    FnPointer(Vec<Type>, Box<Type>, Option<String>),
+    Closure(String, Vec<Type>, Box<Type>, Option<String>),
     Refined(Box<Type>, String),
     Literal(Box<Type>, i64),
     Unknown,
@@ -127,8 +127,8 @@ impl Type {
             | Type::Array(_, _)
             | Type::Pointer(_)
             | Type::NullablePointer(_)
-            | Type::FnPointer(_, _)
-            | Type::Closure(_, _, _) => true,
+            | Type::FnPointer(..)
+            | Type::Closure(..) => true,
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.is_pointer_like(),
             _ => false,
         }
@@ -183,7 +183,7 @@ impl Type {
             | Type::U8X16
             | Type::I16X8
             | Type::U16X8 => 16,
-            Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
+            Type::FnPointer(..) | Type::Closure(..) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
             Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
@@ -262,7 +262,7 @@ impl Type {
             | Type::U8X16
             | Type::I16X8
             | Type::U16X8 => 16,
-            Type::FnPointer(_, _) | Type::Closure(_, _, _) => 8,
+            Type::FnPointer(..) | Type::Closure(..) => 8,
             Type::Array(inner, Some(_)) => inner.align(struct_layouts),
             Type::Array(_, None) => 8,
             Type::Struct(name) | Type::TypedDict(name) | Type::NamedTuple(name) => {

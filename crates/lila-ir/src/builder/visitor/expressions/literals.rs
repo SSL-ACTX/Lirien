@@ -26,8 +26,16 @@ impl CFGBuilder {
                 push_inst!(self, InstructionKind::ConstInt(val, 0));
                 self.func.set_type(val, Type::I64);
             }
-            _ => return Err(builder_error!(General, "Unsupported constant type")),
-        }
+            ast::Constant::Str(_) => {
+                // String constants are currently only used for metadata/specialization
+                // but might appear in the AST. We treat them as a no-op or placeholder.
+                push_inst!(self, InstructionKind::Nop());
+                self.func.set_type(val, Type::Unknown);
+            }
+            _ => return Err(builder_error!(General, "Unsupported constant type: {:?}", c.value)),
+
+            }
+
         Ok(val)
     }
 

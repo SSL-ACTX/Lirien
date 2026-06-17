@@ -73,11 +73,14 @@ impl CFGBuilder {
             };
             let fn_ty = self.func.get_type(fn_val);
 
-            let (arg_types, ret_ty) = match fn_ty {
-                Type::Closure(_, params, ret) | Type::FnPointer(params, ret) => {
-                    (params, *ret)
+            let (arg_types, ret_ty, static_target) = match fn_ty {
+                Type::FnPointer(ref params, ref ret, ref target) => {
+                    (params.clone(), (**ret).clone(), target.clone())
                 }
-                _ => (Vec::new(), Type::Unknown),
+                Type::Closure(_, ref params, ref ret, ref target) => {
+                    (params.clone(), (**ret).clone(), target.clone())
+                }
+                _ => (Vec::new(), Type::Unknown, None),
             };
 
             let mut args = Vec::new();
@@ -99,7 +102,20 @@ impl CFGBuilder {
 
             let dest = self.func.next_value();
             self.update_location(expr_offset);
-            push_inst!(self, InstructionKind::IndirectCall(dest, fn_val, args));
+
+            if let Some(target) = static_target {
+                // If it's a Closure, we must pass the context pointer as the first argument.
+                if let Type::Closure(..) = fn_ty {
+                    let mut call_args = vec![fn_val];
+                    call_args.extend(args);
+                    push_inst!(self, InstructionKind::Call(dest, target, call_args));
+                } else {
+                    push_inst!(self, InstructionKind::Call(dest, target, args));
+                }
+            } else {
+                push_inst!(self, InstructionKind::IndirectCall(dest, fn_val, args));
+            }
+
             self.func.set_type(dest, ret_ty);
             return Ok(dest);
         }
@@ -803,7 +819,7 @@ impl CFGBuilder {
             .collect();
         self.func.set_type(
             dest,
-            Type::Closure(lambda_name, arg_types, Box::new(lambda_func.return_type)),
+            Type::Closure(lambda_name.clone(), arg_types, Box::new(lambda_func.return_type), Some(lambda_name)),
         );
 
         Ok(dest)

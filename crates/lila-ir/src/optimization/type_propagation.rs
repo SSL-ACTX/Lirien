@@ -430,13 +430,7 @@ pub fn propagate_types(func: &mut Function) {
                     }
                     InstructionKind::StructCreate(d, _struct_name, args) => {
                         let current_ty = func.get_type(*d);
-                        if current_ty == Type::Unknown {
-                            // We need to know if it's a Struct or NamedTuple.
-                            // The visitor usually sets this, but propagation might help if it's missed.
-                            // For now, let's assume Struct if not already set, 
-                            // but actually, we should check registry or self.
-                            // If we can't determine, we leave it unknown.
-                        } else if let Type::Struct(name) | Type::NamedTuple(name) = current_ty {
+                        if let Type::Struct(name) | Type::NamedTuple(name) = current_ty {
                             if let Some(fields) = func.struct_layouts.get(&name) {
                                 for (i, arg) in args.iter().enumerate() {
                                     if i < fields.len() {

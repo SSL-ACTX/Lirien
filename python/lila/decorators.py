@@ -139,7 +139,10 @@ def _prepare_source_and_name(
     source = textwrap.dedent(inspect.getsource(func))
     target_func_name = method_name if method_name else func.__name__
 
-    if class_name:
+    if target_func_name == "<lambda>":
+        target_func_name = "lila_lambda"
+
+    if class_name or func.__name__ == "<lambda>":
         tree = ast.parse(source)
         func_def = tree.body[0]
         func_def.name = target_func_name
@@ -243,6 +246,12 @@ class MonomorphizedFunction:
                     if hasattr(val, "__lila_struct__")
                     else _value_to_lila_type(val)
                 )
+            return
+
+        # Handle Higher-Order types (Callable, Closure, FnPointer)
+        if _has_callable(annotation):
+            if hasattr(val, "__lila_jit__") and param_name:
+                mapping[f"__callable_{param_name}"] = val
             return
 
         # 2. Handle Annotated types (Buffer, Tensor, Box, etc.)
@@ -369,6 +378,10 @@ class MonomorphizedFunction:
                 else:
                     # For Buffer element types or other non-rank ellipsis
                     suffix_parts.extend([str(x) for x in v])
+            elif k.startswith("__callable_"):
+                # Use the target function's name
+                name = getattr(v, "__name__", str(v))
+                suffix_parts.append(name)
             else:
                 name = getattr(v, "__name__", str(v))
                 suffix_parts.append(name)
@@ -382,8 +395,9 @@ class MonomorphizedFunction:
 
         # Expand Ellipsis in AST
         class EllipsisExpander(ast.NodeTransformer):
-            def __init__(self, mapping):
+            def __init__(self, mapping, scope):
                 self.mapping = mapping
+                self.scope = scope
                 self.current_param = None
 
             def visit_arg(self, node):
@@ -408,6 +422,43 @@ class MonomorphizedFunction:
 
                 # Visit body
                 node.body = [self.visit(stmt) for stmt in node.body]
+                return node
+
+            def visit_Call(self, node):
+                self.generic_visit(node)
+                if isinstance(node.func, ast.Name):
+                    func_name = node.func.id
+                    func_obj = self.scope.get(func_name)
+                    
+                    if isinstance(func_obj, MonomorphizedFunction):
+                        call_mapping = {}
+                        sig = inspect.signature(func_obj.func)
+                        params = list(sig.parameters.items())
+                        
+                        for i, arg in enumerate(node.args):
+                            if i < len(params):
+                                p_name, _ = params[i]
+                                if isinstance(arg, ast.Name):
+                                    mapping_key = f"__callable_{arg.id}"
+                                    if mapping_key in self.mapping:
+                                        call_mapping[f"__callable_{p_name}"] = self.mapping[mapping_key]
+
+                        if call_mapping:
+                            callee_target_name = func_obj.func.__name__
+                            callee_suffix_parts = []
+                            for k, v in sorted(call_mapping.items()):
+                                name = getattr(v, "__name__", str(v))
+                                if name in ("jit_call", "wrapper", "lila_lambda"):
+                                    ptr = getattr(v, "__lila_ptr__", 0)
+                                    callee_suffix_parts.append(f"{name}_{hex(ptr)[2:]}")
+                                else:
+                                    callee_suffix_parts.append(name)
+
+                            specialized_callee = f"{callee_target_name}_{'_'.join(callee_suffix_parts)}"
+                            node.func.id = specialized_callee
+
+                            func_obj._specialize(call_mapping)
+
                 return node
 
             def visit_Subscript(self, node):
@@ -453,9 +504,48 @@ class MonomorphizedFunction:
                             else:
                                 new_elts.append(elt)
                         node.slice.elts = new_elts
+
+                # Handle Callable/Closure/FnPointer specialization
+                if isinstance(node.value, ast.Name) and node.value.id in (
+                    "Callable",
+                    "Closure",
+                    "FnPointer",
+                ):
+                    callable_key = f"__callable_{self.current_param}"
+                    if callable_key in self.mapping:
+                        target_val = self.mapping[callable_key]
+                        target_name = getattr(target_val, "__name__", str(target_val))
+                        is_closure = getattr(target_val, "__lila_closure__", False)
+
+                        # Specialize Callable to concrete type
+                        if node.value.id == "Callable":
+                            node.value.id = "Closure" if is_closure else "FnPointer"
+
+                        # Only inject target_name if it's a specific function name
+                        is_generic = (
+                            target_name in ("jit_call", "wrapper")
+                            or "at 0x" in target_name
+                        )
+
+                        if not is_generic:
+                            if isinstance(node.slice, ast.Tuple):
+                                if len(node.slice.elts) == 2:
+                                    node.slice.elts.append(
+                                        ast.Constant(value=target_name)
+                                    )
+                                elif len(node.slice.elts) > 2:
+                                    node.slice.elts[2] = ast.Constant(value=target_name)
+                            elif isinstance(
+                                node.slice, (ast.List, ast.Constant, ast.Name)
+                            ):
+                                node.slice = ast.Tuple(
+                                    elts=[node.slice, ast.Constant(value=target_name)],
+                                    ctx=ast.Load(),
+                                )
+
                 return node
 
-        tree = EllipsisExpander(mapping).visit(tree)
+        tree = EllipsisExpander(mapping, self.func.__globals__).visit(tree)
 
         transformer = TypeSubstitutor(
             {k: v for k, v in mapping.items() if not k.startswith("__ellipsis_")}
@@ -757,6 +847,24 @@ class OverloadedFunction:
         )
 
 
+def _has_callable(ann):
+    """Check if a type annotation contains Callable, Closure, or FnPointer."""
+    if ann is None:
+        return False
+    from .types import FnPointer, Closure
+
+    if (
+        isinstance(ann, (FnPointer, Closure))
+        or "callable" in str(ann).lower()
+        or "closure" in str(ann).lower()
+        or "fnpointer" in str(ann).lower()
+    ):
+        return True
+    if hasattr(ann, "__args__"):
+        return any(_has_callable(arg) for arg in ann.__args__)
+    return False
+
+
 def verify(
     strict: bool = True,
     log_level: str = None,
@@ -799,8 +907,9 @@ def verify(
             _has_ellipsis(p.annotation) for p in sig.parameters.values()
         ) or _has_ellipsis(sig.return_annotation)
         has_protocol = any(_has_protocol(p.annotation) for p in sig.parameters.values())
+        has_callable = any(_has_callable(p.annotation) for p in sig.parameters.values())
 
-        if typevars or has_ellipsis or has_protocol:
+        if typevars or has_ellipsis or has_protocol or has_callable:
             return MonomorphizedFunction(
                 func,
                 typevars,

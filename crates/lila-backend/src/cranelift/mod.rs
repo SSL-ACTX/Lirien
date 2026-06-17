@@ -28,7 +28,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I8 | SsaType::U8 | SsaType::Bool => types::I8,
         SsaType::I16 | SsaType::U16 => types::I16,
         SsaType::I32 | SsaType::U32 => types::I32,
-        SsaType::I64 | SsaType::U64 | SsaType::FnPointer(_, _) | SsaType::Closure(_, _, _) => {
+        SsaType::I64 | SsaType::U64 | SsaType::FnPointer(..) | SsaType::Closure(..) => {
             types::I64
         }
         SsaType::F32 => types::F32,

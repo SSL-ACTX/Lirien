@@ -190,12 +190,21 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
         or "callable" in str(ty).lower()
     ):
         args = getattr(ty, "__args__", [])
-        if len(args) == 2:
-            arg_tys, ret_ty = args
+        if len(args) >= 2:
+            arg_tys, ret_ty = args[0], args[1]
+            target_name = args[2] if len(args) > 2 else None
+
+            # Ensure arg_tys is a list-like
+            if not isinstance(arg_tys, (list, tuple)):
+                arg_tys = [arg_tys]
+
             arg_str = (
                 "[" + ", ".join(_get_type_name(t, type_mapping) for t in arg_tys) + "]"
             )
-            return f"{'Closure' if 'closure' in str(ty).lower() else 'FnPointer'}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
+            base = "Closure" if "closure" in str(ty).lower() else "FnPointer"
+            if target_name:
+                return f'{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}, "{target_name}"]'
+            return f"{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
 
     if hasattr(ty, "__name__"):
         return ty.__name__

@@ -12,8 +12,10 @@ class FnPointer:
         self.ret_type = ret_type
 
     def __class_getitem__(cls, params):
-        if not isinstance(params, tuple) or len(params) != 2:
-            raise TypeError("FnPointer requires [[arg_types], ret_type]")
+        if not isinstance(params, tuple) or len(params) < 2:
+            raise TypeError(
+                "FnPointer requires [[arg_types], ret_type, optional_target_name]"
+            )
         return Annotated[cls, params]
 
 

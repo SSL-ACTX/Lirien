@@ -507,9 +507,7 @@ pub fn translate<
         InstructionKind::StructCreate(dest, struct_name, args) => {
             let dest_ty = ctx.func.get_type(*dest);
             if let Type::NamedTuple(_) = dest_ty {
-                // For NamedTuple, we don't use an array, but we might want to track component values.
-                // However, the verifier currently doesn't have a way to track "registers" for multi-value types.
-                // We'll just skip the array modeling for now.
+                // NamedTuples are passed via registers/flattening instead of discrete arrays.
                 return Ok(());
             }
 

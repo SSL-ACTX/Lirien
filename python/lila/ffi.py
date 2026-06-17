@@ -489,6 +489,7 @@ def _create_jit_wrapper(
     ret_type: Any,
     is_closure: bool = False,
     type_mapping: Dict[str, str] = None,
+    name: str = None,
 ):
     """Create a high-performance wrapper for a JIT-compiled function or closure."""
     import ctypes
@@ -658,6 +659,10 @@ def _create_jit_wrapper(
         return res
 
     jit_call.__lila_ptr__ = code_ptr
+    jit_call.__lila_jit__ = True
+    jit_call.__lila_closure__ = is_closure
+    if name:
+        jit_call.__name__ = name
     return jit_call
 
 
@@ -888,25 +893,34 @@ def _wrap_return_value(
     ):
         is_cls = "closure" in ret_ann_str or isinstance(ret_ann, Closure)
 
-        # Extract arg_types and ret_type
+        # Extract arg_types, ret_type, and target_name
         arg_types = [i64, i64]
         ret_type = i64
+        target_name = None
 
         if isinstance(ret_ann, FnPointer):
             arg_types = ret_ann.arg_types
             ret_type = ret_ann.ret_type
         elif hasattr(ret_ann, "__metadata__"):
             params = ret_ann.__metadata__[0]
-            if isinstance(params, tuple) and len(params) == 2:
-                arg_types, ret_type = params
+            if isinstance(params, tuple) and len(params) >= 2:
+                arg_types, ret_type = params[0], params[1]
+                if len(params) > 2:
+                    target_name = params[2]
         elif hasattr(ret_ann, "__args__"):
-            # Fallback for some typing constructs
             params = ret_ann.__args__
-            if len(params) == 2:
-                arg_types, ret_type = params
+            if len(params) >= 2:
+                arg_types, ret_type = params[0], params[1]
+                if len(params) > 2:
+                    target_name = params[2]
 
         return _create_jit_wrapper(
-            res, arg_types, ret_type, is_closure=is_cls, type_mapping=type_mapping
+            res,
+            arg_types,
+            ret_type,
+            is_closure=is_cls,
+            type_mapping=type_mapping,
+            name=target_name,
         )
     return res
 
@@ -1011,4 +1025,6 @@ def _create_wrapper(
     print(f"[Lila] JIT compiled '{func.__name__}' successfully.")
     wrapper.__lila_jit__ = True
     wrapper.__lila_ptr__ = code_ptr
+    wrapper.__name__ = func.__name__
+    wrapper.__lila_closure__ = False
     return wrapper

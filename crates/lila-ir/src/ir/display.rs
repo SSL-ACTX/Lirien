@@ -40,13 +40,21 @@ impl fmt::Display for Type {
             }
             Type::Pointer(t) => write!(f, "Box<{}>", t),
             Type::NullablePointer(t) => write!(f, "Box<{}>?", t),
-            Type::FnPointer(args, ret) => {
+            Type::FnPointer(args, ret, target) => {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
-                write!(f, "Fn({}) -> {}", inner.join(", "), ret)
+                if let Some(t) = target {
+                    write!(f, "Fn<{}>({}) -> {}", t, inner.join(", "), ret)
+                } else {
+                    write!(f, "Fn({}) -> {}", inner.join(", "), ret)
+                }
             }
-            Type::Closure(name, args, ret) => {
+            Type::Closure(name, args, ret, target) => {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
-                write!(f, "Closure {}({}) -> {}", name, inner.join(", "), ret)
+                if let Some(t) = target {
+                    write!(f, "Closure {}<{}>({}) -> {}", name, t, inner.join(", "), ret)
+                } else {
+                    write!(f, "Closure {}({}) -> {}", name, inner.join(", "), ret)
+                }
             }
             Type::Refined(inner, constraint) => write!(f, "Refined<{}, {}>", inner, constraint),
             Type::Literal(inner, val) => write!(f, "Literal<{}, {}>", inner, val),

@@ -11,8 +11,8 @@ pub fn lower<M: Module>(
 ) -> Result<(), LoweringError> {
     let fn_ty = ctx.ssa_func.get_type(fn_ptr);
     let (arg_types, ret_ty, is_closure) = match fn_ty {
-        SsaType::FnPointer(ref args, ref ret) => (args.clone(), (**ret).clone(), false),
-        SsaType::Closure(_, ref args, ref ret) => (args.clone(), (**ret).clone(), true),
+        SsaType::FnPointer(ref args, ref ret, _) => (args.clone(), (**ret).clone(), false),
+        SsaType::Closure(_, ref args, ref ret, _) => (args.clone(), (**ret).clone(), true),
         _ => {
             // Fallback for unknown types (treat as i64 args and i64 return)
             let mut fallback_args = Vec::new();
@@ -93,8 +93,8 @@ pub fn lower_lambda<M: Module>(
     let mut sig = ctx.module.make_signature();
     let fn_ty = ctx.ssa_func.get_type(dest);
 
-    let (arg_types, ret_ty) = if let SsaType::Closure(_, args, ret) = fn_ty {
-        (args, *ret)
+    let (arg_types, ret_ty) = if let SsaType::Closure(_, ref args, ref ret, _) = fn_ty {
+        (args.clone(), (**ret).clone())
     } else {
         return Err(LoweringError::TypeMismatch {
             expected: "Closure".to_string(),
