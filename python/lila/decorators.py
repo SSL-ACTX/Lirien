@@ -683,6 +683,10 @@ class MonomorphizedFunction:
         transformer_mapping = {
             k: v for k, v in new_mapping.items() if not k.startswith("__")
         }
+        # Redirect recursive calls to the specialized version
+        target_name = self.method_name if self.method_name else self.func.__name__
+        transformer_mapping[target_name] = specialized_name
+
         # Also map the origin name to the specialized name for generic types
         for k, v in list(transformer_mapping.items()):
             if hasattr(v, "__name__") and "_" in v.__name__ and k in v.__name__:

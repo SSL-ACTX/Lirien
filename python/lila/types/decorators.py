@@ -1,7 +1,9 @@
 import ctypes
 import inspect
 import sys
+from typing import get_origin, get_args
 from .base import TYPE_MAP
+from .memory import Box
 
 
 def struct(cls):
@@ -232,26 +234,57 @@ def enum(cls):
                 # Update annotations with substituted types
                 orig_annotations = getattr(cls, "__annotations__", {})
                 new_annotations = {}
-                for name, ty in orig_annotations.items():
+
+                def _substitute_types(ty):
                     if hasattr(ty, "__name__") and ty.__name__ in mapping:
-                        new_annotations[name] = mapping[ty.__name__]
-                    elif str(ty) in mapping:
-                        new_annotations[name] = mapping[str(ty)]
-                    elif isinstance(ty, tuple):
-                        # Handle Tuple[T, ...] substitution
-                        new_elts = []
-                        for elt in ty:
-                            if hasattr(elt, "__name__") and elt.__name__ in mapping:
-                                new_elts.append(mapping[elt.__name__])
-                            elif str(elt) in mapping:
-                                new_elts.append(mapping[str(elt)])
-                            else:
-                                new_elts.append(elt)
-                        new_annotations[name] = tuple(new_elts)
-                    else:
-                        new_annotations[name] = ty
+                        return mapping[ty.__name__]
+                    if str(ty) in mapping:
+                        return mapping[str(ty)]
+
+                    # Handle Box (represented as Annotated[Box, "Name"])
+                    if hasattr(ty, "__metadata__"):
+                        origin = getattr(ty, "__origin__", None)
+                        if origin is Box or (
+                            hasattr(origin, "__name__") and origin.__name__ == "Box"
+                        ):
+                            inner = ty.__metadata__[0]
+                            if isinstance(inner, str):
+                                # If it's a recursive reference to the current generic class
+                                if "[" in inner:
+                                    # e.g. "List[T]"
+                                    origin_name = inner.split("[")[0]
+                                    if origin_name == cls.__name__:
+                                        return Box[specialized_cls]
+                                elif inner == cls.__name__:
+                                    return Box[specialized_cls]
+
+                                # Check mapping for other generic origins
+                                for k, v in mapping.items():
+                                    if k in inner:
+                                        if getattr(v, "__lila_specialized__", False):
+                                            return Box[v]
+
+                                return Box[inner]
+
+                            return Box[_substitute_types(inner)]
+
+                    if isinstance(ty, tuple):
+                        return tuple(_substitute_types(elt) for elt in ty)
+
+                    origin = get_origin(ty)
+                    if origin:
+                        args = get_args(ty)
+                        if args:
+                            new_args = tuple(_substitute_types(arg) for arg in args)
+                            return origin[new_args]
+
+                    return ty
+
+                for name, ty in orig_annotations.items():
+                    new_annotations[name] = _substitute_types(ty)
 
                 specialized_cls.__annotations__ = new_annotations
+                specialized_cls.__lila_variant_types__ = new_annotations
                 return enum(specialized_cls)
 
         return GenericADT

@@ -9,13 +9,14 @@ pub fn parse_type(
     aliases: &HashMap<String, String>,
     named_tuple_names: &HashSet<String>,
     typed_dict_names: &HashSet<String>,
+    enum_names: &HashSet<String>,
 ) -> BuilderResult<Type> {
     match expr {
         ast::Expr::Name(n) => {
             if let Some(alias) = aliases.get(n.id.as_str()) {
                 let alias_expr = ast::Expr::parse(alias, "<alias>")
                     .map_err(|e| BuilderError::General(format!("Error parsing alias '{}': {}", n.id, e), None))?;
-                return parse_type(&alias_expr, aliases, named_tuple_names, typed_dict_names);
+                return parse_type(&alias_expr, aliases, named_tuple_names, typed_dict_names, enum_names);
             }
 
             match n.id.as_str() {
@@ -44,6 +45,8 @@ pub fn parse_type(
                         Ok(Type::NamedTuple(n.id.to_string()))
                     } else if typed_dict_names.contains(n.id.as_str()) {
                         Ok(Type::TypedDict(n.id.to_string()))
+                    } else if enum_names.contains(n.id.as_str()) {
+                        Ok(Type::Enum(n.id.to_string()))
                     } else {
                         Ok(Type::Struct(n.id.to_string()))
                     }
@@ -77,6 +80,8 @@ pub fn parse_type(
                     Ok(Type::NamedTuple(a.attr.to_string()))
                 } else if typed_dict_names.contains(a.attr.as_str()) {
                     Ok(Type::TypedDict(a.attr.to_string()))
+                } else if enum_names.contains(a.attr.as_str()) {
+                    Ok(Type::Enum(a.attr.to_string()))
                 } else {
                     Ok(Type::Struct(a.attr.to_string()))
                 }
@@ -97,13 +102,13 @@ pub fn parse_type(
 
             match base.to_lowercase().as_str() {
                 "array" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
                 "sizedarray" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.len() == 2 {
-                            let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?;
+                            let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
                             if let ast::Expr::Constant(c) = &t.elts[1] {
                                 if let ast::Constant::Int(i) = &c.value {
                                     let size = i
@@ -115,11 +120,11 @@ pub fn parse_type(
                             }
                         }
                     }
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
                 "buffer" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
                 "tensor" => {
@@ -127,7 +132,7 @@ pub fn parse_type(
                         if t.elts.is_empty() {
                             return Err(BuilderError::General("Tensor requires at least a base type".to_string(), None));
                         }
-                        let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?;
+                        let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
                         let mut dims = Vec::new();
                         for dim_expr in t.elts.iter().skip(1) {
                             if let ast::Expr::Constant(c) = dim_expr {
@@ -143,7 +148,7 @@ pub fn parse_type(
                         }
                         Ok(Type::Tensor(Box::new(inner), dims))
                     } else {
-                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                         Ok(Type::Tensor(Box::new(inner), Vec::new()))
                     }
                 }
@@ -160,11 +165,11 @@ pub fn parse_type(
                     Err(BuilderError::General("Literal expects an integer constant".to_string(), None))
                 }
                 "box" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(Type::Pointer(Box::new(inner)))
                 }
                 "nullable" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
                         other => Ok(Type::NullablePointer(Box::new(other))),
@@ -176,12 +181,12 @@ pub fn parse_type(
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
-                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names)?);
+                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names, enum_names)?);
                                 }
                             } else {
-                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?);
+                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?);
                             }
-                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names)?;
+                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names, enum_names)?;
                             let target = if t.elts.len() > 2 {
                                 if let ast::Expr::Constant(c) = &t.elts[2] {
                                     match &c.value {
@@ -201,12 +206,12 @@ pub fn parse_type(
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
-                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names)?);
+                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names, enum_names)?);
                                 }
                             } else {
-                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?);
+                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?);
                             }
-                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names)?;
+                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names, enum_names)?;
                             let target = if t.elts.len() > 2 {
                                 if let ast::Expr::Constant(c) = &t.elts[2] {
                                     match &c.value {
@@ -229,34 +234,34 @@ pub fn parse_type(
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         let mut types = Vec::new();
                         for elt in &t.elts {
-                            types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names)?);
+                            types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
                         }
                         Ok(Type::Tuple(types))
                     } else {
                         // Handle Tuple[i64]
-                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                         Ok(Type::Tuple(vec![inner]))
                     }
                 }
                 "refined" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
-                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names);
+                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names);
                         }
                     }
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(inner)
                 }
                 "annotated" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
-                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names);
+                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names);
                         }
                     }
-                    parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)
+                    parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)
                 }
                 "optional" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names)?;
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
                         other => Ok(Type::NullablePointer(Box::new(other))),
@@ -274,7 +279,7 @@ pub fn parse_type(
                                         continue;
                                     }
                                 }
-                                inner_ty = Some(parse_type(elt, aliases, named_tuple_names, typed_dict_names)?);
+                                inner_ty = Some(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
                             }
                             if has_none && inner_ty.is_some() {
                                 let inner = inner_ty.unwrap();
@@ -308,13 +313,13 @@ pub fn parse_type(
         ast::Expr::Tuple(t) => {
             let mut types = Vec::new();
             for elt in &t.elts {
-                types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names)?);
+                types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
             }
             Ok(Type::Tuple(types))
         }
         ast::Expr::BinOp(b) if matches!(b.op, ast::Operator::BitOr) => {
-            let lhs = parse_type(&b.left, aliases, named_tuple_names, typed_dict_names)?;
-            let rhs = parse_type(&b.right, aliases, named_tuple_names, typed_dict_names)?;
+            let lhs = parse_type(&b.left, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+            let rhs = parse_type(&b.right, aliases, named_tuple_names, typed_dict_names, enum_names)?;
 
             let (inner, has_none) = match (&lhs, &rhs) {
                 (Type::Unknown, other) | (other, Type::Unknown) => (other.clone(), true),
@@ -340,6 +345,7 @@ pub fn extract_refinement(
     struct_layouts: &HashMap<String, Vec<(String, Type)>>,
     named_tuple_names: &HashSet<String>,
     typed_dict_names: &HashSet<String>,
+    enum_names: &HashSet<String>,
 ) -> BuilderResult<Option<String>> {
     match expr {
         ast::Expr::Subscript(s) => {
@@ -349,7 +355,7 @@ pub fn extract_refinement(
             };
             if base_name == "Refined" || base_name == "Annotated" {
                 if let ast::Expr::Tuple(t) = &*s.slice {
-                    let base_ty = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names)?;
+                    let base_ty = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     for elt in t.elts.iter().skip(1) {
                         match elt {
                             ast::Expr::Constant(c) => {
@@ -390,7 +396,7 @@ pub fn extract_refinement(
         ast::Expr::Name(n) => {
             if let Some(alias) = aliases.get(n.id.as_str()) {
                 if let Ok(alias_expr) = ast::Expr::parse(alias, "<alias>") {
-                    return extract_refinement(&alias_expr, aliases, struct_layouts, named_tuple_names, typed_dict_names);
+                    return extract_refinement(&alias_expr, aliases, struct_layouts, named_tuple_names, typed_dict_names, enum_names);
                 }
             }
         }

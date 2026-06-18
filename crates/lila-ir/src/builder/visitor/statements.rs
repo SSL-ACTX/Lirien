@@ -13,19 +13,19 @@ impl CFGBuilder {
         self.func.arg_count = s.args.args.len();
 
         if let Some(returns) = &s.returns {
-            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names)?;
+            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
             self.func.return_type = ret_ty;
             self.func.ret_refinement =
-                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names)?;
+                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
         }
 
         for arg in s.args.args {
             let val = self.func.next_value();
             if let Some(annotation) = &arg.def.annotation {
-                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names)?;
+                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
                 self.func.set_type(val, ty);
                 if let Some(refinement) =
-                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names)?
+                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?
                 {
                     self.func.set_refinement(val, refinement);
                 }
@@ -87,7 +87,7 @@ impl CFGBuilder {
                     let mut value = self.visit_expr(*value_expr)?;
                     value = self.auto_load(value);
 
-                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names) {
+                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names) {
                         let val_ty = self.func.get_type(value);
                         if ann_ty.is_float() && val_ty.is_int() {
                             let converted = self.func.next_value();
@@ -584,11 +584,6 @@ impl CFGBuilder {
 
                 let enum_name = match subject_ty {
                     Type::Enum(name) => name,
-                    Type::Struct(name) if self.func.enum_layouts.contains_key(&name) => {
-                        // Fix the type misclassification
-                        self.func.set_type(subject_val, Type::Enum(name.clone()));
-                        name
-                    }
                     _ => {
                         return Err(builder_error!(UnsupportedStatement, "match statement currently only supported for Enums, found {:?}", subject_ty));
                     }

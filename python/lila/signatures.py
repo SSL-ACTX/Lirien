@@ -34,8 +34,11 @@ def is_typed_dict(cls):
     return hasattr(cls, "__annotations__") and hasattr(cls, "__total__")
 
 
-def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
+def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
     """Consistently convert a Python-side type to its Lila IR string representation."""
+    if getattr(ty, "__lila_specialized__", False):
+        return ty.__name__
+
     if type_mapping:
         if isinstance(ty, str) and ty in type_mapping:
             return _get_type_name(type_mapping[ty], type_mapping)
@@ -88,14 +91,29 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
 
         inner = ty.__metadata__[0]
 
+        # Handle Box
+        if (
+            origin is Box
+            or (hasattr(origin, "__name__") and origin.__name__ == "Box")
+            or "box" in origin_str
+        ):
+            return f"Box[{_get_type_name(inner, type_mapping)}]"
+
         # Handle Tensor
         if "tensor" in origin_str:
-            base_ty, shape = inner
-            shape_str = ", ".join(
-                f'"{s}"' if isinstance(s, str) else ("..." if s is Ellipsis else str(s))
-                for s in shape
-            )
-            return f"Tensor[{_get_type_name(base_ty, type_mapping)}, {shape_str}]"
+            if isinstance(inner, tuple) and len(inner) == 2:
+                base_ty, shape = inner
+                shape_str = ", ".join(
+                    f'"{s}"'
+                    if isinstance(s, str)
+                    else ("..." if s is Ellipsis else str(s))
+                    for s in shape
+                )
+                return f"Tensor[{_get_type_name(base_ty, type_mapping)}, {shape_str}]"
+            else:
+                # Fallback for older tensor format
+                base_ty = inner
+                return f"Tensor[{_get_type_name(base_ty, type_mapping)}]"
 
         # Check for Tuple in Annotated
         if "tuple" in origin_str:
@@ -128,11 +146,12 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
         if "buffer" in origin_str:
             inner_name = _get_type_name(inner, type_mapping)
             return f"Buffer[{inner_name}]"
+
         if "box" in origin_str:
             inner_name = _get_type_name(inner, type_mapping)
             return f"Box[{inner_name}]"
+
         if "sizedarray" in origin_str:
-            # SizedArray metadata usually has (base_type, size)
             if isinstance(inner, tuple) and len(inner) == 2:
                 return (
                     f"SizedArray[{_get_type_name(inner[0], type_mapping)}, {inner[1]}]"
@@ -141,10 +160,10 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
         # Fallback for standard Annotated[T, metadata]
         return _get_type_name(origin, type_mapping)
 
-    # Handle standard Tuples
-    origin = getattr(ty, "__origin__", None)
-    # Handle Union types (including Optional)
+    # Handle subscripted generics (e.g. List[T])
     origin = get_origin(ty)
+
+    # Handle Union types (including Optional)
     if (
         origin is Union
         or (
@@ -171,41 +190,53 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
                 inner_name = _get_type_name(box_ty, type_mapping)
                 return f"Nullable[{inner_name}]"
 
-    if origin:
-        origin_str = str(origin)
-        if "Literal" in origin_str:
-            args = getattr(ty, "__args__", [])
+    if origin is not None:
+        args = get_args(ty)
+        origin_name = getattr(origin, "__name__", str(origin))
+        if type_mapping and origin_name in type_mapping:
+            specialized = type_mapping[origin_name]
+            if getattr(specialized, "__lila_specialized__", False):
+                return specialized.__name__
+
+        if origin is tuple or origin is Tuple or "tuple" in str(ty).lower():
             if args:
-                return f"Literal[{args[0]}]"
+                return (
+                    "(" + ", ".join(_get_type_name(t, type_mapping) for t in args) + ")"
+                )
+            return "(i64, i64)"  # Default
 
-    if origin is tuple or origin is Tuple or "tuple" in str(ty).lower():
-        args = getattr(ty, "__args__", [])
+        # Handle Higher-Order types
+        if (
+            "fnpointer" in str(ty).lower()
+            or "closure" in str(ty).lower()
+            or "callable" in str(ty).lower()
+        ):
+            if len(args) >= 2:
+                arg_tys, ret_ty = args[0], args[1]
+                target_name = args[2] if len(args) > 2 else None
+
+                # Ensure arg_tys is a list-like
+                if not isinstance(arg_tys, (list, tuple)):
+                    arg_tys = [arg_tys]
+
+                arg_str = (
+                    "["
+                    + ", ".join(_get_type_name(t, type_mapping) for t in arg_tys)
+                    + "]"
+                )
+                base = "Closure" if "closure" in str(ty).lower() else "FnPointer"
+                if target_name:
+                    return f'{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}, "{target_name}"]'
+                return f"{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
+
+        # Standard generic formatting
         if args:
-            return "(" + ", ".join(_get_type_name(t, type_mapping) for t in args) + ")"
-        return "(i64, i64)"  # Default
-
-    # Handle Higher-Order types
-    if (
-        "fnpointer" in str(ty).lower()
-        or "closure" in str(ty).lower()
-        or "callable" in str(ty).lower()
-    ):
-        args = getattr(ty, "__args__", [])
-        if len(args) >= 2:
-            arg_tys, ret_ty = args[0], args[1]
-            target_name = args[2] if len(args) > 2 else None
-
-            # Ensure arg_tys is a list-like
-            if not isinstance(arg_tys, (list, tuple)):
-                arg_tys = [arg_tys]
-
-            arg_str = (
-                "[" + ", ".join(_get_type_name(t, type_mapping) for t in arg_tys) + "]"
+            return (
+                f"{origin_name}["
+                + ", ".join(_get_type_name(t, type_mapping) for t in args)
+                + "]"
             )
-            base = "Closure" if "closure" in str(ty).lower() else "FnPointer"
-            if target_name:
-                return f'{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}, "{target_name}"]'
-            return f"{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
+        return origin_name
 
     if hasattr(ty, "__name__"):
         return ty.__name__
@@ -214,7 +245,7 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, str] = None) -> str:
 
 
 def _discover_types(
-    func: Callable, initial_struct_layouts: Dict, type_mapping: Dict[str, str] = None
+    func: Callable, initial_struct_layouts: Dict, type_mapping: Dict[str, Any] = None
 ) -> Tuple[Dict, Dict, Dict, Dict]:
     """Scan for struct layouts, enum layouts, and type aliases referenced in the function's scope."""
     struct_layouts = initial_struct_layouts.copy() if initial_struct_layouts else {}
@@ -297,8 +328,8 @@ def _discover_types(
             ]
         elif getattr(obj, "__lila_enum__", False) and name not in enum_layouts:
             layout = []
-            for v_name in getattr(obj, "__lila_variants__", []):
-                v_ty = obj.__lila_variant_types__[v_name]
+            variants = getattr(obj, "__lila_variant_types__", {})
+            for v_name, v_ty in variants.items():
                 v_ty_name = _get_type_name(v_ty, type_mapping)
                 layout.append((v_name, v_ty_name))
                 if (
@@ -341,6 +372,7 @@ def _discover_types(
                 type_aliases[name] = f"Refined[{base_ty_name}, {pred_src}]"
             except (TypeError, AttributeError, SyntaxError, OSError):
                 pass
+
     return struct_layouts, enum_layouts, type_aliases, typed_dict_layouts
 
 
@@ -360,7 +392,10 @@ def _value_to_lila_type(val: Any) -> str:
         hasattr(val, "__lila_struct__")
         or hasattr(val, "__lila_enum__")
         or is_named_tuple(type(val))
+        or hasattr(val, "__lila_specialized__")
     ):
+        if hasattr(val, "__lila_specialized__"):
+            return val.__name__
         return val.__class__.__name__
 
     # SIMD and common wrappers
@@ -438,22 +473,34 @@ def _value_to_lila_type(val: Any) -> str:
     if isinstance(val, ctypes.Structure) and not hasattr(val, "__lila_struct__"):
         return val.__class__.__name__
 
-    return "i64"
+    return "unknown"
 
 
-def _find_typevars(ann, found):
+def _get_all_typevars(sig: inspect.Signature) -> set:
+    """Extract all TypeVars from a function signature."""
+    tvars = set()
+    for param in sig.parameters.values():
+        _find_typevars(param.annotation, tvars)
+    _find_typevars(sig.return_annotation, tvars)
+    return tvars
+
+
+def _find_typevars(ann: Any, found: set = None) -> set:
     """Recursively find all TypeVars, LilaTypeVars, and TypeVarTuples in a type annotation."""
     from typing import TypeVar
     from .types.arithmetic import TypeExpr
 
+    if found is None:
+        found = set()
+
     if isinstance(ann, (TypeVar, TypeVarTuple)) or hasattr(ann, "__lila_typevar__"):
         found.add(ann)
-        return
+        return found
 
     if isinstance(ann, TypeExpr):
         for arg in ann.args:
             _find_typevars(arg, found)
-        return
+        return found
 
     # Handle Unpack (for TypeVarTuple)
     origin = get_origin(ann)
@@ -461,7 +508,7 @@ def _find_typevars(ann, found):
         args = get_args(ann)
         if args:
             _find_typevars(args[0], found)
-        return
+        return found
 
     if hasattr(ann, "__args__"):
         for arg in ann.__args__:
@@ -475,14 +522,7 @@ def _find_typevars(ann, found):
         for arg in ann:
             _find_typevars(arg, found)
 
-
-def _get_all_typevars(sig: inspect.Signature):
-    """Extract all TypeVars from a function signature."""
-    tvars = set()
-    for param in sig.parameters.values():
-        _find_typevars(param.annotation, tvars)
-    _find_typevars(sig.return_annotation, tvars)
-    return tvars
+    return found
 
 
 class TypeSubstitutor(ast.NodeTransformer):
@@ -543,7 +583,6 @@ class TypeSubstitutor(ast.NodeTransformer):
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Name) and node.value.id in self.mapping:
             val = self.mapping[node.value.id]
-            # If it's a specialized Lila type, replace the whole subscript
             if getattr(val, "__lila_specialized__", False):
                 return ast.Name(id=val.__name__, ctx=node.ctx)
 

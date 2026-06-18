@@ -778,7 +778,7 @@ impl CFGBuilder {
 
         for (i, arg) in s.args.args.iter().enumerate() {
             let arg_ty = if let Some(ann) = &arg.def.annotation {
-                crate::builder::metadata::parse_type(ann, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names)?
+                crate::builder::metadata::parse_type(ann, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?
             } else {
                 Type::Unknown
             };
