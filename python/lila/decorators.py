@@ -201,6 +201,9 @@ class MonomorphizedFunction:
         class_name=None,
         method_name=None,
         timeout=5000,
+        enum_layouts=None,
+        named_tuple_layouts=None,
+        typed_dict_layouts=None,
     ):
         self.func = func
         self.__code__ = func.__code__
@@ -208,6 +211,9 @@ class MonomorphizedFunction:
         self.strict = strict
         self.log_level = log_level
         self.struct_layouts = struct_layouts
+        self.enum_layouts = enum_layouts
+        self.named_tuple_layouts = named_tuple_layouts
+        self.typed_dict_layouts = typed_dict_layouts
         self.class_name = class_name
         self.method_name = method_name
         self.timeout = timeout
@@ -260,11 +266,15 @@ class MonomorphizedFunction:
         if _has_protocol(annotation):
             name = annotation.__name__
             if name not in mapping:
-                mapping[name] = (
-                    val.__class__
-                    if hasattr(val, "__lila_struct__")
-                    else _value_to_lila_type(val)
-                )
+                cls = val.__class__
+                if (
+                    hasattr(cls, "__lila_struct__")
+                    or hasattr(cls, "__lila_enum__")
+                    or is_named_tuple(cls)
+                ):
+                    mapping[name] = cls
+                else:
+                    mapping[name] = _value_to_lila_type(val)
             return
 
         # Handle Higher-Order types (Callable, Closure, FnPointer)
@@ -701,11 +711,19 @@ class MonomorphizedFunction:
         log_lvl, old_log = _setup_logging(self.log_level)
         try:
             struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
-                _discover_types(self.func, self.struct_layouts, new_mapping)
+                _discover_types(
+                    self.func,
+                    self.struct_layouts,
+                    new_mapping,
+                    initial_enum_layouts=self.enum_layouts,
+                    initial_typed_dict_layouts=self.typed_dict_layouts,
+                )
             )
 
             # Separate NamedTuple layouts
-            named_tuple_layouts = {}
+            named_tuple_layouts = (
+                self.named_tuple_layouts.copy() if self.named_tuple_layouts else {}
+            )
             scope = self.func.__globals__.copy()
             # Also check closure vars
             try:
@@ -1015,6 +1033,9 @@ def verify(
     log_level: str = None,
     timeout: int = 5000,
     _struct_layouts: dict = None,
+    _enum_layouts: dict = None,
+    _named_tuple_layouts: dict = None,
+    _typed_dict_layouts: dict = None,
     _class_name: str = None,
     _method_name: str = None,
 ) -> Callable:
@@ -1027,7 +1048,12 @@ def verify(
     """
 
     # Handle the case where the decorator is used without parentheses: @verify
-    if callable(strict) and log_level is None and _struct_layouts is None:
+    if (
+        callable(strict)
+        and log_level is None
+        and _struct_layouts is None
+        and _enum_layouts is None
+    ):
         func = strict
         # Re-call verify with defaults
         return verify(strict=True)(func)
@@ -1099,6 +1125,9 @@ def verify(
                 _class_name,
                 _method_name,
                 timeout,
+                enum_layouts=_enum_layouts,
+                named_tuple_layouts=_named_tuple_layouts,
+                typed_dict_layouts=_typed_dict_layouts,
             )
 
         log_lvl, old_log = _setup_logging(log_level)
@@ -1108,11 +1137,18 @@ def verify(
 
         try:
             struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
-                _discover_types(func, _struct_layouts)
+                _discover_types(
+                    func,
+                    _struct_layouts,
+                    initial_enum_layouts=_enum_layouts,
+                    initial_typed_dict_layouts=_typed_dict_layouts,
+                )
             )
 
             # Separate NamedTuple layouts from struct_layouts
-            named_tuple_layouts = {}
+            named_tuple_layouts = (
+                _named_tuple_layouts.copy() if _named_tuple_layouts else {}
+            )
             scope = func.__globals__.copy()
             # Also check closure vars
             try:

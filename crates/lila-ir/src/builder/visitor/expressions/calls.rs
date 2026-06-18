@@ -349,6 +349,19 @@ impl CFGBuilder {
             push_inst!(self, InstructionKind::IToF(dest, arg, Type::F64));
             self.func.set_type(dest, Type::F64);
             return Ok(dest);
+        } else if func_name == "f32" {
+            if s.args.len() != 1 {
+                return Err(builder_error!(General, "f32() expects 1 argument"));
+            }
+            let arg = self.visit_expr(s.args[0].clone())?;
+            let arg_ty = self.func.get_type(arg);
+            if matches!(arg_ty, Type::F32) {
+                return Ok(arg);
+            }
+            let dest = self.func.next_value();
+            push_inst!(self, InstructionKind::IToF(dest, arg, Type::F32));
+            self.func.set_type(dest, Type::F32);
+            return Ok(dest);
         } else if func_name == "i64" || func_name == "int" {
             if s.args.len() != 1 {
                 return Err(builder_error!(General, "i64() expects 1 argument"));

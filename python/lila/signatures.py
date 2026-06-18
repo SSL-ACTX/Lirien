@@ -245,12 +245,18 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
 
 
 def _discover_types(
-    func: Callable, initial_struct_layouts: Dict, type_mapping: Dict[str, Any] = None
+    func: Callable,
+    initial_struct_layouts: Dict,
+    type_mapping: Dict[str, Any] = None,
+    initial_enum_layouts: Dict = None,
+    initial_typed_dict_layouts: Dict = None,
 ) -> Tuple[Dict, Dict, Dict, Dict]:
     """Scan for struct layouts, enum layouts, and type aliases referenced in the function's scope."""
     struct_layouts = initial_struct_layouts.copy() if initial_struct_layouts else {}
-    enum_layouts = {}
-    typed_dict_layouts = {}
+    enum_layouts = initial_enum_layouts.copy() if initial_enum_layouts else {}
+    typed_dict_layouts = (
+        initial_typed_dict_layouts.copy() if initial_typed_dict_layouts else {}
+    )
     type_aliases = {}
 
     # Combine globals and closure variables

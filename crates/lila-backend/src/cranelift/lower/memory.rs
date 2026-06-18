@@ -607,14 +607,25 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 SsaType::Enum(ref name) => name.clone(),
                 _ => unreachable!(),
             };
-            let variants = ctx.ssa_func.enum_layouts.get(&enum_name).unwrap();
-            let payload_ty = &variants[*tag_idx].1;
-            let p_align = payload_ty.align(&ctx.ssa_func.struct_layouts);
+            let variants = ctx
+                .ssa_func
+                .enum_layouts
+                .get(&enum_name)
+                .expect("Unknown enum layout");
+
+            let mut max_align = 1;
+            for (_, v_ty) in variants {
+                let align = v_ty.align(&ctx.ssa_func.struct_layouts);
+                if align > max_align {
+                    max_align = align;
+                }
+            }
 
             let mut offset = 1;
-            offset = (offset + p_align - 1) & !(p_align - 1);
+            offset = (offset + max_align - 1) & !(max_align - 1);
 
             let addr = ctx.builder.ins().iadd_imm(obj_ptr, offset as i64);
+            let payload_ty = &variants[*tag_idx].1;
             if payload_ty.is_composite() {
                 ctx.values.insert(*dest, addr);
             } else {

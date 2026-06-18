@@ -743,6 +743,7 @@ impl CFGBuilder {
 
                         // 1.3. Body
                         self.start_block(body_block);
+                        self.seal_block(body_block)?;
                         for stmt in &case.body {
                             self.visit_stmt(stmt.clone())?;
                         }

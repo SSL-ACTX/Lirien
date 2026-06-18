@@ -192,6 +192,7 @@ def enum(cls):
     Decorator to mark a class as a Tagged Union (Enum) for Lila.
     Generates a ctypes Structure with a tag and a Union payload.
     """
+    from ..signatures import _get_type_name
 
     # Check if this is a Generic ADT
     typevars = set()
@@ -380,6 +381,39 @@ def enum(cls):
             original_init(self, *args, **kwargs)
 
     cls.__init__ = new_init
+
+    enum_layout = {
+        cls.__name__: [
+            (v_name, _get_type_name(v_ty)) for v_name, v_ty in variant_types.items()
+        ]
+    }
+    methods = []
+    for name, method in inspect.getmembers(cls):
+        if name.startswith("__") and name.endswith("__"):
+            continue
+        if name == "new_init":
+            continue
+        if inspect.isfunction(method) or hasattr(method, "__lila_jit__"):
+            methods.append((name, method))
+
+    methods.sort(key=lambda x: x[1].__code__.co_firstlineno)
+
+    from ..decorators import verify
+
+    for name, method in methods:
+        if hasattr(method, "__lila_jit__"):
+            if hasattr(method, "class_name") and method.class_name is None:
+                method.class_name = cls.__name__
+                method.method_name = f"{cls.__name__}_{name}"
+                method.enum_layouts = enum_layout
+            continue
+
+        verified_method = verify(
+            _class_name=cls.__name__,
+            _method_name=f"{cls.__name__}_{name}",
+            _enum_layouts=enum_layout,
+        )(method)
+        setattr(cls, name, verified_method)
 
     for idx, (name, ty) in enumerate(variant_types.items()):
 
