@@ -540,6 +540,16 @@ class TypeSubstitutor(ast.NodeTransformer):
                     return ast.Constant(value=val)
         return node
 
+    def visit_Subscript(self, node):
+        if isinstance(node.value, ast.Name) and node.value.id in self.mapping:
+            val = self.mapping[node.value.id]
+            # If it's a specialized Lila type, replace the whole subscript
+            if getattr(val, "__lila_specialized__", False):
+                return ast.Name(id=val.__name__, ctx=node.ctx)
+
+        self.generic_visit(node)
+        return node
+
     def visit_Name(self, node):
         if node.id in self.mapping:
             val = self.mapping[node.id]

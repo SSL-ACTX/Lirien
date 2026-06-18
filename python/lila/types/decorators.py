@@ -12,6 +12,61 @@ def struct(cls):
     from ..decorators import verify
     from ..signatures import _get_type_name
 
+    # Check if this is a Generic struct
+    typevars = set()
+    if hasattr(cls, "__parameters__"):
+        typevars = set(cls.__parameters__)
+
+    if typevars:
+
+        class GenericStruct:
+            @classmethod
+            def __class_getitem__(cls_ref, params):
+                if not isinstance(params, tuple):
+                    params = (params,)
+
+                if len(params) != len(typevars):
+                    raise TypeError(
+                        f"Generic struct {cls.__name__} expects {len(typevars)} type parameters, got {len(params)}"
+                    )
+
+                mapping = {
+                    tvar.__name__: param for tvar, param in zip(typevars, params)
+                }
+                param_names = []
+                for p in params:
+                    if hasattr(p, "__name__"):
+                        param_names.append(p.__name__)
+                    else:
+                        param_names.append(str(p))
+
+                specialized_name = f"{cls.__name__}_{'_'.join(param_names)}"
+
+                # Create specialized class
+                specialized_cls = type(
+                    specialized_name, (cls,), {"__module__": cls.__module__}
+                )
+                specialized_cls.__lila_specialized__ = True
+                specialized_cls.__lila_origin__ = cls
+                specialized_cls.__lila_params__ = params
+
+                # Update annotations with substituted types
+                orig_annotations = getattr(cls, "__annotations__", {})
+                new_annotations = {}
+                for name, ty in orig_annotations.items():
+                    if hasattr(ty, "__name__") and ty.__name__ in mapping:
+                        new_annotations[name] = mapping[ty.__name__]
+                    elif str(ty) in mapping:
+                        new_annotations[name] = mapping[str(ty)]
+                    else:
+                        new_annotations[name] = ty
+
+                specialized_cls.__annotations__ = new_annotations
+                # Re-apply @struct to the specialized class
+                return struct(specialized_cls)
+
+        return GenericStruct
+
     fields = getattr(cls, "__annotations__", {})
     field_list = []
     ctypes_fields = []
@@ -135,6 +190,72 @@ def enum(cls):
     Decorator to mark a class as a Tagged Union (Enum) for Lila.
     Generates a ctypes Structure with a tag and a Union payload.
     """
+
+    # Check if this is a Generic ADT
+    typevars = set()
+    if hasattr(cls, "__parameters__"):
+        typevars = set(cls.__parameters__)
+
+    if typevars:
+
+        class GenericADT:
+            @classmethod
+            def __class_getitem__(cls_ref, params):
+                if not isinstance(params, tuple):
+                    params = (params,)
+
+                if len(params) != len(typevars):
+                    raise TypeError(
+                        f"Generic ADT {cls.__name__} expects {len(typevars)} type parameters, got {len(params)}"
+                    )
+
+                mapping = {
+                    tvar.__name__: param for tvar, param in zip(typevars, params)
+                }
+                param_names = []
+                for p in params:
+                    if hasattr(p, "__name__"):
+                        param_names.append(p.__name__)
+                    else:
+                        param_names.append(str(p))
+
+                specialized_name = f"{cls.__name__}_{'_'.join(param_names)}"
+
+                # Create specialized class
+                specialized_cls = type(
+                    specialized_name, (cls,), {"__module__": cls.__module__}
+                )
+                specialized_cls.__lila_specialized__ = True
+                specialized_cls.__lila_origin__ = cls
+                specialized_cls.__lila_params__ = params
+
+                # Update annotations with substituted types
+                orig_annotations = getattr(cls, "__annotations__", {})
+                new_annotations = {}
+                for name, ty in orig_annotations.items():
+                    if hasattr(ty, "__name__") and ty.__name__ in mapping:
+                        new_annotations[name] = mapping[ty.__name__]
+                    elif str(ty) in mapping:
+                        new_annotations[name] = mapping[str(ty)]
+                    elif isinstance(ty, tuple):
+                        # Handle Tuple[T, ...] substitution
+                        new_elts = []
+                        for elt in ty:
+                            if hasattr(elt, "__name__") and elt.__name__ in mapping:
+                                new_elts.append(mapping[elt.__name__])
+                            elif str(elt) in mapping:
+                                new_elts.append(mapping[str(elt)])
+                            else:
+                                new_elts.append(elt)
+                        new_annotations[name] = tuple(new_elts)
+                    else:
+                        new_annotations[name] = ty
+
+                specialized_cls.__annotations__ = new_annotations
+                return enum(specialized_cls)
+
+        return GenericADT
+
     fields = getattr(cls, "__annotations__", {})
     variant_names = []
     variant_types = {}

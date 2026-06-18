@@ -273,6 +273,15 @@ class MonomorphizedFunction:
                 mapping[f"__callable_{param_name}"] = val
             return
 
+        # Handle specialized Lila types
+        if getattr(annotation, "__lila_specialized__", False):
+            origin = getattr(annotation, "__lila_origin__", None)
+            if origin:
+                name = origin.__name__
+                if name not in mapping:
+                    mapping[name] = annotation
+            return
+
         # 2. Handle Annotated types (Buffer, Tensor, Box, etc.)
         origin = get_origin(annotation)
         if origin is Annotated:
@@ -416,22 +425,18 @@ class MonomorphizedFunction:
 
         return types.MethodType(self.__call__, instance)
 
-    def _specialize(self, mapping):
-        # 0. Evaluate symbolic expressions (TypeExpr) in the mapping
+    def _get_specialized_name(self, mapping):
+        """Generate a stable, unique name for a specialized version of this function."""
         from .types.arithmetic import TypeExpr
 
-        # Ensure all base vars are in mapping before evaluating exprs
-        # (Already done by __call__)
-
-        # Replace TypeExprs in mapping with their evaluated values
         new_mapping = mapping.copy()
         for k, v in list(new_mapping.items()):
             if isinstance(v, TypeExpr):
                 new_mapping[k] = v.evaluate(new_mapping)
 
-        source, target_name = _prepare_source_and_name(
-            self.func, self.class_name, self.method_name
-        )
+        target_name = self.method_name if self.method_name else self.func.__name__
+        if target_name == "<lambda>":
+            target_name = "lila_lambda"
 
         # Specialized function name to avoid collisions
         suffix_parts = []
@@ -445,7 +450,11 @@ class MonomorphizedFunction:
             elif k.startswith("__callable_"):
                 # Use the target function's name
                 name = getattr(v, "__name__", str(v))
-                suffix_parts.append(name)
+                if name in ("jit_call", "wrapper", "lila_lambda"):
+                    ptr = getattr(v, "__lila_ptr__", 0)
+                    suffix_parts.append(f"{name}_{hex(ptr)[2:]}")
+                else:
+                    suffix_parts.append(name)
             else:
                 if isinstance(v, (list, tuple)):
                     suffix_parts.append("rank" + str(len(v)))
@@ -455,7 +464,7 @@ class MonomorphizedFunction:
 
         # Sanitize specialized name for Rust/Cranelift compatibility
         specialized_name = target_name + "_" + "_".join(suffix_parts)
-        specialized_name = (
+        return (
             specialized_name.replace("[", "_")
             .replace("]", "_")
             .replace(",", "_")
@@ -464,14 +473,30 @@ class MonomorphizedFunction:
             .replace(")", "_")
         )
 
+    def _specialize(self, mapping):
+        # 0. Evaluate symbolic expressions (TypeExpr) in the mapping
+        from .types.arithmetic import TypeExpr
+
+        # Replace TypeExprs in mapping with their evaluated values
+        new_mapping = mapping.copy()
+        for k, v in list(new_mapping.items()):
+            if isinstance(v, TypeExpr):
+                new_mapping[k] = v.evaluate(new_mapping)
+
+        source, _ = _prepare_source_and_name(
+            self.func, self.class_name, self.method_name
+        )
+        specialized_name = self._get_specialized_name(new_mapping)
+
         tree = ast.parse(source)
         tree.body[0].name = specialized_name
 
-        # Expand Ellipsis in AST
+        # Expand Ellipsis and Handle Nested Specialization in AST
         class EllipsisExpander(ast.NodeTransformer):
-            def __init__(self, mapping, scope):
+            def __init__(self, mapping, scope, parent_mf):
                 self.mapping = mapping
                 self.scope = scope
+                self.parent_mf = parent_mf
                 self.current_param = None
 
             def visit_arg(self, node):
@@ -503,12 +528,22 @@ class MonomorphizedFunction:
                 if isinstance(node.func, ast.Name):
                     func_name = node.func.id
                     func_obj = self.scope.get(func_name)
+                    if not func_obj and func_name == self.parent_mf.func.__name__:
+                        func_obj = self.parent_mf
 
                     if isinstance(func_obj, MonomorphizedFunction):
                         call_mapping = {}
-                        sig = inspect.signature(func_obj.func)
-                        params = list(sig.parameters.items())
+                        callee_sig = inspect.signature(func_obj.func)
+                        callee_typevars = _get_all_typevars(callee_sig)
+                        callee_tvar_names = {t.__name__ for t in callee_typevars}
 
+                        # 1. Propagate TypeVars by name (e.g. T -> T)
+                        for k, v in self.mapping.items():
+                            if k in callee_tvar_names:
+                                call_mapping[k] = v
+
+                        # 2. Propagate callables
+                        params = list(callee_sig.parameters.items())
                         for i, arg in enumerate(node.args):
                             if i < len(params):
                                 p_name, _ = params[i]
@@ -520,22 +555,27 @@ class MonomorphizedFunction:
                                         )
 
                         if call_mapping:
-                            callee_target_name = func_obj.func.__name__
-                            callee_suffix_parts = []
-                            for k, v in sorted(call_mapping.items()):
-                                name = getattr(v, "__name__", str(v))
-                                if name in ("jit_call", "wrapper", "lila_lambda"):
-                                    ptr = getattr(v, "__lila_ptr__", 0)
-                                    callee_suffix_parts.append(f"{name}_{hex(ptr)[2:]}")
-                                else:
-                                    callee_suffix_parts.append(name)
-
-                            specialized_callee = (
-                                f"{callee_target_name}_{'_'.join(callee_suffix_parts)}"
+                            specialized_callee = func_obj._get_specialized_name(
+                                call_mapping
                             )
                             node.func.id = specialized_callee
 
-                            func_obj._specialize(call_mapping)
+                            # Build stable cache key
+                            call_key = tuple(
+                                sorted(
+                                    (k, tuple(v) if isinstance(v, list) else v)
+                                    for k, v in call_mapping.items()
+                                )
+                            )
+
+                            if call_key not in func_obj.cache:
+                                # Pre-emptively add to cache to prevent infinite recursion
+                                # Use a placeholder or partial compilation if needed,
+                                # but for now we just call specialize.
+                                func_obj.cache[call_key] = None
+                                func_obj.cache[call_key] = func_obj._specialize(
+                                    call_mapping
+                                )
 
                 return node
 
@@ -630,11 +670,27 @@ class MonomorphizedFunction:
 
                 return node
 
-        tree = EllipsisExpander(new_mapping, self.func.__globals__).visit(tree)
+        # Get full scope (globals + nonlocals)
+        scope = self.func.__globals__.copy()
+        try:
+            cv = inspect.getclosurevars(self.func)
+            scope.update(cv.nonlocals)
+        except:
+            pass
 
-        transformer = TypeSubstitutor(
-            {k: v for k, v in new_mapping.items() if not k.startswith("__ellipsis_")}
-        )
+        tree = EllipsisExpander(new_mapping, scope, self).visit(tree)
+
+        transformer_mapping = {
+            k: v for k, v in new_mapping.items() if not k.startswith("__")
+        }
+        # Also map the origin name to the specialized name for generic types
+        for k, v in list(transformer_mapping.items()):
+            if hasattr(v, "__name__") and "_" in v.__name__ and k in v.__name__:
+                # It's likely a specialized class Opt_i64 for origin Opt
+                # We want to replace 'Opt' with 'Opt_i64' in the AST
+                pass  # Already handled if key is 'Opt'
+
+        transformer = TypeSubstitutor(transformer_mapping)
         tree = transformer.visit(tree)
         specialized_source = ast.unparse(tree)
 
@@ -988,13 +1044,48 @@ def verify(
 
         sig = inspect.signature(func)
         typevars = _get_all_typevars(sig)
-        has_ellipsis = any(
-            _has_ellipsis(p.annotation) for p in sig.parameters.values()
-        ) or _has_ellipsis(sig.return_annotation)
-        has_protocol = any(_has_protocol(p.annotation) for p in sig.parameters.values())
-        has_callable = any(_has_callable(p.annotation) for p in sig.parameters.values())
 
-        if typevars or has_ellipsis or has_protocol or has_callable:
+        def _needs_monomorphization(ann):
+            if not ann or ann is inspect.Parameter.empty:
+                return False
+
+            # 1. TypeVars
+            from typing import TypeVar, TypeVarTuple
+
+            if isinstance(ann, (TypeVar, TypeVarTuple)) or hasattr(
+                ann, "__lila_typevar__"
+            ):
+                return True
+
+            # 2. Subscripted Generic Alias or Origin with parameters
+            origin = get_origin(ann)
+            if origin is not None:
+                if hasattr(origin, "__parameters__") and origin.__parameters__:
+                    return True
+                # Recurse for args
+                for arg in get_args(ann):
+                    if _needs_monomorphization(arg):
+                        return True
+
+            # 3. Specialized Lila type (already evaluated)
+            if getattr(ann, "__lila_specialized__", False):
+                return True
+
+            # 4. Others
+            if _has_ellipsis(ann) or _has_protocol(ann) or _has_callable(ann):
+                return True
+
+            return False
+
+        should_monomorphize = (
+            typevars
+            or any(
+                _needs_monomorphization(p.annotation) for p in sig.parameters.values()
+            )
+            or _needs_monomorphization(sig.return_annotation)
+        )
+
+        if should_monomorphize:
             return MonomorphizedFunction(
                 func,
                 typevars,
