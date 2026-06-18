@@ -833,8 +833,157 @@ impl CFGBuilder {
                 self.visit_expr(*s.value)?;
                 Ok(())
             }
+            ast::Stmt::FunctionDef(s) => self.visit_nested_function_def(s),
             _ => Err(builder_error!(UnsupportedStatement, "Statement type {:?} not yet supported", stmt)),
         }
+    }
+
+    pub fn visit_nested_function_def(&mut self, s: ast::StmtFunctionDef) -> BuilderResult<()> {
+        use crate::builder::capture_analysis::CaptureVisitor;
+        use rustpython_ast::Visitor;
+
+        let next_val = self.func.next_value().0;
+        let func_name = format!("{}_{}_{}", self.func.name, s.name, next_val);
+
+        // 1. Capture Analysis
+        let mut params = Vec::new();
+        for arg in &s.args.args {
+            params.push(arg.def.arg.to_string());
+        }
+        let mut capture_visitor = CaptureVisitor::new(params);
+        for stmt in &s.body {
+            capture_visitor.visit_stmt(stmt.clone());
+        }
+
+        let mut captures = Vec::new();
+        let mut capture_types = Vec::new();
+        for var_name in capture_visitor.captures {
+            if self.variable_defs.contains_key(&var_name) {
+                let val = self.read_variable(var_name.clone(), self.current_block)?;
+                let ty = self.func.get_type(val);
+                captures.push((var_name, val));
+                capture_types.push(ty);
+            }
+        }
+
+        // 2. Build Inner Function
+        let mut inner_builder = self.new_sub_builder(func_name.clone());
+
+        // Define arguments in inner function
+        inner_builder.func.arg_count = 1 + s.args.args.len();
+        inner_builder.func.value_count = inner_builder.func.arg_count;
+        inner_builder
+            .func
+            .value_types
+            .insert(Value(0), Type::Struct("ClosureEnv".to_string())); // ctx_ptr
+
+        if let Some(returns) = &s.returns {
+            inner_builder.func.return_type = parse_type(
+                returns,
+                &self.type_aliases,
+                &self.named_tuple_names,
+                &self.typed_dict_names,
+                &self.enum_names,
+            )?;
+        }
+
+        for (i, arg) in s.args.args.iter().enumerate() {
+            let arg_ty = if let Some(annotation) = &arg.def.annotation {
+                parse_type(
+                    annotation,
+                    &self.type_aliases,
+                    &self.named_tuple_names,
+                    &self.typed_dict_names,
+                    &self.enum_names,
+                )?
+            } else {
+                Type::Unknown
+            };
+            inner_builder.func.value_types.insert(Value(i + 1), arg_ty);
+            inner_builder.write_variable(
+                arg.def.arg.to_string(),
+                inner_builder.current_block,
+                Value(i + 1),
+            );
+        }
+
+        // If there are captures, load them from ctx_ptr
+        if !captures.is_empty() {
+            let mut offset = 8; // Offset 0 is fn_ptr
+            for (name, ty) in captures.iter().zip(capture_types.iter()) {
+                let align = ty.align(&self.func.struct_layouts);
+                offset = (offset + align - 1) & !(align - 1);
+
+                let dest = inner_builder.func.next_value();
+                push_inst!(inner_builder, InstructionKind::StructLoad(
+                    dest,
+                    Value(0),
+                    offset,
+                ));
+                inner_builder.func.set_type(dest, ty.clone());
+                inner_builder.write_variable(
+                    name.0.clone(),
+                    inner_builder.current_block,
+                    dest,
+                );
+
+                offset += ty.size(&self.func.struct_layouts);
+            }
+        }
+
+        // Visit body
+        for stmt in s.body {
+            inner_builder.visit_stmt(stmt)?;
+        }
+
+        // Ensure the last block has a return if it's not terminated
+        if !inner_builder.is_terminated(inner_builder.current_block) {
+            let ret_val = if inner_builder.func.return_type != Type::Unknown {
+                let zero = inner_builder.func.next_value();
+                match inner_builder.func.return_type {
+                    Type::F32 | Type::F64 => {
+                        push_inst!(inner_builder, InstructionKind::ConstFloat(zero, 0.0));
+                    }
+                    _ => {
+                        push_inst!(inner_builder, InstructionKind::ConstInt(zero, 0));
+                    }
+                }
+                Some(zero)
+            } else {
+                None
+            };
+            push_inst!(inner_builder, InstructionKind::Return(ret_val));
+        }
+
+        // Optimization for inner function
+        crate::optimization::optimize(&mut inner_builder.func);
+
+        // Store inner function for later compilation
+        let inner_func = inner_builder.func;
+        self.lambdas.push(inner_func.clone());
+        // Collect nested lambdas from the sub-builder
+        self.lambdas.extend(inner_builder.lambdas);
+
+        // 3. Create Closure Instruction
+        let dest = self.func.next_value();
+        let capture_vals: Vec<Value> = captures.iter().map(|(_, v)| *v).collect();
+        push_inst!(self, InstructionKind::Lambda(
+            dest,
+            func_name.clone(),
+            capture_vals,
+        ));
+
+        let arg_types: Vec<Type> = (1..1 + s.args.args.len())
+            .map(|i| inner_func.get_type(Value(i)))
+            .collect();
+        self.func.set_type(
+            dest,
+            Type::Closure(func_name.clone(), arg_types, Box::new(inner_func.return_type), Some(s.name.to_string())),
+        );
+
+        self.write_variable(s.name.to_string(), self.current_block, dest);
+
+        Ok(())
     }
 
     fn handle_nested_pattern(

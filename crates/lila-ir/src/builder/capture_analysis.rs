@@ -53,12 +53,36 @@ impl Visitor for CaptureVisitor {
     }
 
     fn visit_stmt(&mut self, stmt: ast::Stmt) {
-        if let ast::Stmt::Assign(a) = &stmt {
-            for target in &a.targets {
-                self.visit_expr(target.clone());
+        match &stmt {
+            ast::Stmt::Assign(a) => {
+                for target in &a.targets {
+                    self.visit_expr(target.clone());
+                }
+                self.visit_expr(*a.value.clone());
+                return;
             }
-            self.visit_expr(*a.value.clone());
-            return;
+            ast::Stmt::FunctionDef(f) => {
+                // Nested function:
+                // 1. Define the function name in current scope
+                self.defined.insert(f.name.to_string());
+
+                // 2. Analyze inner scope
+                let inner_params: Vec<String> = f.args.args.iter().map(|a| a.def.arg.to_string()).collect();
+                let mut inner_visitor = CaptureVisitor::new(inner_params);
+                for s in &f.body {
+                    inner_visitor.visit_stmt(s.clone());
+                }
+
+                // 3. Captures from inner scope that are NOT defined in inner scope
+                // become potential captures for OUR scope.
+                for cap in inner_visitor.captures {
+                    if !self.defined.contains(&cap) {
+                        self.captures.insert(cap);
+                    }
+                }
+                return;
+            }
+            _ => {}
         }
         self.generic_visit_stmt(stmt);
     }
