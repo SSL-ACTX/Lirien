@@ -1,12 +1,12 @@
 # Project L.I.L.A.: Development Rules & Architecture
 
-This document outlines the core architectural constraints, design patterns, and development workflows for Project Lila. These rules must be strictly adhered to during all future development to maintain mathematical soundness, type safety, and the "Python x Rust" developer experience.
+This document outlines the core architectural constraints, design patterns, and development workflows for Project Lirien. These rules must be strictly adhered to during all future development to maintain mathematical soundness, type safety, and the "Python x Rust" developer experience.
 
 ## 1. Architectural Constraints
 
 ### 1.1 Formal Verification First
 *   **Logic Verification:** A path-aware, flow-sensitive system using Z3 to prove the absence of logical errors, out-of-bounds accesses, and refinement type violations. Safety must be mathematically provable in Z3 using `Context::thread_local()`.
-*   **Refinement Types:** Lila uses refinement types (liquid types) to attach logical predicates to data. Z3 verifies that all assignments and function calls satisfy these predicates across all reachable paths.
+*   **Refinement Types:** Lirien uses refinement types (liquid types) to attach logical predicates to data. Z3 verifies that all assignments and function calls satisfy these predicates across all reachable paths.
 
 ### 1.2 Strict SSA (Static Single Assignment)
 The Intermediate Representation (IR) enforces strict SSA form.
@@ -15,12 +15,12 @@ The Intermediate Representation (IR) enforces strict SSA form.
 *   Do not mutate variables in the IR; instead, create a new `Value` and update the block's `variable_defs` mapping.
 
 ### 1.3 Absolute Memory Layouts (No Pointer Aliasing)
-Lila structs are compiled to flat, C-compatible memory layouts.
+Lirien structs are compiled to flat, C-compatible memory layouts.
 *   **Use Byte Offsets:** Nested structures are **inline**. The IR must calculate the absolute byte offset from the root object (`StructOffset` or `StructLoad`) rather than chaining pointer dereferences.
 *   **Never clobber pointers:** A `StructSet` modifies the value at an offset; it does *not* overwrite the root object's pointer address.
 
 ### 1.4 Zero-Cost Static Dispatch (`Protocol`)
-*   **Specialization over Virtualization:** Lila uses `typing.Protocol` for static dispatch. The monomorphization engine must clone and specialize functions for every unique struct type passed to a Protocol parameter.
+*   **Specialization over Virtualization:** Lirien uses `typing.Protocol` for static dispatch. The monomorphization engine must clone and specialize functions for every unique struct type passed to a Protocol parameter.
 *   **Static Call Mapping:** The IR builder must resolve Protocol method calls to direct `Call` instructions using the mangled name `ClassName_methodName`.
 
 ### 1.5 Null-Pointer Optimization (`Box[T] | None`)
@@ -37,12 +37,12 @@ Lila structs are compiled to flat, C-compatible memory layouts.
 ### 2.1 Zero-Boilerplate Experience
 The Python-side DSL must feel like native Python, hiding all low-level C-ABI details.
 *   **No explicit `ctypes` in user code:** Users should never have to manually call `ctypes.pointer` or `ctypes.addressof`.
-*   **Native Types:** Always use Lila-native types (`i64`, `u8`, `f32`, `bool`) in annotations. Do not expose `ctypes.c_int64` to the user.
-*   **Automatic Unwrapping:** The `@verify` decorator must automatically resolve Lila objects to their underlying memory buffers before calling the JIT function.
+*   **Native Types:** Always use Lirien-native types (`i64`, `u8`, `f32`, `bool`) in annotations. Do not expose `ctypes.c_int64` to the user.
+*   **Automatic Unwrapping:** The `@verify` decorator must automatically resolve Lirien objects to their underlying memory buffers before calling the JIT function.
 
 ### 2.2 Struct Generation
 *   The `@struct` decorator dynamically generates a `ctypes.Structure` class behind the scenes.
-*   Nested structs are inlined by placing the child's `__lila_ctypes__` directly into the parent's `_fields_` list.
+*   Nested structs are inlined by placing the child's `__lirien_ctypes__` directly into the parent's `_fields_` list.
 
 ## 3. Rust Codebase Rules
 
@@ -53,7 +53,7 @@ The Python-side DSL must feel like native Python, hiding all low-level C-ABI det
 
 ### 3.2 Centralized Diagnostics
 *   Do not use `println!` or `eprintln!`.
-*   Use the `tracing` crate for all logging (e.g., `info!(target: "lila::jit", ...)`).
+*   Use the `tracing` crate for all logging (e.g., `info!(target: "lirien::jit", ...)`).
 *   All IR instructions must carry a `SourceLocation` to map errors back to the Python source line.
 
 ### 3.3 Adding New Instructions

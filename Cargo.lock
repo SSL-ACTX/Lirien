@@ -360,31 +360,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
-name = "lila-backend"
-version = "0.1.0"
+name = "lirien-backend"
+version = "0.1.1"
 dependencies = [
  "cranelift",
  "cranelift-jit",
  "cranelift-module",
  "cranelift-native",
  "libc",
- "lila-core",
- "lila-ir",
+ "lirien-core",
+ "lirien-ir",
  "target-lexicon 0.12.16",
  "tracing",
 ]
 
 [[package]]
-name = "lila-bridge"
-version = "0.1.0"
+name = "lirien-bridge"
+version = "0.1.1"
 dependencies = [
  "bincode",
  "cranelift-codegen",
  "cranelift-native",
- "lila-backend",
- "lila-core",
- "lila-ir",
- "lila-verify",
+ "lirien-backend",
+ "lirien-core",
+ "lirien-ir",
+ "lirien-verify",
  "pyo3",
  "rustpython-ast",
  "rustpython-parser",
@@ -394,8 +394,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "lila-core"
-version = "0.1.0"
+name = "lirien-core"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tracing",
@@ -403,11 +403,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "lila-ir"
-version = "0.1.0"
+name = "lirien-ir"
+version = "0.1.1"
 dependencies = [
  "lazy_static",
- "lila-core",
+ "lirien-core",
  "rustpython-ast",
  "rustpython-parser",
  "serde",
@@ -415,12 +415,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "lila-verify"
-version = "0.1.0"
+name = "lirien-verify"
+version = "0.1.1"
 dependencies = [
  "lazy_static",
- "lila-core",
- "lila-ir",
+ "lirien-core",
+ "lirien-ir",
  "tracing",
  "z3",
  "z3-sys",

@@ -11,4 +11,4 @@ zig-out/
 __pycache__
 __pycache__/*
 *.so
-.lila_cache/
+.lirien_cache/

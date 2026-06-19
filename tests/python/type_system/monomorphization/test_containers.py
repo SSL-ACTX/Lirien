@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from lila import verify, i64, f64, Buffer, Box
+from lirien import verify, i64, f64, Buffer, Box
 from typing import TypeVar
 
 T = TypeVar("T")

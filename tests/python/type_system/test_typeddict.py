@@ -1,6 +1,6 @@
 import unittest
 from typing import TypedDict
-from lila import verify, i64
+from lirien import verify, i64
 
 
 class Config(TypedDict):
@@ -11,7 +11,7 @@ class Config(TypedDict):
 
 @verify
 def configure(cfg: Config) -> i64:
-    # Lila compiles this to: load.i64 (base_ptr + 8)
+    # Lirien compiles this to: load.i64 (base_ptr + 8)
     # The string keys ("timeout") are completely compiled away!
     if cfg["enabled"]:
         return cfg["timeout"]

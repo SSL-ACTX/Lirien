@@ -1,6 +1,6 @@
 import unittest
-from lila import verify
-from lila.types import i64, SizedArray
+from lirien import verify
+from lirien.types import i64, SizedArray
 
 
 @verify

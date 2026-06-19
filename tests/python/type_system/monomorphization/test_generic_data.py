@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, struct, adt, i64, f64
+from lirien import verify, struct, adt, i64, f64
 from typing import TypeVar, Generic
 
 T = TypeVar("T")

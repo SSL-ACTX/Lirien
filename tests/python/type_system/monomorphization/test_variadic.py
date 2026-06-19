@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, f32, Tensor
+from lirien import verify, i64, f32, Tensor
 from typing import TypeVar, TypeVarTuple, Unpack
 
 Shape = TypeVarTuple("Shape")

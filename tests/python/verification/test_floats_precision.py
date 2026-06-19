@@ -1,7 +1,7 @@
 import unittest
 import math
-from lila import verify, f64, i64, Refined
-from lila import VerificationError
+from lirien import verify, f64, i64, Refined
+from lirien import VerificationError
 
 NonNegative = Refined[f64, lambda x: x >= 0.0]
 Positive = Refined[f64, lambda x: x > 0.0]
@@ -27,7 +27,7 @@ def float_to_int_clip(x: f64) -> i64:
 def check_precision() -> i64:
     # In IEEE 754, 0.1 + 0.2 is slightly greater than 0.3
     # Real theory would say they are equal.
-    # Lila's new Float theory should prove this branch is always taken.
+    # Lirien's new Float theory should prove this branch is always taken.
     a = 0.1
     b = 0.2
     if (a + b) > 0.3:

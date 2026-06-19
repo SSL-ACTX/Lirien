@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, Tensor, f32
+from lirien import verify, Tensor, f32
 
 
 class TestTensorArithmetic(unittest.TestCase):

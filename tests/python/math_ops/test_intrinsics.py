@@ -1,7 +1,7 @@
 import unittest
 from typing import Tuple
 import math
-from lila import verify, i64, f64, Refined
+from lirien import verify, i64, f64, Refined
 
 
 @verify

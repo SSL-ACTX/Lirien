@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, f64, Result, Ok, Err
+from lirien import verify, i64, f64, Result, Ok, Err
 
 Result_i64 = Result[i64, i64]
 Result_f64 = Result[f64, i64]

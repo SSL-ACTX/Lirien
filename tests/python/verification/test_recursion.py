@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, Refined
+from lirien import verify, i64, Refined
 
 
 class TestRecursion(unittest.TestCase):
@@ -60,7 +60,7 @@ class TestRecursion(unittest.TestCase):
                 return 0
             return n + recursive_sum_fail(n - 1)
 
-        self.assertFalse(getattr(recursive_sum_fail, "__lila_jit__", False))
+        self.assertFalse(getattr(recursive_sum_fail, "__lirien_jit__", False))
 
 
 if __name__ == "__main__":

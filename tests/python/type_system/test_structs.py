@@ -1,5 +1,5 @@
 import unittest
-from lila import struct, i64
+from lirien import struct, i64
 
 
 @struct

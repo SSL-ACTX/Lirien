@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, Closure
+from lirien import verify, i64, Closure
 from typing import Callable
 
 

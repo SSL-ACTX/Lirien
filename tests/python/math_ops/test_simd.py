@@ -1,6 +1,6 @@
 import unittest
 import math
-from lila import verify, f32x4, f64x2, i32x4, i64x2, i8x16, u8x16, i16x8, u16x8
+from lirien import verify, f32x4, f64x2, i32x4, i64x2, i8x16, u8x16, i16x8, u16x8
 
 
 class TestSIMD(unittest.TestCase):

@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
-from lila import verify, i64, Refined, Buffer, struct
-from lila import VerificationError
+from lirien import verify, i64, Refined, Buffer, struct
+from lirien import VerificationError
 
 # --- Common Refinement Types ---
 Positive = Refined[i64, lambda x: x > 0]
@@ -48,7 +48,7 @@ class TestRefinements(unittest.TestCase):
     def test_unsafe_fallback(self):
         # This should fail verification and fall back to Python
         # Because d is not guaranteed to be non-zero
-        self.assertFalse(getattr(divide_unsafe, "__lila_jit__", True))
+        self.assertFalse(getattr(divide_unsafe, "__lirien_jit__", True))
         with self.assertRaises(ZeroDivisionError):
             divide_unsafe(100, 0)
 
@@ -57,7 +57,7 @@ class TestRefinements(unittest.TestCase):
         def test_in_range(x: InRange) -> i64:
             return x + 1
 
-        self.assertTrue(getattr(test_in_range, "__lila_jit__", False))
+        self.assertTrue(getattr(test_in_range, "__lirien_jit__", False))
         self.assertEqual(test_in_range(50), 51)
 
     def test_buffer_len_refinement(self):
@@ -96,7 +96,7 @@ class TestRefinements(unittest.TestCase):
 
         @verify
         def test_specific(x: VerySpecific) -> i64:
-            # Lila knows x is positive and non-zero
+            # Lirien knows x is positive and non-zero
             return 100 // x
 
         self.assertEqual(test_specific(50), 2)
@@ -252,7 +252,7 @@ class TestRefinements(unittest.TestCase):
     def test_arithmetic_property_proof(self):
         @verify
         def sum_positives(a: Positive, b: Positive) -> Positive:
-            # Lila should be able to prove that a + b > 0 if a > 0 and b > 0
+            # Lirien should be able to prove that a + b > 0 if a > 0 and b > 0
             return a + b
 
         self.assertEqual(sum_positives(10, 20), 30)

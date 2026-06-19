@@ -1,6 +1,6 @@
 import unittest
-from lila import verify, Tensor, f32, i64, Refined
-from lila import VerificationError
+from lirien import verify, Tensor, f32, i64, Refined
+from lirien import VerificationError
 
 
 class TestTensors(unittest.TestCase):
@@ -47,7 +47,7 @@ class TestTensors(unittest.TestCase):
         ) -> Tensor[f32, "M", "K"]:
             return a @ b
 
-        self.assertTrue(getattr(valid_matmul, "__lila_jit__", False))
+        self.assertTrue(getattr(valid_matmul, "__lirien_jit__", False))
 
         # Test runtime execution and memory allocation
         A = Tensor.alloc((2, 3), f32)

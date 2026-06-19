@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, adt, i64, Box
+from lirien import verify, adt, i64, Box
 
 
 @adt

@@ -1,0 +1,32 @@
+[package]
+name = "lirien-bridge"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+
+[lib]
+name = "lirien_bridge"
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+lirien-core = { path = "../lirien-core" }
+lirien-ir = { path = "../lirien-ir" }
+lirien-verify = { path = "../lirien-verify" }
+lirien-backend = { path = "../lirien-backend" }
+pyo3 = { version = "0.29", features = ["extension-module", "auto-initialize"] }
+rustpython-parser = "0.4"
+rustpython-ast = { version = "0.4", features = ["visitor"] }
+tracing = "0.1"
+cranelift-codegen = "0.100.1"
+cranelift-native = "0.100.1"
+serde.workspace = true
+bincode.workspace = true
+seahash.workspace = true

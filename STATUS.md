@@ -1,6 +1,6 @@
-# Lila Project Status & Roadmap
+# Lirien Project Status & Roadmap
 
-Lila is an experimental formal verification and JIT compiler for a safe subset of Python.
+Lirien is an experimental formal verification and JIT compiler for a safe subset of Python.
 
 ## Roadmap & Future Directions
 

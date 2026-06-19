@@ -1,6 +1,6 @@
 import unittest
 from typing import Tuple
-from lila import verify, i64, struct
+from lirien import verify, i64, struct
 
 
 @struct

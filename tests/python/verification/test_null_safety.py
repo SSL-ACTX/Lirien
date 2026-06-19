@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, struct, Box, i64, VerificationError
+from lirien import verify, struct, Box, i64, VerificationError
 from typing import Optional
 
 

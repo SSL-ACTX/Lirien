@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from lila import verify, parallel_for, Buffer, f64, i64
+from lirien import verify, parallel_for, Buffer, f64, i64
 
 
 @verify

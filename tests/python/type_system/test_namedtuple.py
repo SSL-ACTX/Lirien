@@ -1,6 +1,6 @@
 import unittest
 from typing import NamedTuple
-from lila import verify, i64, f64
+from lirien import verify, i64, f64
 
 
 class Point(NamedTuple):

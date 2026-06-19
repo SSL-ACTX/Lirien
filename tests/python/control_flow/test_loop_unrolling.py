@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, SizedArray, f32x4
+from lirien import verify, i64, SizedArray, f32x4
 from typing import Literal
 
 
@@ -10,7 +10,7 @@ class TestLoopUnrolling(unittest.TestCase):
             for i in range(n):
                 data[i] = i * 2
 
-        # Use Lila's SizedArray constructor instead of raw ctypes
+        # Use Lirien's SizedArray constructor instead of raw ctypes
         data = SizedArray[i64, 4](0, 0, 0, 0)
         unrolled_loop(data, 4)
 

@@ -1,5 +1,5 @@
 import unittest
-from lila import value, i64, Buffer, verify
+from lirien import value, i64, Buffer, verify
 
 
 @value

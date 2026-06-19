@@ -1,5 +1,5 @@
 import unittest
-from lila import struct, i64, Buffer, verify
+from lirien import struct, i64, Buffer, verify
 
 
 @struct
@@ -19,7 +19,7 @@ def sum_points(data: Buffer[Point3D]) -> i64:
 
 class TestBufferStruct(unittest.TestCase):
     def test_buffer_struct(self):
-        # Use Lila's native Buffer allocation
+        # Use Lirien's native Buffer allocation
         arr = Buffer[Point3D].alloc(10)
         for i in range(10):
             arr[i].x = 1

@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, enum, struct, i64
+from lirien import verify, enum, struct, i64
 
 
 @struct

@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, Buffer
+from lirien import verify, i64, Buffer
 
 
 class TestLoopVerification(unittest.TestCase):
@@ -7,7 +7,7 @@ class TestLoopVerification(unittest.TestCase):
         @verify
         def access_all(buf: Buffer[i64]) -> i64:
             total = 0
-            # Lila should prove i is always in bounds
+            # Lirien should prove i is always in bounds
             for i in range(len(buf)):
                 total = total + buf[i]
             return total

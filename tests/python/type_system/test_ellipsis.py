@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, Tensor, f32, f64, i64, Refined, SizedArray, Buffer
+from lirien import verify, Tensor, f32, f64, i64, Refined, SizedArray, Buffer
 
 
 class TestEllipsis(unittest.TestCase):
@@ -100,7 +100,7 @@ class TestEllipsis(unittest.TestCase):
         @verify
         def uses_inference(x: i64) -> i64:
             y = clamp_pos(x)
-            # Lila should have inferred (and (>= {v} 1) (<= {v} 100))
+            # Lirien should have inferred (and (>= {v} 1) (<= {v} 100))
             if y >= 1 and y <= 100:
                 return y
             return -1  # Unreachable

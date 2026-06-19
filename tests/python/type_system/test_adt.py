@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, adt, i64, f64, struct, VerificationError
+from lirien import verify, adt, i64, f64, struct, VerificationError
 
 
 @adt

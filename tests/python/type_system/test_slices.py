@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, SizedArray, TypeVar, Refined
+from lirien import verify, i64, SizedArray, TypeVar, Refined
 
 N = TypeVar("N")
 

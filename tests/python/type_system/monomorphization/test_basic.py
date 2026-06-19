@@ -1,5 +1,5 @@
 import unittest
-from lila import verify
+from lirien import verify
 from typing import TypeVar
 
 T = TypeVar("T")

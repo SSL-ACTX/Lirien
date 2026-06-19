@@ -1,8 +1,8 @@
 import time
-from lila import verify, i64, f64
+from lirien import verify, i64, f64
 
 
-# Lila implementation
+# Lirien implementation
 @verify
 def mandelbrot_pixel(c_re: f64, c_im: f64, max_iter: i64) -> i64:
     z_re = 0.0
@@ -47,7 +47,7 @@ def run_bench(width=200, height=200, max_iter=1000):
     py_time = end - start
     print(f"Pure Python: {py_time:.4f}s")
 
-    # 2. Lila
+    # 2. Lirien
     # Warmup
     mandelbrot_pixel(0.0, 0.0, 10)
 
@@ -56,13 +56,13 @@ def run_bench(width=200, height=200, max_iter=1000):
         for x in x_vals:
             mandelbrot_pixel(x, y, max_iter)
     end = time.perf_counter()
-    lila_time = end - start
-    print(f"Lila JIT:    {lila_time:.4f}s")
+    lirien_time = end - start
+    print(f"Lirien JIT:    {lirien_time:.4f}s")
 
-    if lila_time > 0:
-        print(f"\nSpeedup: {py_time / lila_time:.1f}x")
+    if lirien_time > 0:
+        print(f"\nSpeedup: {py_time / lirien_time:.1f}x")
     else:
-        print("\nLila execution was too fast to measure accurately.")
+        print("\nLirien execution was too fast to measure accurately.")
 
 
 if __name__ == "__main__":

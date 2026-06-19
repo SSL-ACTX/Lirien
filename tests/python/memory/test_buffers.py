@@ -5,7 +5,7 @@ try:
     import numpy as np
 except ImportError:
     np = None
-from lila import verify, Buffer, i64, u8, f64, SizedArray, Refined
+from lirien import verify, Buffer, i64, u8, f64, SizedArray, Refined
 
 Idx5 = Refined[i64, lambda x: (x >= 0) & (x < 5)]
 
@@ -63,7 +63,7 @@ class TestBuffers(unittest.TestCase):
         self.assertEqual(get_val(data, 2), 30)
 
     def test_unsafe_bounds_fail(self):
-        from lila import VerificationError
+        from lirien import VerificationError
 
         with self.assertRaises(VerificationError):
 

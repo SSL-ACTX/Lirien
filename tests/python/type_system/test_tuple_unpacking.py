@@ -1,6 +1,6 @@
 import unittest
 from typing import Tuple
-from lila import verify, i64
+from lirien import verify, i64
 
 
 @verify
@@ -16,7 +16,7 @@ def test_unpack() -> i64:
 
 @verify
 def test_nested_unpack() -> i64:
-    # Lila should support nested tuple construction
+    # Lirien should support nested tuple construction
     # and unpacking if the type system allows it.
     # Nested tuples require explicit type annotations.
     p = (1, (2, 3))

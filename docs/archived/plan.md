@@ -1,13 +1,13 @@
-# RFC: Project Lila 
+# RFC: Project Lirien 
 **Title:** A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift  
 **Domain:** Compiler Design, Formal Verification, Just-In-Time Compilation  
 **Status:** Draft / Research Proposal  
 
 ## 1. Abstract
-Project Lila is a stealth compiler disguised as a Python type-hinting library. It introduces Liquid Types (refinement types) and Affine Types (ownership semantics) to Python. By extracting the Python AST at module load time, Lila transforms the code into a Static Single Assignment (SSA) intermediate representation (IR). This IR is mathematically proven by the Z3 SMT Solver for logical correctness (bounds checking, invariants) and borrow-checked by a Rust middle-end. Upon successful verification, the SSA is lowered into Cranelift IR, JIT-compiled into bare-metal machine code, and hot-swapped with the original Python function via a PyO3 C-ABI trampoline—entirely bypassing the CPython Interpreter, `PyObject` overhead, and the Global Interpreter Lock (GIL).
+Project Lirien is a stealth compiler disguised as a Python type-hinting library. It introduces Liquid Types (refinement types) and Affine Types (ownership semantics) to Python. By extracting the Python AST at module load time, Lirien transforms the code into a Static Single Assignment (SSA) intermediate representation (IR). This IR is mathematically proven by the Z3 SMT Solver for logical correctness (bounds checking, invariants) and borrow-checked by a Rust middle-end. Upon successful verification, the SSA is lowered into Cranelift IR, JIT-compiled into bare-metal machine code, and hot-swapped with the original Python function via a PyO3 C-ABI trampoline—entirely bypassing the CPython Interpreter, `PyObject` overhead, and the Global Interpreter Lock (GIL).
 
 ## 2. Motivation
-Python's dynamic nature incurs massive runtime overhead and defers critical logical errors (e.g., out-of-bounds, type mismatches, data races) to runtime. Current solutions (e.g., Numba, PyPy, Cython) focus on type inference and execution speed but do not guarantee mathematical correctness or strict memory ownership. Lila aims to achieve **zero-cost abstractions with compile-time formal verification**, pushing Python into the domain of high-performance, memory-safe systems programming.
+Python's dynamic nature incurs massive runtime overhead and defers critical logical errors (e.g., out-of-bounds, type mismatches, data races) to runtime. Current solutions (e.g., Numba, PyPy, Cython) focus on type inference and execution speed but do not guarantee mathematical correctness or strict memory ownership. Lirien aims to achieve **zero-cost abstractions with compile-time formal verification**, pushing Python into the domain of high-performance, memory-safe systems programming.
 
 ## 3. Architecture Overview
 The pipeline consists of four distinct phases:
@@ -24,8 +24,8 @@ The pipeline consists of four distinct phases:
 The system leverages Python's `typing.Annotated` and metaclasses to define constraints that are valid Python syntax but act as compiler directives.
 
 ```python
-from lila import verify, Mut, Ref, Owned
-from lila.types import Refined, u32
+from lirien import verify, Mut, Ref, Owned
+from lirien.types import Refined, u32
 
 # Z3 Refinement: An integer strictly between 0 and 100
 Percentile = Refined[u32, lambda x: (x >= 0) & (x <= 100)]
@@ -92,13 +92,13 @@ Once the SSA IR passes both Z3 and the Borrow Checker, it is lowered into **Cran
 ---
 
 ## 5. Memory Model and ABI
-To achieve C-level speeds, Lila code cannot interact with `PyObject`. 
+To achieve C-level speeds, Lirien code cannot interact with `PyObject`. 
 1.  **Primitives:** Native mapping of `int`, `float`, and `bool` to hardware registers (`i64`, `f64`, `b1`).
 2.  **Complex Data:** Arrays and Structs are implemented as custom Rust memory buffers exposed to Python via the standard `buffer` protocol (similar to NumPy). 
 3.  **C-ABI:** The JIT function signature uses standard System V AMD64 ABI.
 
 ## 6. Constraints and Limitations
-*   **Strict Subset:** Lila will only support a rigid, static subset of Python within `@verify` blocks. No dynamic typing, no `eval()`, no monkey-patching, no heterogeneous lists.
+*   **Strict Subset:** Lirien will only support a rigid, static subset of Python within `@verify` blocks. No dynamic typing, no `eval()`, no monkey-patching, no heterogeneous lists.
 *   **Compilation Latency:** While Cranelift is fast, Z3 theorem proving is an NP-Complete problem. Heavily complex mathematical functions may experience a slight delay upon module initialization.
 *   **Closed World Assumption:** JIT-compiled functions cannot dynamically call unverified standard Python functions (as that breaks the mathematical proofs).
 
@@ -107,7 +107,7 @@ To achieve C-level speeds, Lila code cannot interact with `PyObject`.
 ## 7. Implementation Roadmap
 
 ### Phase 1: The Scaffolding (Weeks 1-2)
-*   Define the Python `lila` DSL (`Mut`, `Ref`, `Refined`).
+*   Define the Python `lirien` DSL (`Mut`, `Ref`, `Refined`).
 *   Implement the PyO3 hook to intercept the AST instead of executing the function.
 
 ### Phase 2: The SSA Engine (Weeks 3-5)

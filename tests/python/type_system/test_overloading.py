@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, f32x4, f64, i64
+from lirien import verify, f32x4, f64, i64
 from typing import overload
 
 
@@ -60,7 +60,7 @@ class TestOverloading(unittest.TestCase):
         self.assertAlmostEqual(combine(2.5, 4.0), 10.0)
 
     def test_method_overloading(self):
-        from lila import struct, f32
+        from lirien import struct, f32
 
         @struct
         class Math:
@@ -91,7 +91,7 @@ class TestOverloading(unittest.TestCase):
 
         @verify
         def convert(x):
-            # Lila's IR builder will insert appropriate casts
+            # Lirien's IR builder will insert appropriate casts
             # based on the matched overload's return annotation.
             return x
 
@@ -128,10 +128,10 @@ class TestOverloading(unittest.TestCase):
 
         with self.assertRaises(TypeError) as cm:
             only_int(1.5)
-        self.assertIn("No matching Lila overload found", str(cm.exception))
+        self.assertIn("No matching Lirien overload found", str(cm.exception))
 
     def test_buffer_vs_scalar(self):
-        from lila import Buffer
+        from lirien import Buffer
         import ctypes
 
         @overload
@@ -169,7 +169,7 @@ class TestOverloading(unittest.TestCase):
 
     def test_overload_with_refined_types(self):
         from typing import Annotated
-        from lila import i64
+        from lirien import i64
 
         @overload
         def check(x: Annotated[i64, lambda x: x > 0]) -> i64: ...
@@ -181,7 +181,7 @@ class TestOverloading(unittest.TestCase):
         def check(x):
             return x
 
-        # Note: Currently Lila matches overloads based on base type names.
+        # Note: Currently Lirien matches overloads based on base type names.
         # This test ensures that even with refinements, it picks the base i64 match correctly.
         self.assertEqual(check(10), 10)
         self.assertEqual(check(-10), -10)

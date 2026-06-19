@@ -1,0 +1,21 @@
+[package]
+name = "lirien-verify"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license.workspace = true
+
+[dependencies]
+lirien-core = { path = "../lirien-core" }
+lirien-ir = { path = "../lirien-ir" }
+z3 = "0.20"
+z3-sys = "0.11"
+tracing = "0.1"
+lazy_static = "1.4"

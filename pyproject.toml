@@ -3,9 +3,9 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "lila"
-version = "0.1.0"
-description = "A Formally Verified, Affine-Typed JIT Compiler for Python via Z3 and Cranelift"
+name = "lirien"
+version = "0.1.1"
+description = "A Verifying JIT Compiler for a Safe Subset of Python via Z3 and Cranelift"
 authors = [{name = "Seuriin", email = "seuriin@gmail.com"}]
 maintainers = [{name = "Seuriin", email = "seuriin@gmail.com"}]
 readme = "README.md"
@@ -24,12 +24,12 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/SSL-ACTX/Lila"
-Repository = "https://github.com/SSL-ACTX/Lila"
-Documentation = "https://github.com/SSL-ACTX/Lila"
+Homepage = "https://github.com/SSL-ACTX/Lirien"
+Repository = "https://github.com/SSL-ACTX/Lirien"
+Documentation = "https://github.com/SSL-ACTX/Lirien"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "lila.lila_bridge"
-manifest-path = "crates/lila-bridge/Cargo.toml"
+module-name = "lirien.lirien_bridge"
+manifest-path = "crates/lirien-bridge/Cargo.toml"

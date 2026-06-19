@@ -1,8 +1,8 @@
 <div align="center">
 
-# Lila
+# Lirien
 
-**A Verifying JIT Compiler for Python**
+**A Verifying JIT Compiler for a Safe Subset of Python**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org/)
@@ -13,33 +13,34 @@
 </div>
 
 > [!WARNING]
-> Lila is a proof-of-concept exploration into formal verification for Python. It is **not** a production-ready tool, is highly unstable, and should not be used in critical systems.
+> Lirien is an experimental research compiler. It is not production-ready, is under active development, and should not be used in critical systems.
 
 ---
 
-Python is beloved for its developer experience, but its type-hinting system is purely cosmetic. This "trust-based" model forces a choice: accept the heavy overhead of runtime checks and the Global Interpreter Lock (GIL) for safety, or drop into C/Rust—losing Python's productivity and introducing manual memory management risks.
+Python's type annotations are unenforced at runtime. The standard trade-off is to accept the overhead of runtime checks and the Global Interpreter Lock (GIL) for safety, or to rewrite performance-critical code in a systems language at the cost of development complexity. Lirien takes a different approach: it treats type annotations as formal specifications, uses an SMT solver to prove their correctness at compile time, and then emits native machine code directly, bypassing the CPython interpreter.
 
-Lila exists to break this dichotomy. It takes Python's "hints" and turns them into **mathematically enforced laws**. By using formal verification to prove code safety at compile-time, Lila bypasses the interpreter entirely, executing Python at bare-metal speeds without sacrificing the sound logic that prevents crashes and data corruption.
+The result is a compiler that can statically guarantee the absence of certain classes of errors—division by zero, out-of-bounds accesses, null pointer dereferences—while executing at native speed.
 
-### Key Features
-*   **Mathematical Soundness:** Liquid Types and Z3-backed formal verification prove the absence of crashes, out-of-bounds, and logic errors.
-*   **Verified Tensors:** Formally verified element-wise arithmetic and reductions with Z3 shape-aware validation.
-*   **Bare-Metal Performance:** Bypasses the CPython interpreter and GIL entirely using the Cranelift JIT.
-*   **Flat Value Types:** Stack-allocated, non-boxed structs (`@value`) for zero-overhead data processing and cache-efficient layouts.
-*   **Const Generics & Type-Level Arithmetic:** Static binding of integer dimensions and symbolic arithmetic (e.g., `N + 1`) within type annotations.
-*   **Rank-Polymorphism & Variadic Generics:** Generic dimension sequences using `TypeVarTuple` and `Unpack` for high-dimensional tensor logic.
-*   **Runtime Monomorphization:** Specialized JIT compilation for generic functions using Python `TypeVar` for zero-overhead abstractions.
-*   **Native SIMD:** Direct access to CPU vector registers (`f32x4`, `i32x4`, etc.) from within Python.
-*   **Verified Loop Unrolling:** Compile-time constant tracking and CFG unrolling for optimized execution using `Literal` types.
-*   **AOT Caching:** Near-zero latency startup by caching verified IR to disk.
+### Feature Overview
+
+- **Refinement Types:** Logical predicates attached to types and verified by Z3 across all reachable control-flow paths.
+- **Formal Memory Safety:** Z3 proves non-nullity before every pointer dereference and validates all buffer accesses against their declared bounds.
+- **Native Code Generation:** Functions decorated with `@verify` are compiled to machine code via Cranelift and called directly through a C-ABI trampoline, bypassing the CPython interpreter and GIL.
+- **Flat Struct Layout:** `@struct` and `@value` types are compiled to C-compatible, flat memory layouts. Nested structs are inlined by byte offset, not represented as pointer chains.
+- **Const Generics and Type-Level Arithmetic:** Integer dimensions are bound statically using `TypeVar`, and symbolic arithmetic (e.g., `N + 1`) is evaluated at JIT time.
+- **Variadic Generics:** Tensor ranks and generic dimension sequences are expressed using `TypeVarTuple` and `Unpack`, enabling rank-polymorphic functions.
+- **Monomorphization:** Generic functions (via `TypeVar`) are lazily specialized per concrete type at the call site.
+- **SIMD Types:** Direct access to 128-bit CPU vector registers (`f32x4`, `f64x2`, `i8x16`, `i16x8`, `i32x4`, `i64x2`, `u8x16`, `u16x8`).
+- **Loop Unrolling via `Literal`:** `typing.Literal`-typed integer parameters are treated as compile-time constants, enabling full CFG-level loop unrolling with exact Z3 induction values.
+- **AOT IR Caching:** Verified SSA IR is serialized to disk (`.lirien_cache/`). On a cache hit, AST parsing and Z3 verification are skipped entirely.
 
 ## Table of Contents
 - [Core Concepts & Examples](#core-concepts--examples)
-  - [Mathematical Safety & Logic](#mathematical-safety--logic)
-  - [High-Performance Execution](#high-performance-execution)
-  - [Verified Data Structures](#verified-data-structures)
-  - [Developer Experience](#developer-experience)
-- [The Lila Architecture & Pipeline](#the-lila-architecture--pipeline)
+  - [Refinement Types & Logic](#refinement-types--logic)
+  - [Performance & Dispatch](#performance--dispatch)
+  - [Data Structures](#data-structures)
+  - [Developer Tooling](#developer-tooling)
+- [Architecture & Pipeline](#architecture--pipeline)
 - [Technical Specifications](#technical-specifications)
 - [Getting Started](#getting-started)
 - [Limitations & Roadmap](#limitations--roadmap)
@@ -48,64 +49,68 @@ Lila exists to break this dichotomy. It takes Python's "hints" and turns them in
 
 ## Core Concepts & Examples
 
-### Mathematical Safety & Logic
+### Refinement Types & Logic
 
-#### Liquid Types: Provable Logical Invariants
-Lila uses refinement types to prove that operations are mathematically safe before they ever execute. It can also **infer postconditions** using `...`, automatically deriving the strongest possible predicates via interval analysis.
+#### Liquid Types: Statically Enforced Invariants
+A refinement type is a base type paired with a logical predicate. Z3 checks that every assignment and function call satisfies the predicate along all reachable paths. Lirien can also infer postconditions automatically using `...`, deriving the tightest interval bounds via static analysis.
+
 ```python
-from lila import verify, i64, Refined
+from lirien import verify, i64, Refined
 
-# Define a refinement: x must be strictly greater than 0
+# Positive constrains i64 to values strictly greater than 0.
 Positive = Refined[i64, lambda x: x > 0]
 
 @verify
 def divide_verified(n: i64, d: Positive) -> i64:
-    # Z3 proves d > 0. Runtime ZeroDivisionError is mathematically impossible.
+    # Z3 proves d > 0 holds at this call site.
+    # A ZeroDivisionError is statically impossible.
     return n // d
 
 @verify
-def infer_bounds(x: i64) -> Refined[i64, ...]:
-    # Lila automatically infers the return postcondition: (and (>= {v} 1) (<= {v} 10))
+def clamp(x: i64) -> Refined[i64, ...]:
+    # Lirien infers the postcondition: (and (>= {v} 1) (<= {v} 10))
     if x > 10: return 10
     if x < 1: return 1
     return x
 ```
 
-#### Inductive Reasoning: Recursive Functions
-Lila can formally prove properties of recursive functions using inductive hypotheses. It ensures that recursive calls satisfy the function's own refinements across inductive steps.
-```python
-from lila import verify, i64, Refined
+#### Inductive Proofs: Recursive Functions
+For recursive functions, Lirien applies inductive reasoning: it assumes the refinement holds for recursive calls and verifies that the base case and inductive step both satisfy the declared postcondition.
 
-StrictPositive = Refined[i64, lambda x: x >= 1]
+```python
+from lirien import verify, i64, Refined
+
 SmallPos = Refined[i64, lambda x: (0 <= x) & (x <= 20)]
+StrictPositive = Refined[i64, lambda x: x >= 1]
 
 @verify
 def factorial(n: SmallPos) -> StrictPositive:
     if n <= 1:
         return 1
-    # Lila proves inductively: n * fac(n-1) >= 2 * 1 >= 1
+    # Z3 proves: for all n in SmallPos, n * factorial(n-1) >= 1
     return n * factorial(n - 1)
 ```
 
-#### Higher-Order Functions: First-Class Verified Logic
-Lila supports closures and lambdas with full formal verification of their capture environments.
+#### Higher-Order Functions
+Closures and lambdas are supported with full capture analysis. The captured environment is heap-allocated and tracked through the type system.
+
 ```python
-from lila import verify, i64, Closure
+from lirien import verify, i64, Closure
 
 @verify
 def make_adder(x: i64) -> Closure[[i64], i64]:
-    # Lila performs capture analysis and heap-allocates the environment
     return lambda y: x + y
 ```
 
 ---
 
-### High-Performance Execution
+### Performance & Dispatch
 
-#### GIL-less Parallelism
-Since Lila code operates on raw memory, it executes across multiple threads without the Global Interpreter Lock (GIL).
+#### GIL-free Parallelism
+Lirien functions operate on raw memory rather than CPython objects, which means they can be executed across multiple OS threads without acquiring the GIL.
+
 ```python
-from lila import verify, parallel_for, Buffer, f64, i64
+from lirien import verify, parallel_for, Buffer, f64, i64
 
 @verify
 def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
@@ -114,11 +119,12 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
     parallel_for(range(len(vec)), body)
 ```
 
-#### Concept-Based Static Dispatch
-Lila hijacks `typing.Protocol` to implement zero-cost static dispatch. Functions annotated with a Protocol are specialized for each concrete struct at compile-time, eliminating VTables and dynamic lookups.
+#### Static Dispatch via `typing.Protocol`
+`typing.Protocol` is used to express structural interfaces. Functions accepting a Protocol parameter are monomorphized at the call site: a separate, specialized machine-code body is emitted for each concrete struct type, eliminating dynamic dispatch and vtable lookups.
+
 ```python
 from typing import Protocol
-from lila import verify, f32, struct
+from lirien import verify, f32, struct
 
 class Renderable(Protocol):
     def render(self) -> f32: ...
@@ -131,11 +137,13 @@ class Circle:
 
 @verify
 def draw(obj: Renderable) -> f32:
-    return obj.render() # Statically dispatched!
+    # Compiled as a direct call to Circle_render.
+    return obj.render()
 ```
 
-#### Zero-Cost Null-Pointer Optimization
-Lila optimizes `Optional[Box[T]]` (or `Box[T] | None`) by representing `None` as the raw memory address `0x0`. Z3 formally proves that the code never dereferences a pointer unless it is non-null.
+#### Null-Pointer Optimization
+`Optional[Box[T]]` (equivalently `Box[T] | None`) is represented as a raw 64-bit pointer where `None` is the address `0x0`. No wrapper object is allocated. Z3 proves non-nullity before every dereference; accessing `.val` or any field on a potentially-null pointer without a prior `None` check is a compile-time error.
+
 ```python
 @struct
 class Node:
@@ -145,38 +153,32 @@ class Node:
 @verify
 def sum_list(n: Optional[Box[Node]]) -> i64:
     if n is None: return 0
-    return n.val + sum_list(n.next) # Safety proved by Z3
+    return n.val + sum_list(n.next)
 ```
 
-#### Runtime Monomorphization & Const Generics
-Lila uses Python's `typing.TypeVar` and `Ellipsis` to implement zero-overhead generics. Functions are lazily specialized for specific types, constant integers (Const Generics), and symbolic arithmetic expressions at the first call site.
+#### Monomorphization and Const Generics
+`TypeVar` is used for generic type parameters and for integer "const generics" (integer dimensions bound at JIT time). Symbolic arithmetic on these dimensions (e.g., `N + 1`) is evaluated during compilation to produce exact, specialized machine code.
 
 ```python
 from typing import TypeVar
-from lila import verify, i64, f64, SizedArray
+from lirien import verify, i64, f64, SizedArray
 
 T = TypeVar("T", i64, f64)
-N = TypeVar("N") # Const Generic
+N = TypeVar("N")  # Const generic integer
 
 @verify
 def pad_one(x: SizedArray[T, N], out: SizedArray[T, N + 1]) -> i64:
-    # Lila evaluates N + 1 at JIT-time and specializes the machine code
     for i in range(N):
         out[i] = x[i]
     return N + 1
-
-# Specialized for SizedArray[i64, 4] -> SizedArray[i64, 5]
-arr4 = SizedArray[i64, 4](1, 2, 3, 4)
-arr5 = SizedArray[i64, 5](0, 0, 0, 0, 0)
-pad_one(arr4, arr5) 
 ```
 
-#### True Multiple Dispatch
-Lila leverages Python's standard `@typing.overload` decorator to implement true ad-hoc polymorphism. Instead of being ignored at runtime, function calls are resolved against overloaded signatures and lazily JIT-compiled into specialized, type-safe machine code.
+#### Multiple Dispatch via `@overload`
+`typing.overload` is used to declare ad-hoc polymorphism. The compiler resolves overloads at the call site and JIT-compiles a distinct machine-code body for each matched signature.
 
 ```python
 from typing import overload
-from lila import verify, i64, f64
+from lirien import verify, i64, f64
 
 @overload
 def compute(x: i64) -> i64: ...
@@ -188,49 +190,50 @@ def compute(x: f64) -> f64: ...
 def compute(x):
     return x * 2
 
-# Lila dynamically routes to completely different machine-code bodies!
-compute(10)   # Executes specialized i64 logic
-compute(2.5)  # Executes specialized f64 logic
+compute(10)   # Dispatches to specialized i64 body.
+compute(2.5)  # Dispatches to specialized f64 body.
 ```
 
-#### Verified Loop Unrolling
-By using `typing.Literal`, Lila can track compile-time constants and perform robust loop unrolling. This eliminates loop overhead and provides Z3 with exact induction values for indexing proofs.
+#### Loop Unrolling via `typing.Literal`
+Parameters typed as `typing.Literal[N]` are treated as compile-time integer constants. The compiler unrolls loops bounded by these values entirely, producing a flat sequence of instructions, and gives Z3 exact induction values for each iteration.
+
 ```python
 from typing import Literal
-from lila import verify, i64
+from lirien import verify, i64
 
 @verify
 def unrolled_sum(limit: Literal[5]) -> i64:
     total = 0
-    # Lila unrolls this loop completely into 5 discrete blocks
+    # Expanded into 5 discrete add instructions.
     for i in range(limit):
         total += i
     return total
 ```
 
-#### Ahead-of-Time (AOT) IR Caching
-Lila caches its proven Intermediate Representation (IR) to disk in a fast binary format. If the Python source code, memory layouts, and compiler version remain unchanged, subsequent executions completely bypass AST parsing and the computationally expensive Z3 formal verification phase. The pre-verified IR is fed directly to Cranelift for near-instant execution startup times.
+#### AOT IR Caching
+The `@verify` decorator hashes the function's source text, the memory layouts of its parameter types, and the current compiler version. If a matching `.lir` binary exists in `.lirien_cache/`, the function is loaded directly into Cranelift for code generation, skipping AST parsing and Z3 verification entirely.
 
-#### Native SIMD (Vectorized) Execution
-Lila exposes native CPU vector registers directly to Python, allowing for high-performance math that bypasses NumPy's calling overhead. It supports floating-point vectors (`f32x4`, `f64x2`) as well as a full suite of integer vectors including 8-bit and 16-bit types (`i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `i64x2`).
+#### SIMD Execution
+Lirien exposes 128-bit CPU vector registers as first-class types. Arithmetic on these types lowers to single native SIMD instructions. Scalar literals are automatically broadcast ("splatted") to all lanes.
+
 ```python
-from lila import verify, i8x16
+from lirien import verify, i8x16
 
 @verify
 def process_pixels(a: i8x16, b: i8x16) -> i8x16:
-    # Compiles to a single native SIMD instruction
-    # Automatic splatting broadcasts scalars (e.g., 10) to all vector lanes
+    # Compiles to two SIMD instructions: vpadd + vpsub
     return (a + b) - 10
 ```
 
 ---
 
-### Verified Data Structures
+### Data Structures
 
-#### Memory-Mapped Structs
-Define zero-overhead, C-compatible structures that exist outside the CPython heap. Lila supports **Nested Refinements**, allowing you to prove properties deep within a structure's hierarchy.
+#### C-Compatible Struct Layout
+`@struct` types are compiled to flat, C-ABI-compatible memory layouts. Nested structs are inlined by absolute byte offset rather than represented as pointers. Refinement predicates can reference nested fields.
+
 ```python
-from lila import struct, f64, i32, Refined
+from lirien import struct, f64, i32, Refined
 
 @struct
 class Point:
@@ -239,17 +242,17 @@ class Point:
 
 @struct
 class Trace:
-    p: Point
+    p: Point  # Inlined at offset 0; id at offset 16.
     id: i32
 
-# Formally prove properties of nested fields
 SafeTrace = Refined[Trace, lambda t: t.p.x > 0]
 ```
 
-#### Flat Value Types
-Lila supports stack-allocated, non-boxed structs (`@value`) that provide zero-overhead data processing. Unlike heap-allocated `@struct`, `@value` types have value semantics and are laid out contiguously in memory, making them ideal for high-performance buffer operations.
+#### Stack-Allocated Value Types
+`@value` types have value semantics and are stack-allocated. They are laid out contiguously in memory without indirection, which makes them suitable for use as elements in `Buffer[T]` and similar contiguous containers.
+
 ```python
-from lila import value, i64, Buffer, verify
+from lirien import value, i64, Buffer, verify
 
 @value
 class Point3D:
@@ -259,36 +262,35 @@ class Point3D:
 
 @verify
 def process_points(data: Buffer[Point3D]) -> None:
-    # Lila optimizes this to raw pointer arithmetic with zero boxing overhead
     for i in range(len(data)):
         total = data[i].x + 1
 ```
 
-#### Verified Tensors: Rank-Polymorphism
-Lila provides first-class support for tensors with shape-aware formal verification. Operations like element-wise arithmetic and reductions are proven safe against shape mismatches. It supports **Variadic Rank-Polymorphism** using `TypeVarTuple` and `Unpack`, allowing a single function to operate on tensors of any rank while capturing their specific dimensions.
+#### Tensors and Rank Polymorphism
+`Tensor[T, *Shape]` carries its element type and shape at the type level. `TypeVarTuple` and `Unpack` allow a single function to operate on tensors of arbitrary rank, capturing all dimensions as a compile-time sequence.
+
 ```python
 from typing import TypeVarTuple, Unpack
-from lila import verify, Tensor, f32, i64
+from lirien import verify, Tensor, f32, i64
 
 Shape = TypeVarTuple("Shape")
 
 @verify
 def get_rank(a: Tensor[f32, Unpack[Shape]]) -> i64:
-    # 'Shape' captures all dimensions as a compile-time tuple
     return len(Shape)
 
 t1 = Tensor.alloc((10,), f32)
-get_rank(t1) # Returns 1
+get_rank(t1)  # Returns 1.
 
 t3 = Tensor.alloc((2, 3, 4), f32)
-get_rank(t3) # Returns 3
+get_rank(t3)  # Returns 3.
 ```
 
-#### Recursive ADTs & Tagged Unions
-Lila supports heap-allocated recursive data structures and tagged unions (Enums/Results) with full formal verification of variant access.
+#### Algebraic Data Types and Result
+`@adt` defines tagged unions with named variants. Dispatch is compiled to a Cranelift `switch`-based jump table for O(1) variant selection. Z3 verifies that all `match` blocks are exhaustive and that variant fields are accessed only when the correct tag is active.
 
 ```python
-from lila import verify, i64, adt, Box, Result, Ok, Err
+from lirien import verify, i64, adt, Box, Result, Ok, Err
 
 @adt
 class Node:
@@ -310,16 +312,12 @@ def safe_div(a: i64, b: i64) -> Result[i64, i64]:
     return Ok(a // b)
 ```
 
-#### Verified Tuples & NamedTuples: Zero-Overhead Aggregates
-Lila provides full support for standard `Tuple` and `NamedTuple`. Unlike CPython, where tuples are heap-allocated objects, Lila **recursively flattens** tuples into individual CPU registers or stack slots. This ensures that passing a nested structure like `Tuple[Tuple[i64, i64], i64]` is as efficient as passing three raw integers.
-
-*   **Recursive Flattening:** Tuples of any depth are expanded into their primitive constituents.
-*   **Register-Based ABI:** Small tuples (up to 16 bytes) are passed directly in registers.
-*   **Formal Verification:** Z3 proves the safety of tuple destructuring and element access.
+#### Tuples and NamedTuples: Register Flattening
+Standard `Tuple` and `NamedTuple` types are recursively flattened into their primitive constituents for parameter passing and return values. Tuples of up to 16 bytes (2 registers) are passed entirely in registers. Larger aggregates use a return-by-pointer (SRet) convention but remain flattened as individual arguments.
 
 ```python
 from typing import NamedTuple, Tuple
-from lila import verify, i64
+from lirien import verify, i64
 
 class Point(NamedTuple):
     x: i64
@@ -330,29 +328,24 @@ def scale_nested(data: Tuple[Point, i64]) -> Point:
     p, factor = data
     return Point(p.x * factor, p.y * factor)
 
-# Lila flattens this into 3 register arguments (x, y, factor)
-# and returns 2 register values (new_x, new_y).
+# At the ABI level: three i64 inputs (x, y, factor), two i64 outputs (new_x, new_y).
 ```
 
-#### Verified Buffer and NumPy Interop
-Seamlessly operate on high-performance memory buffers (like NumPy arrays) with Z3-proven bounds checking.
+#### Buffer Interop and Zero-Copy Slicing
+`Buffer[T]` wraps any object implementing the Python buffer protocol (including NumPy arrays). Loop indices over a `Buffer` are bounded by its declared length and verified by Z3. Slicing produces a zero-copy memory view; Z3 proves the slice is within the original buffer's bounds.
+
 ```python
-from lila import verify, Buffer, f64
+from lirien import verify, Buffer, i64, f64
 
 @verify
 def scale_vector(vec: Buffer[f64], factor: f64) -> None:
-    # Lila proves 'i' is always within [0, len(vec))
+    # Z3 proves i is in [0, len(vec)) for all loop iterations.
     for i in range(len(vec)):
         vec[i] *= factor
-```
 
-#### Formally Verified Slicing
-Lila supports Python's slicing syntax for `Buffer` and `SizedArray`. Slicing operations are zero-copy (pointer arithmetic) and formally verified to ensure that the resulting slice is always within the bounds of the original buffer.
-
-```python
 @verify
 def sum_slice(data: Buffer[i64], start: i64) -> i64:
-    # Lila proves 'start' is safe and 'data[start:]' is a valid view
+    # Z3 proves start is valid and data[start:] is within bounds.
     view = data[start:]
     total = 0
     for i in range(len(view)):
@@ -362,26 +355,27 @@ def sum_slice(data: Buffer[i64], start: i64) -> i64:
 
 ---
 
-### Developer Experience
+### Developer Tooling
 
 #### Source-Level Diagnostics
-Lila provides visual highlights for verification failures, mapping IR-level logic errors back to your original Python source code for immediate debugging.
+Verification failures are reported with source file, line, and column information. The IR carries `SourceLocation` metadata that maps every instruction back to the original Python source.
+
 ```text
-[Lila Warning] Lila Verification Failed for 'divide_unsafe': Potential division by zero at v2
+[Lirien Warning] Lirien Verification Failed for 'divide_unsafe': Potential division by zero at v2
   --> source.py:3:12
    |
  3 |    return n // d
    |                ^--- Logic error detected here
 ```
 
-#### Centralized Granular Tracing
-Toggle granular debug levels for specific sub-systems directly from Python to isolate issues in the compiler pipeline.
-```python
-from lila import configure_tracing, LIVENESS, VERIFY, SSA
+#### Granular Tracing
+Individual compiler subsystems can be configured to emit structured tracing output at selectable log levels, without modifying source code.
 
-# Only see detailed liveness logs and SSA optimizations
+```python
+from lirien import configure_tracing, LIVENESS, VERIFY, SSA
+
 configure_tracing({
-    LIVENESS: "debug", 
+    LIVENESS: "debug",
     SSA: "debug",
     VERIFY: "info"
 })
@@ -389,50 +383,50 @@ configure_tracing({
 
 ---
 
-## The Lila Architecture & Pipeline
+## Architecture & Pipeline
 
-Lila's architecture is built as a multi-crate Rust workspace, orchestrated by a Python frontend. The transformation from dynamic Python to verified machine code follows a strict pipeline, completely bypassing the CPython interpreter for the compiled functions.
+Lirien is structured as a multi-crate Rust workspace (`crates/`) with a Python frontend package (`python/lirien/`). The PyO3-based bridge crate (`lirien-bridge`) exposes the compiler to Python and handles caching.
 
 ```mermaid
 graph TD
     %% Python Side
     PySource["@verify<br/>def my_func(...)"]:::python
-    
+
     %% Bridge / Caching
     Hash["Cache Manager<br/>(seahash)"]:::bridge
     Cache{{"Cache Hit?"}}:::bridge
-    Disk[(".lila_cache/*.lir<br/>(bincode)")];
-    
+    Disk[(".lirien_cache/*.lir<br/>(bincode)")];
+
     %% Frontend (AST -> IR)
     AST["AST Parser<br/>(rustpython)"]:::frontend
-    Builder["SSA Builder<br/>(CFG, Env Capture)"]:::frontend
-    Opt["Optimization<br/>(DCE, Fold, Prop)"]:::frontend
-    
+    Builder["SSA Builder<br/>(CFG, capture analysis)"]:::frontend
+    Opt["Optimization<br/>(DCE, constant folding, type propagation)"]:::frontend
+
     %% Middle-end (Verification)
-    Z3["Z3 SMT Solver<br/>(Logic Engine)"]:::verify
-    
+    Z3["Z3 SMT Solver<br/>(arithmetic, memory, control-flow)"]:::verify
+
     %% Backend
-    CL["Cranelift JIT<br/>(Machine Code)"]:::backend
+    CL["Cranelift JIT<br/>(machine code)"]:::backend
     Trampoline["C-ABI Trampoline<br/>(PyO3)"]:::backend
 
     %% Flow
     PySource --> Hash
     Hash -.-> Disk
     Hash --> Cache
-    
+
     Cache -- Yes --> CL
     Cache -- No --> AST
-    
+
     AST --> Builder
     Builder --> Opt
     Opt --> Z3
-    
-    Z3 --> CacheWrite["Save to Cache"]
+
+    Z3 --> CacheWrite["Write to Cache"]
     CacheWrite -.-> Disk
     CacheWrite --> CL
-    
+
     CL --> Trampoline
-    Trampoline -->|Native Execution| PySource
+    Trampoline -->|"Native call"| PySource
 
     classDef python fill:#306998,stroke:#FFD43B,stroke-width:2px,color:#fff;
     classDef bridge fill:#6e5494,stroke:#fff,stroke-width:1px,color:#fff;
@@ -441,52 +435,60 @@ graph TD
     classDef backend fill:#2c3e50,stroke:#fff,stroke-width:1px,color:#fff;
 ```
 
-### The Compilation Stages
+### Compilation Stages
 
-1. **Interception & Hashing (`lila-bridge`):** The `@verify` decorator intercepts the Python function. The source code, structural memory layouts, and the current compiler version are hashed.
-2. **AOT Caching:** If a valid `.lir` (Lila IR) binary exists in `.lila_cache/` for this hash, the system skips directly to Backend Lowering (Stage 6), achieving near-zero latency startup.
-3. **AST Extraction (`lila-ir`):** On a cache miss, the Python AST is parsed and lowered into Lila's **Static Single Assignment (SSA)** Intermediate Representation, building the Control Flow Graph (CFG) and analyzing variable captures.
-4. **Optimization (`lila-ir`):** The IR undergoes multiple passes including **Constant Folding**, **Dead Code Elimination (DCE)**, and **Type Propagation**.
-5. **Formal Verification (`lila-verify`):** Every branch condition, mathematical operation, and memory access is mapped to SMT-LIB logic and rigorously proven by the **Z3 Solver**. Refinement types are checked across all reachable paths.
-6. **Backend Lowering (`lila-backend`):** The verified SSA is compiled via **Cranelift IR** into raw machine code (executable memory buffers).
-7. **Hot-Swapping:** PyO3 generates a native C-ABI trampoline. Subsequent calls to the Python function bypass the interpreter entirely, executing the bare-metal code directly.
+1. **Interception and hashing (`lirien-bridge`):** The `@verify` decorator intercepts the Python function. Its source text, parameter type layouts, and the current compiler version are hashed with `seahash`.
+2. **AOT cache lookup:** If a matching `.lir` binary exists in `.lirien_cache/`, the verified IR is deserialized and passed directly to stage 6.
+3. **AST lowering to SSA IR (`lirien-ir`):** On a cache miss, the Python AST is parsed by `rustpython` and lowered into Lirien's SSA-form Intermediate Representation. The builder constructs the Control Flow Graph, resolves variable scopes, and performs closure capture analysis.
+4. **Optimization (`lirien-ir`):** The IR is processed by several passes: dead code elimination (DCE), constant folding, and type propagation.
+5. **Formal verification (`lirien-verify`):** Every arithmetic operation, memory access, and branch condition is encoded as SMT-LIB constraints and discharged by Z3. Refinement type predicates are checked against all reachable paths. The verifier uses interval analysis to skip solver calls for constraints that are trivially provable within known value ranges.
+6. **Code generation (`lirien-backend`):** The verified SSA IR is lowered to Cranelift IR and compiled to native machine code stored in an executable memory buffer.
+7. **Trampoline installation:** PyO3 installs a C-ABI function pointer as the `__call__` target of the original Python function object. Subsequent calls bypass the interpreter entirely.
 
 ---
 
 ## Technical Specifications
 
-| Feature | Support / Technology |
+| Component | Detail |
 | :--- | :--- |
-| **Core Architecture** | Multi-crate Rust Workspace (`lila-core`, `lila-ir`, `lila-verify`, `lila-backend`, `lila-bridge`) |
-| **Numeric Types** | `i8` through `u64`, `f32`, `f64`, `SIMD (f32x4, etc.)` |
-| **Arithmetic** | **Const Generics**, **Type-Level Arithmetic (Symbolic Expressions)** |
-| **Generics** | Runtime Monomorphization (`TypeVar`, `TypeVarTuple`) |
-| **Functional Types**| `FnPointer`, `Closure`, `Callable` |
-| **Complex Types** | Structs, Tensors, ADTs (**Result**), Tuples, **SizedArray**, Box |
-| **Concurrency** | GIL-less multi-threading (`parallel_for`) |
-| **Logic Solver** | Z3 SMT Solver v4.12+ (**BV, Float, & Array Theories**) |
-| **JIT Backend** | Cranelift 0.100+ |
-| **AOT Caching** | Binary IR Serialization (`bincode`, `seahash`) |
-| **Interoperability** | PyO3, ctypes, NumPy, Buffer Protocol |
-| **Diagnostics** | Source-level visual highlights, Centralized Granular Tracing |
-| **Optimization Passes**| SSA-DCE, Constant Folding, Verified Loop Unrolling, Type Propagation |
+| **Crate structure** | `lirien-core`, `lirien-ir`, `lirien-verify`, `lirien-backend`, `lirien-bridge` |
+| **Scalar types** | `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, `f64`, `bool` |
+| **SIMD types** | `f32x4`, `f64x2`, `i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `i64x2` |
+| **Generics** | Monomorphization via `TypeVar`; rank polymorphism via `TypeVarTuple` |
+| **Const generics** | Integer `TypeVar` dimensions with symbolic arithmetic (`N + 1`) |
+| **Callable types** | `FnPointer`, `Closure`, `Callable` |
+| **Aggregate types** | `@struct`, `@value`, `Tuple`, `NamedTuple`, `@adt`, `Box`, `SizedArray`, `Buffer`, `Tensor` |
+| **Concurrency** | `parallel_for` on raw memory buffers (no GIL) |
+| **SMT solver** | Z3 v4.12+ — bitvector, floating-point, and array theories |
+| **JIT backend** | Cranelift 0.100+ |
+| **IR serialization** | `bincode` (format), `seahash` (cache key) |
+| **Python interop** | PyO3, `ctypes`, NumPy buffer protocol |
+| **Optimization passes** | DCE, constant folding, type propagation, loop unrolling |
+| **Diagnostics** | Source-mapped error locations, per-subsystem tracing |
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- **Rust Toolchain** (latest stable)
-- **Python 3.10+**
-- **Z3 Solver** (shared library v4.12+)
+- Rust toolchain (stable, 1.80 or later)
+- Python 3.10 or later
+- Z3 shared library (v4.12 or later)
+- `maturin` (Python build tool)
 
-### Installation and Testing
+### Build and Test
+
 ```bash
-# Build Lila in release mode
+# Verify the Rust workspace compiles cleanly.
+cargo check
+
+# Build and install the Python extension module.
 maturin develop --release
 
-# Run verification test suite
+# Run the Rust unit tests.
 cargo test
+
+# Run the Python integration test suite.
 PYTHONPATH=./python python -m unittest discover tests/python
 ```
 
@@ -495,16 +497,19 @@ PYTHONPATH=./python python -m unittest discover tests/python
 ## Limitations & Roadmap
 
 ### Verifying vs. Verified
-Lila is a **verifying compiler**, meaning it uses formal logic to prove the safety of the input Python code at JIT-time. It is **not** a "formally verified compiler" like CompCert; the compiler's own Rust implementation has not been formally proven correct against a specification.
+Lirien is a *verifying compiler*: it uses formal methods to prove properties of its input programs. It is not a *formally verified compiler*: the compiler implementation itself (the Rust codebase) has not been proven correct against a formal specification. Bugs in the compiler or the Z3 encoding could theoretically allow an unsafe program to pass verification.
 
-### The "Closed World Assumption"
-To maintain mathematical soundness, Lila imposes strict constraints:
-*   No dynamic attribute access (`getattr`, `setattr`).
-*   No `eval()` or `exec()`.
-*   Functions must have explicit type annotations.
+### Closed-World Assumption
+To maintain sound verification, Lirien restricts the subset of Python it accepts:
+- Dynamic attribute access (`getattr`, `setattr`, `__dict__`) is not supported.
+- `eval()` and `exec()` are not supported.
+- All function parameters and return types must carry explicit annotations.
 
-### Future Research
-1. **Automated Loop Invariant Synthesis:** Researching Abstract Interpretation to automatically derive loop invariants.
+### Roadmap
+
+| Item | Status |
+| :--- | :--- |
+| Automated loop invariant synthesis (abstract interpretation) | Planned |
 
 ---
 

@@ -1,6 +1,6 @@
 import unittest
 from typing import Protocol
-from lila import verify, f32, i64, adt, struct
+from lirien import verify, f32, i64, adt, struct
 
 
 class Renderable(Protocol):

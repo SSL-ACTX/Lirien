@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, i64, f32, Tensor, SizedArray, TypeVar
+from lirien import verify, i64, f32, Tensor, SizedArray, TypeVar
 from typing import Tuple
 
 M = TypeVar("M")

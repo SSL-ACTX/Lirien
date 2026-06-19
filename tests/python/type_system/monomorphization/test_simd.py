@@ -1,5 +1,5 @@
 import unittest
-from lila import verify, f32x4
+from lirien import verify, f32x4
 from typing import TypeVar
 
 T = TypeVar("T")
