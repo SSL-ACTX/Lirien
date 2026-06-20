@@ -32,6 +32,7 @@ from .types import (
     Callable,
     Closure,
     Tensor,
+    V,
 )
 from .types.arithmetic import (
     TypeExpr,
@@ -93,4 +94,5 @@ __all__ = [
     "BACKEND",
     "BRIDGE",
     "ALL",
+    "V",
 ]

@@ -65,6 +65,9 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
     # Handle Refined types
     if hasattr(ty, "base_type") and hasattr(ty, "predicate"):
         base_name = _get_type_name(ty.base_type, type_mapping)
+        if hasattr(ty.predicate, "__lirien_symbolic__"):
+            pred_src = str(ty.predicate)
+            return f"Refined[{base_name}, {pred_src}]"
         try:
             pred_src = inspect.getsource(ty.predicate).strip()
             if "lambda" in pred_src:
@@ -351,14 +354,17 @@ def _discover_types(
         elif hasattr(obj, "base_type") and hasattr(obj, "predicate"):
             # It's likely a Refined type instance
             try:
-                pred_src = inspect.getsource(obj.predicate).strip()
-                if "lambda" in pred_src:
-                    start = pred_src.find("lambda")
-                    pred_src = pred_src[start:]
-                    if pred_src.endswith(","):
-                        pred_src = pred_src[:-1]
-                    if pred_src.endswith("]"):
-                        pred_src = pred_src[:-1]
+                if hasattr(obj.predicate, "__lirien_symbolic__"):
+                    pred_src = str(obj.predicate)
+                else:
+                    pred_src = inspect.getsource(obj.predicate).strip()
+                    if "lambda" in pred_src:
+                        start = pred_src.find("lambda")
+                        pred_src = pred_src[start:]
+                        if pred_src.endswith(","):
+                            pred_src = pred_src[:-1]
+                        if pred_src.endswith("]"):
+                            pred_src = pred_src[:-1]
 
                 base_ty = obj.base_type
 

@@ -245,3 +245,72 @@ class Array(Generic[T]):
 
     def __setitem__(self, idx: int, val: T):
         self.data[idx] = val
+
+
+class SymbolicExpr:
+    __lirien_symbolic__ = True
+
+    def __init__(self, expr_str, fn):
+        self.expr_str = expr_str
+        self.fn = fn
+
+    def __str__(self):
+        return f"lambda x: {self.expr_str}"
+
+    def __call__(self, val):
+        return self.fn(val)
+
+    # Comparisons
+    def __gt__(self, other):
+        return SymbolicExpr(f"x > {other}", lambda x: self(x) > other)
+
+    def __lt__(self, other):
+        return SymbolicExpr(f"x < {other}", lambda x: self(x) < other)
+
+    def __ge__(self, other):
+        return SymbolicExpr(f"x >= {other}", lambda x: self(x) >= other)
+
+    def __le__(self, other):
+        return SymbolicExpr(f"x <= {other}", lambda x: self(x) <= other)
+
+    def __eq__(self, other):
+        return SymbolicExpr(f"x == {other}", lambda x: self(x) == other)
+
+    def __ne__(self, other):
+        return SymbolicExpr(f"x != {other}", lambda x: self(x) != other)
+
+    # Logical operations (bitwise in Python, logical context in refinements)
+    def __and__(self, other):
+        if hasattr(other, "expr_str"):
+            return SymbolicExpr(
+                f"({self.expr_str}) & ({other.expr_str})",
+                lambda x: bool(self(x)) and bool(other(x)),
+            )
+        return SymbolicExpr(f"({self.expr_str}) & {other}", lambda x: self(x) & other)
+
+    def __or__(self, other):
+        if hasattr(other, "expr_str"):
+            return SymbolicExpr(
+                f"({self.expr_str}) | ({other.expr_str})",
+                lambda x: bool(self(x)) or bool(other(x)),
+            )
+        return SymbolicExpr(f"({self.expr_str}) | {other}", lambda x: self(x) | other)
+
+    def __invert__(self):
+        return SymbolicExpr(f"not ({self.expr_str})", lambda x: not self(x))
+
+    # Basic arithmetic
+    def __mod__(self, other):
+        return SymbolicExpr(f"({self.expr_str}) % {other}", lambda x: self(x) % other)
+
+    def __add__(self, other):
+        return SymbolicExpr(f"({self.expr_str}) + {other}", lambda x: self(x) + other)
+
+    def __sub__(self, other):
+        return SymbolicExpr(f"({self.expr_str}) - {other}", lambda x: self(x) - other)
+
+    def __mul__(self, other):
+        return SymbolicExpr(f"({self.expr_str}) * {other}", lambda x: self(x) * other)
+
+
+V = SymbolicExpr("x", lambda x: x)

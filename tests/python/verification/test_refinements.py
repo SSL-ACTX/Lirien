@@ -318,6 +318,37 @@ class TestRefinements(unittest.TestCase):
         self.assertTrue(getattr(unsafe_div_jit, "__lirien_jit__", False))
         self.assertEqual(unsafe_div_jit(10, 2), 5)
 
+    def test_symbolic_refinement(self):
+        from lirien import V
+
+        PositiveVal = Refined[i64, V > 0]
+        InRangeVal = Refined[i64, (V >= 0) & (V < 100)]
+        EvenVal = Refined[i64, (V % 2) == 0]
+
+        @verify
+        def divide_symbolic(n: i64, d: PositiveVal) -> i64:
+            return n // d
+
+        @verify
+        def check_in_range(x: InRangeVal) -> i64:
+            return x + 1
+
+        @verify
+        def check_even(x: EvenVal) -> i64:
+            return x
+
+        self.assertTrue(getattr(divide_symbolic, "__lirien_jit__", False))
+        self.assertTrue(getattr(check_in_range, "__lirien_jit__", False))
+        self.assertTrue(getattr(check_even, "__lirien_jit__", False))
+
+        self.assertEqual(divide_symbolic(10, 2), 5)
+        self.assertEqual(check_in_range(50), 51)
+        self.assertEqual(check_even(42), 42)
+
+        # FFI boundary check for invalid value should fail in Python
+        with self.assertRaises(Exception):
+            divide_symbolic(10, -5)
+
 
 if __name__ == "__main__":
     unittest.main()
