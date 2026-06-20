@@ -1,9 +1,38 @@
 import ctypes
 import inspect
 import sys
-from typing import get_origin, get_args
+from typing import get_origin, get_args, Annotated
 from .base import TYPE_MAP
 from .memory import Box
+
+
+def _is_nullable_box(ty):
+    actual_ty = getattr(ty, "base_type", ty)
+    origin = get_origin(actual_ty)
+    from typing import Union
+    import types
+
+    if origin is Union or (sys.version_info >= (3, 10) and origin is types.UnionType):
+        args = get_args(actual_ty)
+        if len(args) == 2:
+            box_ty = None
+            has_none = False
+            for arg in args:
+                arg_origin = get_origin(arg)
+                if arg_origin is Annotated:
+                    inner_args = get_args(arg)
+                    if inner_args and inner_args[0] is Box:
+                        box_ty = arg
+                elif (
+                    hasattr(arg, "__metadata__")
+                    and getattr(arg, "__origin__", None) is Box
+                ):
+                    box_ty = arg
+                elif arg is type(None) or arg is None:
+                    has_none = True
+            if box_ty and has_none:
+                return box_ty
+    return None
 
 
 def struct(cls):
@@ -166,20 +195,44 @@ def struct(cls):
                     wrapper = fty.__new__(fty)
                     wrapper._ctypes_obj = val
                     return wrapper
+                box_ty = _is_nullable_box(fty)
+                if box_ty:
+                    if not val:
+                        return None
+                    inner_ty = box_ty.__metadata__[0]
+                    if isinstance(inner_ty, str):
+                        module = sys.modules.get(cls.__module__)
+                        if module and hasattr(module, inner_ty):
+                            inner_ty = getattr(module, inner_ty)
+                        elif inner_ty == cls.__name__:
+                            inner_ty = cls
+                    wrapper = inner_ty.__new__(inner_ty)
+                    wrapper._ctypes_obj = ctypes.cast(
+                        val, ctypes.POINTER(inner_ty.__lirien_ctypes__)
+                    ).contents
+                    return Box(wrapper)
                 return val
 
             return getter
 
-        def make_setter(fname):
+        def make_setter(fname, fty):
             def setter(self_ref, val):
-                if hasattr(val, "_ctypes_obj"):
-                    setattr(self_ref._ctypes_obj, fname, val._ctypes_obj)
+                if _is_nullable_box(fty):
+                    if val is None:
+                        setattr(self_ref._ctypes_obj, fname, None)
+                    elif isinstance(val, Box):
+                        setattr(self_ref._ctypes_obj, fname, val._ctypes_obj)
+                    else:
+                        setattr(self_ref._ctypes_obj, fname, val)
                 else:
-                    setattr(self_ref._ctypes_obj, fname, val)
+                    if hasattr(val, "_ctypes_obj"):
+                        setattr(self_ref._ctypes_obj, fname, val._ctypes_obj)
+                    else:
+                        setattr(self_ref._ctypes_obj, fname, val)
 
             return setter
 
-        setattr(cls, name, property(make_getter(name, ftype), make_setter(name)))
+        setattr(cls, name, property(make_getter(name, ftype), make_setter(name, ftype)))
 
     def struct_repr(self):
         field_strs = []
@@ -331,7 +384,9 @@ def enum(cls):
             union_fields.append(
                 (name, make_payload_struct(f"{cls.__name__}_{name}_payload", []))
             )
-        elif hasattr(ty, "__metadata__") and "Box" in str(ty.__origin__):
+        elif (
+            hasattr(ty, "__metadata__") and "Box" in str(ty.__origin__)
+        ) or _is_nullable_box(ty):
             union_fields.append((name, ctypes.c_void_p))
         elif hasattr(ty, "__lirien_ctypes__"):
             union_fields.append((name, ty.__lirien_ctypes__))
@@ -345,9 +400,10 @@ def enum(cls):
             )
             tuple_fields = []
             for i, t in enumerate(tuple_elts):
-                if hasattr(t, "__metadata__") and "Box" in str(
-                    getattr(t, "__origin__", None)
-                ):
+                if (
+                    hasattr(t, "__metadata__")
+                    and "Box" in str(getattr(t, "__origin__", None))
+                ) or _is_nullable_box(t):
                     tuple_fields.append((f"f{i}", ctypes.c_void_p))
                 else:
                     t_str = str(t).lower()
@@ -445,11 +501,20 @@ def enum(cls):
 
                 if variant_type is None:
                     pass
-                elif hasattr(variant_type, "__metadata__") and "Box" in str(
-                    variant_type.__origin__
-                ):
+                elif (
+                    hasattr(variant_type, "__metadata__")
+                    and "Box" in str(variant_type.__origin__)
+                ) or _is_nullable_box(variant_type):
                     payload_instance = args[0]
-                    if hasattr(payload_instance, "_ctypes_obj"):
+                    if payload_instance is None:
+                        setattr(instance._ctypes_obj.payload, variant_name, None)
+                    elif isinstance(payload_instance, Box):
+                        setattr(
+                            instance._ctypes_obj.payload,
+                            variant_name,
+                            payload_instance._ctypes_obj,
+                        )
+                    elif hasattr(payload_instance, "_ctypes_obj"):
                         ptr = ctypes.cast(
                             ctypes.pointer(payload_instance._ctypes_obj),
                             ctypes.c_void_p,
@@ -470,10 +535,16 @@ def enum(cls):
                     for i, arg in enumerate(args):
                         if i < len(variant_type):
                             v_ty = variant_type[i]
-                            if hasattr(v_ty, "__metadata__") and "Box" in str(
-                                v_ty.__origin__
-                            ):
-                                if hasattr(arg, "_ctypes_obj"):
+                            v_ty_box = _is_nullable_box(v_ty)
+                            if (
+                                hasattr(v_ty, "__metadata__")
+                                and "Box" in str(v_ty.__origin__)
+                            ) or v_ty_box:
+                                if arg is None:
+                                    setattr(payload_obj, f"f{i}", None)
+                                elif isinstance(arg, Box):
+                                    setattr(payload_obj, f"f{i}", arg._ctypes_obj)
+                                elif hasattr(arg, "_ctypes_obj"):
                                     ptr = ctypes.cast(
                                         ctypes.pointer(arg._ctypes_obj), ctypes.c_void_p
                                     )
@@ -498,12 +569,17 @@ def enum(cls):
                         f"Tried to access Enum as {variant_name} but tag is {self._ctypes_obj.tag}"
                     )
                 raw_payload = getattr(self._ctypes_obj.payload, variant_name)
+                box_ty = _is_nullable_box(variant_type)
                 if variant_type is None:
                     return None
-                elif hasattr(variant_type, "__metadata__") and "Box" in str(
-                    variant_type.__origin__
-                ):
-                    inner_ty = variant_type.__metadata__[0]
+                elif (
+                    hasattr(variant_type, "__metadata__")
+                    and "Box" in str(variant_type.__origin__)
+                ) or box_ty:
+                    if not raw_payload:
+                        return None
+                    actual_box_ty = box_ty if box_ty else variant_type
+                    inner_ty = actual_box_ty.__metadata__[0]
                     if isinstance(inner_ty, str):
                         module = sys.modules.get(cls.__module__)
                         if module and hasattr(module, inner_ty):
@@ -515,7 +591,7 @@ def enum(cls):
                         wrapper._ctypes_obj = ctypes.cast(
                             raw_payload, ctypes.POINTER(inner_ty.__lirien_ctypes__)
                         ).contents
-                        return wrapper
+                        return Box(wrapper)
                     return raw_payload
                 elif hasattr(variant_type, "__lirien_ctypes__"):
                     wrapper = variant_type.__new__(variant_type)
@@ -525,10 +601,16 @@ def enum(cls):
                     res = []
                     for i, v_ty in enumerate(variant_type):
                         raw_val = getattr(raw_payload, f"f{i}")
-                        if hasattr(v_ty, "__metadata__") and "Box" in str(
-                            v_ty.__origin__
-                        ):
-                            inner_ty = v_ty.__metadata__[0]
+                        v_ty_box = _is_nullable_box(v_ty)
+                        if (
+                            hasattr(v_ty, "__metadata__")
+                            and "Box" in str(v_ty.__origin__)
+                        ) or v_ty_box:
+                            if not raw_val:
+                                res.append(None)
+                                continue
+                            actual_v_ty = v_ty_box if v_ty_box else v_ty
+                            inner_ty = actual_v_ty.__metadata__[0]
                             if isinstance(inner_ty, str) and inner_ty == cls.__name__:
                                 inner_ty = cls
                             if hasattr(inner_ty, "__lirien_ctypes__"):
@@ -536,7 +618,7 @@ def enum(cls):
                                 wrapper._ctypes_obj = ctypes.cast(
                                     raw_val, ctypes.POINTER(inner_ty.__lirien_ctypes__)
                                 ).contents
-                                res.append(wrapper)
+                                res.append(Box(wrapper))
                             else:
                                 res.append(raw_val)
                         else:

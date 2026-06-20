@@ -74,6 +74,42 @@ class TestNullSafety(unittest.TestCase):
         self.assertEqual(get_val_or_zero(Box(42)), 42)
         self.assertEqual(get_val_or_zero(None), 0)
 
+    def test_struct_union_syntax(self):
+        import sys
+
+        if sys.version_info >= (3, 10):
+
+            @struct
+            class UnionNode:
+                val: i64
+                next: Box["UnionNode"] | None
+
+            n2 = UnionNode(20, None)
+            n1 = UnionNode(10, Box(n2))
+
+            self.assertEqual(n1.val, 10)
+            self.assertEqual(n1.next.value.val, 20)
+            self.assertIsNone(n2.next)
+
+    def test_adt_union_syntax(self):
+        import sys
+
+        if sys.version_info >= (3, 10):
+            from lirien import adt
+
+            @adt
+            class UnionList:
+                Cons: (i64, Box["UnionList"] | None)
+                Nil: None
+
+            lst = UnionList.Cons(10, Box(UnionList.Cons(20, None)))
+            self.assertTrue(lst.is_Cons())
+            val, tail = lst.as_Cons()
+            self.assertEqual(val, 10)
+            self.assertTrue(tail.value.is_Cons())
+            self.assertEqual(tail.value.as_Cons()[0], 20)
+            self.assertIsNone(tail.value.as_Cons()[1])
+
 
 if __name__ == "__main__":
     unittest.main()
