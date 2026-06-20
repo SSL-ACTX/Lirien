@@ -1,4 +1,4 @@
-use lirien_ir::ir::Function;
+use lirien_ir::ir::{Function, Type};
 use lirien_ir::registry::SerializedSignature;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tracing::{debug, info};
 
 #[derive(Serialize, Deserialize)]
@@ -15,12 +16,88 @@ pub struct CachedPayload {
     pub dependencies: HashMap<String, SerializedSignature>,
 }
 
+/// An in-process cached entry for a fully compiled function.
+/// Keyed by the IR hash (same hash used for the disk cache).
+#[derive(Clone, Debug)]
+pub struct NativeCacheEntry {
+    pub name: String,
+    pub pointer: usize,
+    pub arg_types: Vec<Type>,
+    pub arg_refinements: HashMap<usize, String>,
+    pub return_type: Type,
+    pub return_refinement: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeCachePayload {
+    pub entries: Vec<NativeCacheEntry>,
+    pub dependencies: HashMap<String, SerializedSignature>,
+}
+
+static NATIVE_CODE_CACHE: OnceLock<Mutex<HashMap<u64, NativeCachePayload>>> = OnceLock::new();
+
+fn get_native_cache() -> &'static Mutex<HashMap<u64, NativeCachePayload>> {
+    NATIVE_CODE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Check the L1 in-process cache for a previously compiled function group.
+pub fn native_cache_lookup(hash: u64) -> Option<Vec<NativeCacheEntry>> {
+    let cache = get_native_cache().lock().unwrap();
+    if let Some(payload) = cache.get(&hash) {
+        let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
+        for (dep_name, cached_sig) in &payload.dependencies {
+            if let Some(current_sig) = registry.get(dep_name) {
+                let current_serialized = SerializedSignature::from(current_sig);
+                if &current_serialized != cached_sig {
+                    debug!(
+                        target: "lirien::cache",
+                        "L1 cache dependency mismatch for '{}'. Invalidating L1 cache.",
+                        dep_name
+                    );
+                    return None;
+                }
+            } else {
+                debug!(
+                    target: "lirien::cache",
+                    "L1 cache dependency '{}' not found in registry. Invalidating L1 cache.",
+                    dep_name
+                );
+                return None;
+            }
+        }
+        Some(payload.entries.clone())
+    } else {
+        None
+    }
+}
+
+/// Store a compiled function group in the L1 in-process cache.
+pub fn native_cache_store(
+    hash: u64,
+    entries: Vec<NativeCacheEntry>,
+    dependencies: HashMap<String, SerializedSignature>,
+) {
+    let mut cache = get_native_cache().lock().unwrap();
+    cache.insert(
+        hash,
+        NativeCachePayload {
+            entries,
+            dependencies,
+        },
+    );
+}
+
+/// Invalidate an entry from the native code cache.
+pub fn native_cache_invalidate(hash: u64) {
+    let mut cache = get_native_cache().lock().unwrap();
+    cache.remove(&hash);
+}
+
+
 
 fn get_cache_dir() -> PathBuf {
     if let Ok(val) = env::var("LIRIEN_CACHE_DIR") {
         PathBuf::from(val)
-    } else if let Ok(home) = env::var("HOME") {
-        PathBuf::from(home).join(".cache").join("lirien")
     } else {
         let mut dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         dir.push(".lirien_cache");
@@ -298,7 +375,24 @@ pub fn load_ir(hash: u64) -> Option<Vec<Function>> {
     None
 }
 
-pub fn save_ir(hash: u64, funcs: &Vec<Function>) {
+pub fn collect_dependencies(funcs: &[Function]) -> HashMap<String, SerializedSignature> {
+    let mut dependencies = HashMap::new();
+    let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
+    for func in funcs {
+        for block in &func.blocks {
+            for inst in &block.instructions {
+                if let lirien_ir::ir::InstructionKind::Call(_, called_func, _) = &inst.kind {
+                    if let Some(sig) = registry.get(called_func) {
+                        dependencies.insert(called_func.clone(), SerializedSignature::from(sig));
+                    }
+                }
+            }
+        }
+    }
+    dependencies
+}
+
+pub fn save_ir(hash: u64, funcs: &[Function]) {
     let cache_dir = get_cache_dir();
     if let Err(e) = fs::create_dir_all(&cache_dir) {
         debug!(target: "lirien::cache", "Failed to create cache directory: {}", e);
@@ -307,24 +401,10 @@ pub fn save_ir(hash: u64, funcs: &Vec<Function>) {
 
     let file_path = cache_dir.join(format!("{:016x}.lir", hash));
 
-    let mut dependencies = HashMap::new();
-    {
-        let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
-        for func in funcs {
-            for block in &func.blocks {
-                for inst in &block.instructions {
-                    if let lirien_ir::ir::InstructionKind::Call(_, called_func, _) = &inst.kind {
-                        if let Some(sig) = registry.get(called_func) {
-                            dependencies.insert(called_func.clone(), SerializedSignature::from(sig));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let dependencies = collect_dependencies(funcs);
 
     let payload = CachedPayload {
-        functions: funcs.clone(),
+        functions: funcs.to_owned(),
         dependencies,
     };
 

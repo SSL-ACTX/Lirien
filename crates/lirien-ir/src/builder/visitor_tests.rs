@@ -12,6 +12,8 @@ mod tests {
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
         );
         let struct_name = "S".to_string();
         builder.func.struct_layouts.insert(
@@ -68,7 +70,7 @@ mod tests {
         );
 
         let mut builder =
-            CFGBuilder::new("test".to_string(), layouts, HashMap::new(), HashMap::new());
+            CFGBuilder::new("test".to_string(), layouts, HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
 
         let obj = builder.func.next_value();
         builder
