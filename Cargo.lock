@@ -381,6 +381,7 @@ dependencies = [
  "bincode",
  "cranelift-codegen",
  "cranelift-native",
+ "libc",
  "lirien-backend",
  "lirien-core",
  "lirien-ir",

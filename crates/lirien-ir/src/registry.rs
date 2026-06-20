@@ -1,7 +1,27 @@
 use crate::ir::Type;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SerializedSignature {
+    pub arg_types: Vec<Type>,
+    pub arg_refinements: HashMap<usize, String>,
+    pub return_type: Type,
+    pub return_refinement: Option<String>,
+}
+
+impl From<&FunctionSignature> for SerializedSignature {
+    fn from(sig: &FunctionSignature) -> Self {
+        Self {
+            arg_types: sig.arg_types.clone(),
+            arg_refinements: sig.arg_refinements.clone(),
+            return_type: sig.return_type.clone(),
+            return_refinement: sig.return_refinement.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {

@@ -37,6 +37,27 @@ pub fn verify_and_compile(
         &typed_dict_layouts,
     );
 
+    // Check L1 Native Code Cache first
+    if let Some(entries) = cache::native_cache_lookup(cache_hash) {
+        info!(target: "lirien::bridge", "L1 Native Cache HIT for '{}' (hash: {:016x}). Skipping compilation.", func_name, cache_hash);
+        let mut main_code_ptr = 0;
+        let mut registry = GLOBAL_REGISTRY.lock().unwrap();
+        for entry in entries {
+            registry.register(FunctionSignature {
+                name: entry.name.clone(),
+                arg_types: entry.arg_types,
+                arg_refinements: entry.arg_refinements,
+                return_type: entry.return_type,
+                return_refinement: entry.return_refinement,
+                pointer: entry.pointer,
+            });
+            if entry.name == func_name {
+                main_code_ptr = entry.pointer;
+            }
+        }
+        return Ok(main_code_ptr);
+    }
+
     let ssa_list = if let Some(cached_funcs) = cache::load_ir(cache_hash) {
         info!(target: "lirien::bridge", "IR Cache HIT for '{}' (hash: {:016x}). Skipping AST & Z3 verification.", func_name, cache_hash);
         cached_funcs
@@ -63,6 +84,7 @@ pub fn verify_and_compile(
                 func_name, e
             );
             cache::invalidate(cache_hash);
+            cache::native_cache_invalidate(cache_hash);
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
         })?;
 
@@ -76,6 +98,7 @@ pub fn verify_and_compile(
                 }
                 Err(e) => {
                     cache::invalidate(cache_hash);
+                    cache::native_cache_invalidate(cache_hash);
                     return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
                 }
             }
@@ -88,7 +111,9 @@ pub fn verify_and_compile(
         funcs
     };
 
+    let dependencies = cache::collect_dependencies(&ssa_list);
     let mut main_code_ptr = 0;
+    let mut native_entries = Vec::new();
 
     for ssa in ssa_list {
         let mut arg_types = Vec::new();
@@ -107,6 +132,7 @@ pub fn verify_and_compile(
             Ok(ptr) => ptr,
             Err(e) => {
                 cache::invalidate(cache_hash);
+                cache::native_cache_invalidate(cache_hash);
                 return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
             }
         };
@@ -115,13 +141,22 @@ pub fn verify_and_compile(
             let mut registry = GLOBAL_REGISTRY.lock().unwrap();
             registry.register(FunctionSignature {
                 name: ssa.name.clone(),
-                arg_types,
-                arg_refinements,
-                return_type,
-                return_refinement,
+                arg_types: arg_types.clone(),
+                arg_refinements: arg_refinements.clone(),
+                return_type: return_type.clone(),
+                return_refinement: return_refinement.clone(),
                 pointer: code_ptr,
             });
         }
+
+        native_entries.push(cache::NativeCacheEntry {
+            name: ssa.name.clone(),
+            pointer: code_ptr,
+            arg_types,
+            arg_refinements,
+            return_type,
+            return_refinement,
+        });
 
         if ssa.name == func_name {
             main_code_ptr = code_ptr;
@@ -133,6 +168,8 @@ pub fn verify_and_compile(
             ssa.name, code_ptr
         );
     }
+
+    cache::native_cache_store(cache_hash, native_entries, dependencies);
 
     Ok(main_code_ptr)
 }
