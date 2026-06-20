@@ -39,6 +39,7 @@ from .types.arithmetic import (
 )  # Lirien TypeVar with arithmetic support
 from .decorators import (
     verify,
+    jit,
     parallel_for,
     get_cpu_info,
     VerificationError,
@@ -58,6 +59,7 @@ __all__ = [
     "enum",
     "adt",
     "verify",
+    "jit",
     "parallel_for",
     "get_cpu_info",
     "VerificationError",

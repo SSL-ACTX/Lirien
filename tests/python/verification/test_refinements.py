@@ -298,6 +298,26 @@ class TestRefinements(unittest.TestCase):
         d = Deep(Outer(Inner(1337)))
         self.assertEqual(get_deep_val(d), 1337)
 
+    def test_verify_false_bypass(self):
+        @verify(verify=False)
+        def unsafe_div(n: i64, d: i64) -> i64:
+            return n // d
+
+        # This should have JIT compiled successfully because Z3 verification was skipped
+        self.assertTrue(getattr(unsafe_div, "__lirien_jit__", False))
+        self.assertEqual(unsafe_div(10, 2), 5)
+
+    def test_jit_decorator(self):
+        from lirien import jit
+
+        @jit
+        def unsafe_div_jit(n: i64, d: i64) -> i64:
+            return n // d
+
+        # This should have JIT compiled successfully because Z3 verification was skipped
+        self.assertTrue(getattr(unsafe_div_jit, "__lirien_jit__", False))
+        self.assertEqual(unsafe_div_jit(10, 2), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

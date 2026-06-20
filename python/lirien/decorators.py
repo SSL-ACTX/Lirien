@@ -204,6 +204,7 @@ class MonomorphizedFunction:
         enum_layouts=None,
         named_tuple_layouts=None,
         typed_dict_layouts=None,
+        verify=True,
     ):
         self.func = func
         self.__code__ = func.__code__
@@ -217,6 +218,7 @@ class MonomorphizedFunction:
         self.class_name = class_name
         self.method_name = method_name
         self.timeout = timeout
+        self.verify = verify
         self.cache = {}
         self.sig = inspect.signature(func)
         self.__lirien_jit__ = True
@@ -752,6 +754,7 @@ class MonomorphizedFunction:
                 named_tuple_layouts,
                 typed_dict_layouts,
                 self.timeout,
+                self.verify,
             )
         except Exception as e:
             error_msg = format_verification_error(
@@ -804,6 +807,7 @@ class OverloadedFunction:
         class_name=None,
         method_name=None,
         timeout=5000,
+        verify=True,
     ):
         self.func = func
         self.__code__ = func.__code__
@@ -814,6 +818,7 @@ class OverloadedFunction:
         self.class_name = class_name
         self.method_name = method_name
         self.timeout = timeout
+        self.verify = verify
         self.cache = {}
         self.base_sig = inspect.signature(func)
         self.__lirien_jit__ = True
@@ -979,6 +984,7 @@ class OverloadedFunction:
                 named_tuple_layouts,
                 typed_dict_layouts,
                 self.timeout,
+                self.verify,
             )
         except Exception as e:
             error_msg = format_verification_error(
@@ -1032,6 +1038,7 @@ def verify(
     strict: bool = True,
     log_level: str = None,
     timeout: int = 5000,
+    verify: bool = True,
     _struct_layouts: dict = None,
     _enum_layouts: dict = None,
     _named_tuple_layouts: dict = None,
@@ -1045,6 +1052,7 @@ def verify(
     :param strict: If True, raises VerificationError on failure. If False, falls back to Python.
     :param log_level: Override LILA_LOG level (e.g., 'info', 'debug', 'warn').
     :param timeout: Verification timeout in milliseconds (default 5000).
+    :param verify: If True, performs Z3 verification. If False, JITs directly without verification.
     """
 
     # Handle the case where the decorator is used without parentheses: @verify
@@ -1056,7 +1064,7 @@ def verify(
     ):
         func = strict
         # Re-call verify with defaults
-        return verify(strict=True)(func)
+        return globals()["verify"](strict=True)(func)
 
     def decorator(func: T) -> T:
         overloads = get_overloads(func)
@@ -1070,6 +1078,7 @@ def verify(
                 _class_name,
                 _method_name,
                 timeout,
+                verify=verify,
             )
 
         sig = inspect.signature(func)
@@ -1128,6 +1137,7 @@ def verify(
                 enum_layouts=_enum_layouts,
                 named_tuple_layouts=_named_tuple_layouts,
                 typed_dict_layouts=_typed_dict_layouts,
+                verify=verify,
             )
 
         log_lvl, old_log = _setup_logging(log_level)
@@ -1173,6 +1183,7 @@ def verify(
                     named_tuple_layouts,
                     typed_dict_layouts,
                     timeout,
+                    verify,
                 )
             finally:
                 _restore_logging(log_lvl, old_log)
@@ -1211,3 +1222,22 @@ def verify(
         strict = True
         return decorator(f)
     return decorator
+
+
+def jit(
+    strict: bool = True,
+    log_level: str = None,
+    timeout: int = 5000,
+) -> Callable:
+    """
+    Decorator to compile a function directly to native machine code via Cranelift,
+    bypassing Z3 formal verification.
+
+    :param strict: If True, raises CompilationError/VerificationError on compilation failure.
+    :param log_level: Override LILA_LOG level.
+    :param timeout: Timeout in milliseconds.
+    """
+    if callable(strict):
+        func = strict
+        return verify(strict=True, verify=False)(func)
+    return verify(strict=strict, log_level=log_level, timeout=timeout, verify=False)

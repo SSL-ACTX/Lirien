@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 #[pyfunction]
-#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), typed_dict_layouts=HashMap::new(), timeout_ms=5000))]
+#[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), typed_dict_layouts=HashMap::new(), timeout_ms=5000, verify=true))]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_and_compile(
     source: String,
@@ -18,8 +18,9 @@ pub fn verify_and_compile(
     named_tuple_layouts: HashMap<String, Vec<(String, String)>>,
     typed_dict_layouts: HashMap<String, Vec<(String, String)>>,
     timeout_ms: u32,
+    verify: bool,
 ) -> PyResult<usize> {
-    info!(target: "lirien::bridge", "Received source for '{}'", func_name);
+    info!(target: "lirien::bridge", "Received source for '{}' (verify={})", func_name, verify);
     debug!(target: "lirien::bridge", "Struct layouts: {:?}", struct_layouts);
     debug!(target: "lirien::bridge", "Enum layouts: {:?}", enum_layouts);
     debug!(target: "lirien::bridge", "Named Tuple layouts: {:?}", named_tuple_layouts);
@@ -36,6 +37,13 @@ pub fn verify_and_compile(
         &named_tuple_layouts,
         &typed_dict_layouts,
     );
+
+    // Incorporate the verify flag into the hash, so verified vs non-verified compilations don't conflict.
+    use std::hash::{Hash, Hasher};
+    let mut hasher = seahash::SeaHasher::new();
+    cache_hash.hash(&mut hasher);
+    verify.hash(&mut hasher);
+    let cache_hash = hasher.finish();
 
     // Check L1 Native Code Cache first
     if let Some(entries) = cache::native_cache_lookup(cache_hash) {
@@ -88,21 +96,25 @@ pub fn verify_and_compile(
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string())
         })?;
 
-        for ssa in &mut funcs {
-            info!(target: "lirien::bridge", "Processing SSA for '{}'...", ssa.name);
-            match lirien_verify::verify(ssa, timeout_ms) {
-                Ok(inferred) => {
-                    if let Some(inf) = inferred {
-                        ssa.ret_refinement = Some(inf);
+        if verify {
+            for ssa in &mut funcs {
+                info!(target: "lirien::bridge", "Processing SSA for '{}'...", ssa.name);
+                match lirien_verify::verify(ssa, timeout_ms) {
+                    Ok(inferred) => {
+                        if let Some(inf) = inferred {
+                            ssa.ret_refinement = Some(inf);
+                        }
+                    }
+                    Err(e) => {
+                        cache::invalidate(cache_hash);
+                        cache::native_cache_invalidate(cache_hash);
+                        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
                     }
                 }
-                Err(e) => {
-                    cache::invalidate(cache_hash);
-                    cache::native_cache_invalidate(cache_hash);
-                    return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e));
-                }
+                info!(target: "lirien::bridge", "Verification complete for '{}'", ssa.name);
             }
-            info!(target: "lirien::bridge", "Verification complete for '{}'", ssa.name);
+        } else {
+            info!(target: "lirien::bridge", "Skipping Z3 verification for '{}' because verify=false", func_name);
         }
 
         // Cache the verified IR
