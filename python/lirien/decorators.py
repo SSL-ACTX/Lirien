@@ -2,6 +2,8 @@ import inspect
 import ast
 import textwrap
 import os
+import threading
+from contextlib import contextmanager
 from typing import (
     Callable,
     TypeVar,
@@ -30,6 +32,47 @@ from .ffi import (
 )
 
 T = TypeVar("T", bound=Callable)
+
+_local_state = threading.local()
+_tracing_stack = []
+
+
+@contextmanager
+def no_verification():
+    """
+    Context manager to temporarily disable Z3 verification for any code compiled
+    within this block.
+    """
+    old_state = getattr(_local_state, "no_verification", False)
+    _local_state.no_verification = True
+    try:
+        yield
+    finally:
+        _local_state.no_verification = old_state
+
+
+def _is_verification_disabled() -> bool:
+    return getattr(_local_state, "no_verification", False)
+
+
+@contextmanager
+def tracing(config: Dict[str, str]):
+    """
+    Context manager to temporarily configure granular tracing for specific Lirien components.
+    """
+    _tracing_stack.append(config)
+    merged = {"all": "info"}
+    for c in _tracing_stack:
+        merged.update(c)
+    configure_tracing(merged)
+    try:
+        yield
+    finally:
+        _tracing_stack.pop()
+        merged = {"all": "info"}
+        for c in _tracing_stack:
+            merged.update(c)
+        configure_tracing(merged)
 
 
 def configure_tracing(config: Dict[str, str]):
@@ -1054,6 +1097,8 @@ def verify(
     :param timeout: Verification timeout in milliseconds (default 5000).
     :param verify: If True, performs Z3 verification. If False, JITs directly without verification.
     """
+    if _is_verification_disabled():
+        verify = False
 
     # Handle the case where the decorator is used without parentheses: @verify
     if (
@@ -1064,7 +1109,7 @@ def verify(
     ):
         func = strict
         # Re-call verify with defaults
-        return globals()["verify"](strict=True)(func)
+        return globals()["verify"](strict=True, verify=verify)(func)
 
     def decorator(func: T) -> T:
         overloads = get_overloads(func)
