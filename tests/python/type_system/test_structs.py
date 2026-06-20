@@ -49,6 +49,17 @@ class TestStructs(unittest.TestCase):
         self.assertEqual(v.x, 5)
         self.assertEqual(v.y, 5)
 
+    def test_struct_repr(self):
+        p = Point(10, 20)
+        self.assertEqual(repr(p), "Point(x=10, y=20)")
+
+    def test_struct_eq(self):
+        p1 = Point(10, 20)
+        p2 = Point(10, 20)
+        p3 = Point(15, 20)
+        self.assertEqual(p1, p2)
+        self.assertNotEqual(p1, p3)
+
 
 if __name__ == "__main__":
     unittest.main()

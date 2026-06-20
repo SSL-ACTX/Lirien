@@ -181,6 +181,23 @@ def struct(cls):
 
         setattr(cls, name, property(make_getter(name, ftype), make_setter(name)))
 
+    def struct_repr(self):
+        field_strs = []
+        for fname, _ in field_list:
+            val = getattr(self, fname)
+            field_strs.append(f"{fname}={repr(val)}")
+        return f"{self.__class__.__name__}({', '.join(field_strs)})"
+
+    def struct_eq(self, other):
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+        return all(
+            getattr(self, fname) == getattr(other, fname) for fname, _ in field_list
+        )
+
+    cls.__repr__ = struct_repr
+    cls.__eq__ = struct_eq
+
     return cls
 
 
@@ -534,6 +551,43 @@ def enum(cls):
         setattr(cls, name, ctor)
         setattr(cls, f"is_{name}", is_var)
         setattr(cls, f"as_{name}", as_var)
+
+    def enum_repr(self):
+        tag = self._ctypes_obj.tag
+        variants = getattr(self.__class__, "__lirien_variants__", [])
+        if tag < 0 or tag >= len(variants):
+            return f"{self.__class__.__name__}(<invalid tag {tag}>)"
+        v_name = variants[tag]
+        variant_types = getattr(self.__class__, "__lirien_variant_types__", {})
+        v_ty = variant_types.get(v_name)
+        if v_ty is None:
+            return f"{self.__class__.__name__}.{v_name}()"
+        as_var_fn = getattr(self, f"as_{v_name}")
+        payload = as_var_fn()
+        if isinstance(v_ty, tuple):
+            return f"{self.__class__.__name__}.{v_name}{repr(payload)}"
+        else:
+            return f"{self.__class__.__name__}.{v_name}({repr(payload)})"
+
+    def enum_eq(self, other):
+        if not isinstance(other, self.__class__):
+            return NotImplemented
+        if self._ctypes_obj.tag != other._ctypes_obj.tag:
+            return False
+        tag = self._ctypes_obj.tag
+        variants = getattr(self.__class__, "__lirien_variants__", [])
+        v_name = variants[tag]
+        variant_types = getattr(self.__class__, "__lirien_variant_types__", {})
+        v_ty = variant_types.get(v_name)
+        if v_ty is None:
+            return True
+        as_var_fn_self = getattr(self, f"as_{v_name}")
+        as_var_fn_other = getattr(other, f"as_{v_name}")
+        return as_var_fn_self() == as_var_fn_other()
+
+    cls.__repr__ = enum_repr
+    cls.__eq__ = enum_eq
+
     return cls
 
 

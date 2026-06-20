@@ -58,6 +58,21 @@ class TestEnums(unittest.TestCase):
     def test_is_variant(self):
         self.assertEqual(check_is_variant(10), 3)
 
+    def test_enum_repr(self):
+        s = SomePayload(42)
+        opt_some = Option.Some(s)
+        opt_none = Option.NoneVariant(Empty())
+        self.assertEqual(repr(opt_some), "Option.Some(SomePayload(val=42))")
+        self.assertEqual(repr(opt_none), "Option.NoneVariant(Empty())")
+
+    def test_enum_eq(self):
+        s1 = SomePayload(42)
+        s2 = SomePayload(42)
+        s3 = SomePayload(100)
+        self.assertEqual(Option.Some(s1), Option.Some(s2))
+        self.assertNotEqual(Option.Some(s1), Option.Some(s3))
+        self.assertNotEqual(Option.Some(s1), Option.NoneVariant(Empty()))
+
 
 if __name__ == "__main__":
     unittest.main()
