@@ -18,6 +18,7 @@ from .signatures import (
     _value_to_lirien_type,
     is_named_tuple,
     is_typed_dict,
+    _get_refinement_parts,
 )
 
 
@@ -271,10 +272,9 @@ def _map_ctypes_arguments(
                     item_ty, ctypes._SimpleCData
                 ):
                     item_size = ctypes.sizeof(item_ty)
-                elif hasattr(item_ty, "base_type"):
-                    item_ty_str = _get_type_name(
-                        item_ty.base_type, type_mapping
-                    ).lower()
+                elif _get_refinement_parts(item_ty) != (None, None):
+                    item_base_ty, _ = _get_refinement_parts(item_ty)
+                    item_ty_str = _get_type_name(item_base_ty, type_mapping).lower()
                     for name in [
                         "f32x4",
                         "i32x4",
@@ -821,10 +821,11 @@ def _check_runtime_refinements(
     for i, param in enumerate(sig.parameters.values()):
         if i < len(args):
             ann = param.annotation
-            if hasattr(ann, "predicate") and ann.predicate:
-                if callable(ann.predicate):
+            _, predicate = _get_refinement_parts(ann)
+            if predicate is not None:
+                if callable(predicate):
                     try:
-                        res = ann.predicate(args[i])
+                        res = predicate(args[i])
                         # If it returned a symbolic TypeExpr, evaluate it using the current mapping
                         if hasattr(res, "evaluate") and mapping:
                             res = res.evaluate(mapping)
@@ -959,8 +960,9 @@ def _wrap_return_value(
 
 def _get_ctypes_return_type(ret_ann: Any, type_mapping: Dict[str, str] = None) -> Any:
     """Determine the ctypes return type from the annotation."""
-    # Unwrap Refined type if necessary
-    actual_ann = getattr(ret_ann, "base_type", ret_ann)
+    # Unwrap Refined / Annotated refinement type if necessary
+    base_ty, _ = _get_refinement_parts(ret_ann)
+    actual_ann = base_ty if base_ty is not None else ret_ann
     ret_ann_str = _get_type_name(actual_ann, type_mapping).lower()
 
     if (

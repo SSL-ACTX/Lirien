@@ -24,6 +24,8 @@ from .signatures import (
     TypeSubstitutor,
     _value_to_lirien_type,
     is_named_tuple,
+    _get_refinement_parts,
+    _clean_lambda_source,
 )
 from .ffi import (
     _map_ctypes_arguments,
@@ -519,14 +521,10 @@ class MonomorphizedFunction:
 
         # Sanitize specialized name for Rust/Cranelift compatibility
         specialized_name = target_name + "_" + "_".join(suffix_parts)
-        return (
-            specialized_name.replace("[", "_")
-            .replace("]", "_")
-            .replace(",", "_")
-            .replace(" ", "")
-            .replace("(", "_")
-            .replace(")", "_")
-        )
+        import re
+
+        specialized_name = re.sub(r"[^a-zA-Z0-9_]", "_", specialized_name)
+        return re.sub(r"_+", "_", specialized_name).strip("_")
 
     def _specialize(self, mapping):
         # 0. Evaluate symbolic expressions (TypeExpr) in the mapping
@@ -749,6 +747,48 @@ class MonomorphizedFunction:
                 # We want to replace 'Opt' with 'Opt_i64' in the AST
                 pass  # Already handled if key is 'Opt'
 
+        # Inject annotations and sanitize refinement types to prevent Rust-side syntax errors
+        class RefinementSanitizer(ast.NodeTransformer):
+            def __init__(self, sig):
+                self.sig = sig
+
+            def process_ann(self, ann, name_hint):
+                if ann is inspect.Parameter.empty:
+                    return None
+                base_ty, predicate = _get_refinement_parts(ann)
+                if base_ty is not None and predicate is not None:
+                    base_name = _get_type_name(base_ty)
+                    pred_src = _clean_lambda_source(predicate)
+                    ref_str = f"Refined[{base_name}, {pred_src}]"
+                    try:
+                        return ast.parse(ref_str).body[0].value
+                    except Exception:
+                        try:
+                            return ast.parse(base_name).body[0].value
+                        except Exception:
+                            return ast.Name(id=base_name, ctx=ast.Load())
+
+                return None
+
+            def visit_FunctionDef(self, node):
+                # Update parameters
+                for arg in node.args.args:
+                    if arg.arg in self.sig.parameters:
+                        ann = self.sig.parameters[arg.arg].annotation
+                        new_ann = self.process_ann(ann, arg.arg)
+                        if new_ann is not None:
+                            arg.annotation = new_ann
+
+                # Update return annotation
+                if self.sig.return_annotation is not inspect.Signature.empty:
+                    new_ret = self.process_ann(self.sig.return_annotation, "return")
+                    if new_ret is not None:
+                        node.returns = new_ret
+
+                return node
+
+        tree = RefinementSanitizer(inspect.signature(self.func)).visit(tree)
+
         transformer = TypeSubstitutor(transformer_mapping)
         tree = transformer.visit(tree)
         specialized_source = ast.unparse(tree)
@@ -764,7 +804,6 @@ class MonomorphizedFunction:
                     initial_typed_dict_layouts=self.typed_dict_layouts,
                 )
             )
-
             # Separate NamedTuple layouts
             named_tuple_layouts = (
                 self.named_tuple_layouts.copy() if self.named_tuple_layouts else {}
@@ -886,7 +925,10 @@ class OverloadedFunction:
                         continue
 
                     val_lirien_type = _value_to_lirien_type(val)
-                    ann_name = _get_type_name(param.annotation)
+                    # Unwrap refinement annotations to base types for overload resolution matching
+                    base_ty, predicate = _get_refinement_parts(param.annotation)
+                    ann_to_check = base_ty if base_ty is not None else param.annotation
+                    ann_name = _get_type_name(ann_to_check)
                     val_name = _get_type_name(val_lirien_type)
 
                     if ann_name.lower() != val_name.lower():
@@ -907,6 +949,19 @@ class OverloadedFunction:
                         if not is_numeric_match:
                             match = False
                             break
+
+                    if predicate is not None and callable(predicate):
+                        try:
+                            res = predicate(val)
+                            if not res:
+                                match = False
+                                break
+                        except NameError:
+                            pass
+                        except Exception:
+                            match = False
+                            break
+
                     mapping[param_name] = param.annotation
 
                 if match:
@@ -949,51 +1004,60 @@ class OverloadedFunction:
         suffix = "_".join(v for k, v in cache_key if not k.startswith("__"))
         specialized_name = f"{target_name}_{suffix}"
         # Sanitize specialized name for Rust/Cranelift compatibility
-        specialized_name = (
-            specialized_name.replace("[", "_")
-            .replace("]", "_")
-            .replace(",", "_")
-            .replace(" ", "")
-            .replace("(", "_")
-            .replace(")", "_")
-        )
+        import re
+
+        specialized_name = re.sub(r"[^a-zA-Z0-9_]", "_", specialized_name)
+        specialized_name = re.sub(r"_+", "_", specialized_name).strip("_")
 
         tree = ast.parse(source)
         func_def = tree.body[0]
         func_def.name = specialized_name
 
-        # Inject annotations from the matched overload signature into the implementation AST
-        class AnnotationInjector(ast.NodeTransformer):
+        # Inject annotations and sanitize refinement types to prevent Rust-side syntax errors
+        class RefinementSanitizer(ast.NodeTransformer):
             def __init__(self, sig):
                 self.sig = sig
+
+            def process_ann(self, ann, name_hint):
+                if ann is inspect.Parameter.empty:
+                    return None
+                base_ty, predicate = _get_refinement_parts(ann)
+                if base_ty is not None and predicate is not None:
+                    base_name = _get_type_name(base_ty)
+                    pred_src = _clean_lambda_source(predicate)
+                    ref_str = f"Refined[{base_name}, {pred_src}]"
+                    try:
+                        return ast.parse(ref_str).body[0].value
+                    except Exception:
+                        try:
+                            return ast.parse(base_name).body[0].value
+                        except Exception:
+                            return ast.Name(id=base_name, ctx=ast.Load())
+
+                ann_name = _get_type_name(ann)
+                try:
+                    return ast.parse(ann_name).body[0].value
+                except:
+                    return ast.Name(id=ann_name, ctx=ast.Load())
 
             def visit_FunctionDef(self, node):
                 # Update parameters
                 for arg in node.args.args:
                     if arg.arg in self.sig.parameters:
                         ann = self.sig.parameters[arg.arg].annotation
-                        if ann is not inspect.Parameter.empty:
-                            ann_name = _get_type_name(ann)
-                            # Parse type name into AST node
-                            try:
-                                ann_node = ast.parse(ann_name).body[0].value
-                                arg.annotation = ann_node
-                            except:
-                                # Fallback to Name if parsing fails for some reason
-                                arg.annotation = ast.Name(id=ann_name, ctx=ast.Load())
+                        new_ann = self.process_ann(ann, arg.arg)
+                        if new_ann is not None:
+                            arg.annotation = new_ann
 
                 # Update return annotation
                 if self.sig.return_annotation is not inspect.Signature.empty:
-                    ret_name = _get_type_name(self.sig.return_annotation)
-                    try:
-                        ret_node = ast.parse(ret_name).body[0].value
-                        node.returns = ret_node
-                    except:
-                        node.returns = ast.Name(id=ret_name, ctx=ast.Load())
+                    new_ret = self.process_ann(self.sig.return_annotation, "return")
+                    if new_ret is not None:
+                        node.returns = new_ret
 
                 return node
 
-        tree = AnnotationInjector(sig).visit(tree)
+        tree = RefinementSanitizer(sig).visit(tree)
         specialized_source = ast.unparse(tree)
 
         log_lvl, old_log = _setup_logging(self.log_level)
@@ -1001,7 +1065,6 @@ class OverloadedFunction:
             struct_layouts, enum_layouts, type_aliases, typed_dict_layouts = (
                 _discover_types(self.func, self.struct_layouts)
             )
-
             # Separate NamedTuple layouts
             named_tuple_layouts = {}
             scope = self.func.__globals__.copy()

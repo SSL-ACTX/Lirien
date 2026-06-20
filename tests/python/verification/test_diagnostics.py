@@ -1,11 +1,13 @@
 import unittest
 from lirien import verify, i64
 
+
 class TestDiagnostics(unittest.TestCase):
     def test_no_verification_context_manager(self):
         from lirien import no_verification
 
         with no_verification():
+
             @verify
             def unsafe_div_ctx(n: i64, d: i64) -> i64:
                 return n // d
@@ -50,6 +52,7 @@ class TestDiagnostics(unittest.TestCase):
         # 1. Compile a function with tracing active, capture output
         with CaptureOutput() as captured_traced:
             with tracing({BRIDGE: "debug"}):
+
                 @verify
                 def dummy_func_1(x: i64) -> i64:
                     return x + 1
@@ -60,6 +63,7 @@ class TestDiagnostics(unittest.TestCase):
 
         # 2. Compile a function without tracing active, capture output
         with CaptureOutput() as captured_untraced:
+
             @verify
             def dummy_func_2(x: i64) -> i64:
                 return x + 1
@@ -71,6 +75,7 @@ class TestDiagnostics(unittest.TestCase):
         # Verify both functions still work correctly
         self.assertEqual(dummy_func_1(42), 43)
         self.assertEqual(dummy_func_2(42), 43)
+
 
 if __name__ == "__main__":
     unittest.main()

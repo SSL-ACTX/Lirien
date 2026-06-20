@@ -349,6 +349,34 @@ class TestRefinements(unittest.TestCase):
         with self.assertRaises(Exception):
             divide_symbolic(10, -5)
 
+    def test_annotated_refinements(self):
+        from typing import Annotated
+        from lirien import V
+
+        PositiveAnnotated = Annotated[i64, V > 0]
+        EvenAnnotated = Annotated[i64, lambda x: (x % 2) == 0]
+
+        @verify
+        def double_positive(x: PositiveAnnotated) -> i64:
+            return x * 2
+
+        @verify
+        def check_even_annotated(x: EvenAnnotated) -> i64:
+            return x
+
+        self.assertTrue(getattr(double_positive, "__lirien_jit__", False))
+        self.assertTrue(getattr(check_even_annotated, "__lirien_jit__", False))
+
+        self.assertEqual(double_positive(5), 10)
+        self.assertEqual(check_even_annotated(4), 4)
+
+        # FFI boundary check for invalid value should fail in Python
+        with self.assertRaises(ValueError):
+            double_positive(-1)
+
+        with self.assertRaises(ValueError):
+            check_even_annotated(3)
+
 
 if __name__ == "__main__":
     unittest.main()

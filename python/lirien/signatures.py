@@ -34,6 +34,66 @@ def is_typed_dict(cls):
     return hasattr(cls, "__annotations__") and hasattr(cls, "__total__")
 
 
+def _get_refinement_parts(ann: Any) -> Tuple[Any, Any]:
+    """
+    Extract (base_type, predicate) from a refinement type annotation.
+    Supports both Refined[T, pred] and PEP 593 Annotated[T, pred] refinement format.
+    """
+    if hasattr(ann, "base_type") and hasattr(ann, "predicate"):
+        return ann.base_type, ann.predicate
+
+    if hasattr(ann, "__metadata__"):
+        origin = getattr(ann, "__origin__", ann)
+        inner = ann.__metadata__[0]
+        if hasattr(inner, "__lirien_symbolic__") or (
+            callable(inner) and not isinstance(inner, type)
+        ):
+            return origin, inner
+
+    return None, None
+
+
+def _clean_lambda_source(predicate: Any) -> str:
+    """Extract a clean lambda source expression from a predicate using AST when possible."""
+    if hasattr(predicate, "__lirien_symbolic__"):
+        return str(predicate)
+    if not callable(predicate):
+        return str(predicate)
+    try:
+        import ast
+        import inspect
+
+        src = inspect.getsource(predicate).strip()
+        # Try parsing the source block to find lambda nodes
+        try:
+            tree = ast.parse(src)
+            lambdas = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Lambda):
+                    lambdas.append(node)
+            if lambdas:
+                # Returns the first lambda found in the AST.
+                # In most cases there's only one.
+                return ast.unparse(lambdas[0]).strip()
+        except SyntaxError:
+            pass
+
+        # String-based fallback
+        if "lambda" in src:
+            start = src.find("lambda")
+            src = src[start:]
+            # Try parsing prefixes of src until it becomes a valid lambda expression.
+            for i in range(len(src), 6, -1):
+                try:
+                    ast.parse(src[:i])
+                    return src[:i].strip()
+                except SyntaxError:
+                    continue
+        return src
+    except Exception:
+        return "None"
+
+
 def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
     """Consistently convert a Python-side type to its Lirien IR string representation."""
     if getattr(ty, "__lirien_specialized__", False):
@@ -62,24 +122,12 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
             return type_mapping[ty.__name__]
         return ty.__name__
 
-    # Handle Refined types
-    if hasattr(ty, "base_type") and hasattr(ty, "predicate"):
-        base_name = _get_type_name(ty.base_type, type_mapping)
-        if hasattr(ty.predicate, "__lirien_symbolic__"):
-            pred_src = str(ty.predicate)
-            return f"Refined[{base_name}, {pred_src}]"
-        try:
-            pred_src = inspect.getsource(ty.predicate).strip()
-            if "lambda" in pred_src:
-                start = pred_src.find("lambda")
-                pred_src = pred_src[start:]
-                if pred_src.endswith(","):
-                    pred_src = pred_src[:-1]
-                if pred_src.endswith("]"):
-                    pred_src = pred_src[:-1]
-            return f"Refined[{base_name}, {pred_src}]"
-        except:
-            return base_name
+    # Handle Refined / Annotated refinement types
+    base_ty, predicate = _get_refinement_parts(ty)
+    if base_ty is not None and predicate is not None:
+        base_name = _get_type_name(base_ty, type_mapping)
+        pred_src = _clean_lambda_source(predicate)
+        return f"Refined[{base_name}, {pred_src}]"
 
     # Handle Annotated types (Buffer, Box, etc.)
     if hasattr(ty, "__metadata__"):
@@ -351,39 +399,30 @@ def _discover_types(
                         for f_name, f_ty in v_ty.__lirien_fields__
                     ]
             enum_layouts[name] = layout
-        elif hasattr(obj, "base_type") and hasattr(obj, "predicate"):
-            # It's likely a Refined type instance
-            try:
-                if hasattr(obj.predicate, "__lirien_symbolic__"):
-                    pred_src = str(obj.predicate)
-                else:
-                    pred_src = inspect.getsource(obj.predicate).strip()
-                    if "lambda" in pred_src:
-                        start = pred_src.find("lambda")
-                        pred_src = pred_src[start:]
-                        if pred_src.endswith(","):
-                            pred_src = pred_src[:-1]
-                        if pred_src.endswith("]"):
-                            pred_src = pred_src[:-1]
+        else:
+            base_ty, predicate = _get_refinement_parts(obj)
+            if base_ty is not None and predicate is not None:
+                # It's likely a Refined or Annotated refinement type instance
+                try:
+                    pred_src = _clean_lambda_source(predicate)
+                    if hasattr(base_ty, "__origin__") and hasattr(
+                        base_ty, "__metadata__"
+                    ):
+                        # Handle Annotated (e.g. Buffer[i64])
+                        origin_name = getattr(
+                            base_ty.__origin__, "__name__", str(base_ty.__origin__)
+                        )
+                        # Extract the first metadata (the item type)
+                        item_ty = base_ty.__metadata__[0]
+                        base_ty_name = (
+                            f"{origin_name}[{_get_type_name(item_ty, type_mapping)}]"
+                        )
+                    else:
+                        base_ty_name = getattr(base_ty, "__name__", str(base_ty))
 
-                base_ty = obj.base_type
-
-                if hasattr(base_ty, "__origin__") and hasattr(base_ty, "__metadata__"):
-                    # Handle Annotated (e.g. Buffer[i64])
-                    origin_name = getattr(
-                        base_ty.__origin__, "__name__", str(base_ty.__origin__)
-                    )
-                    # Extract the first metadata (the item type)
-                    item_ty = base_ty.__metadata__[0]
-                    base_ty_name = (
-                        f"{origin_name}[{_get_type_name(item_ty, type_mapping)}]"
-                    )
-                else:
-                    base_ty_name = getattr(base_ty, "__name__", str(base_ty))
-
-                type_aliases[name] = f"Refined[{base_ty_name}, {pred_src}]"
-            except (TypeError, AttributeError, SyntaxError, OSError):
-                pass
+                    type_aliases[name] = f"Refined[{base_ty_name}, {pred_src}]"
+                except (TypeError, AttributeError, SyntaxError, OSError):
+                    pass
 
     return struct_layouts, enum_layouts, type_aliases, typed_dict_layouts
 
