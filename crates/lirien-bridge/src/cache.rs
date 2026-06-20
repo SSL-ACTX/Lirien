@@ -1,11 +1,20 @@
 use lirien_ir::ir::Function;
+use lirien_ir::registry::SerializedSignature;
 use seahash::SeaHasher;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use tracing::{debug, info};
+
+#[derive(Serialize, Deserialize)]
+pub struct CachedPayload {
+    pub functions: Vec<Function>,
+    pub dependencies: HashMap<String, SerializedSignature>,
+}
+
 
 fn get_cache_dir() -> PathBuf {
     let mut dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -163,10 +172,41 @@ pub fn load_ir(hash: u64) -> Option<Vec<Function>> {
         debug!(target: "lirien::cache", "Found cached IR at {:?}", file_path);
         match fs::read(&file_path) {
             Ok(bytes) => {
-                match bincode::deserialize::<Vec<Function>>(&bytes) {
-                    Ok(funcs) => {
-                        info!(target: "lirien::cache", "Successfully loaded IR from cache.");
-                        return Some(funcs);
+                match bincode::deserialize::<CachedPayload>(&bytes) {
+                    Ok(payload) => {
+                        let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
+                        let mut all_valid = true;
+
+                        for (dep_name, cached_sig) in &payload.dependencies {
+                            if let Some(current_sig) = registry.get(dep_name) {
+                                let current_serialized = SerializedSignature::from(current_sig);
+                                if &current_serialized != cached_sig {
+                                    info!(
+                                        target: "lirien::cache",
+                                        "Cache dependency mismatch for '{}' calling '{}'. Invalidating cache.",
+                                        payload.functions.first().map(|f| &f.name[..]).unwrap_or("unknown"),
+                                        dep_name
+                                    );
+                                    all_valid = false;
+                                    break;
+                                }
+                            } else {
+                                info!(
+                                    target: "lirien::cache",
+                                    "Cache dependency '{}' not found in registry. Invalidating cache.",
+                                    dep_name
+                                );
+                                all_valid = false;
+                                break;
+                            }
+                        }
+
+                        if all_valid {
+                            info!(target: "lirien::cache", "Successfully loaded IR from cache.");
+                            return Some(payload.functions);
+                        } else {
+                            let _ = fs::remove_file(&file_path);
+                        }
                     }
                     Err(e) => {
                         debug!(target: "lirien::cache", "Failed to deserialize cached IR: {}", e);
@@ -193,7 +233,28 @@ pub fn save_ir(hash: u64, funcs: &Vec<Function>) {
 
     let file_path = cache_dir.join(format!("{:016x}.lir", hash));
 
-    match bincode::serialize(funcs) {
+    let mut dependencies = HashMap::new();
+    {
+        let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
+        for func in funcs {
+            for block in &func.blocks {
+                for inst in &block.instructions {
+                    if let lirien_ir::ir::InstructionKind::Call(_, called_func, _) = &inst.kind {
+                        if let Some(sig) = registry.get(called_func) {
+                            dependencies.insert(called_func.clone(), SerializedSignature::from(sig));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let payload = CachedPayload {
+        functions: funcs.clone(),
+        dependencies,
+    };
+
+    match bincode::serialize(&payload) {
         Ok(bytes) => {
             if let Err(e) = fs::write(&file_path, bytes) {
                 debug!(target: "lirien::cache", "Failed to write cache file: {}", e);
