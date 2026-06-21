@@ -241,36 +241,33 @@ pub fn translate<
             }
         }
         InstructionKind::MatMult(_dest, lhs, rhs) => {
-            if let (Some(l_dims), Some(r_dims)) = (
+            let dims_opt = if let (Some(l_dims), Some(r_dims)) = (
                 ctx.z3_tensor_dims.get(lhs),
                 ctx.z3_tensor_dims.get(rhs),
             ) {
                 if l_dims.len() == 2 && r_dims.len() == 2 {
-                    let inner_dim_l = &l_dims[1];
-                    let inner_dim_r = &r_dims[0];
-                    
-                    let eq = ctx.backend.int_eq(inner_dim_l, inner_dim_r);
-                    let not_eq = ctx.backend.bool_not(&eq);
-                    
-                    ctx.backend.push();
-                    ctx.backend.assert(path_cond);
-                    ctx.backend.assert(&not_eq);
-                    if ctx.backend.check()? {
-                        let loc_info = inst
-                            .location
-                            .map(|l| format!(" at {}", l))
-                            .unwrap_or_default();
-                        return Err(format!(
-                            "Matrix multiplication dimension mismatch: inner dimensions must be equal{}",
-                            loc_info
-                        ));
-                    }
-                    ctx.backend.pop(1);
-
-                    // Propagate dimensions: (M, N) @ (N, K) -> (M, K)
-                    let res_dims = vec![l_dims[0].clone(), r_dims[1].clone()];
-                    ctx.z3_tensor_dims.insert(*_dest, res_dims);
+                    Some((l_dims[0].clone(), l_dims[1].clone(), r_dims[0].clone(), r_dims[1].clone()))
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+
+            if let Some((l0, l1, r0, r1)) = dims_opt {
+                let eq = ctx.backend.int_eq(&l1, &r0);
+                let not_eq = ctx.backend.bool_not(&eq);
+                
+                ctx.check_safety(
+                    path_cond,
+                    &not_eq,
+                    "Matrix multiplication dimension mismatch: inner dimensions must be equal".to_string(),
+                    inst.location,
+                )?;
+
+                // Propagate dimensions: (M, N) @ (N, K) -> (M, K)
+                let res_dims = vec![l0, r1];
+                ctx.z3_tensor_dims.insert(*_dest, res_dims);
             }
         }
         InstructionKind::TensorFused(dest, inputs, _) => {
@@ -290,23 +287,14 @@ pub fn translate<
                             }
 
                             for i in 0..first_dims.len() {
-                                ctx.backend.push();
-                                ctx.backend.assert(path_cond);
                                 let eq = ctx.backend.int_eq(&first_dims[i], &other_dims[i]);
                                 let not_eq = ctx.backend.bool_not(&eq);
-                                ctx.backend.assert(&not_eq);
-
-                                if ctx.backend.check()? {
-                                    let loc_info = inst
-                                        .location
-                                        .map(|l| format!(" at {}", l))
-                                        .unwrap_or_default();
-                                    return Err(format!(
-                                        "Tensor shape mismatch in fused operation (dimension {} mismatch){}",
-                                        i, loc_info
-                                    ));
-                                }
-                                ctx.backend.pop(1);
+                                ctx.check_safety(
+                                    path_cond,
+                                    &not_eq,
+                                    format!("Tensor shape mismatch in fused operation (dimension {} mismatch)", i),
+                                    inst.location,
+                                )?;
                             }
                         }
                     }
@@ -345,23 +333,14 @@ pub fn translate<
                 }
 
                 for i in 0..l_dims.len() {
-                    ctx.backend.push();
-                    ctx.backend.assert(path_cond);
                     let eq = ctx.backend.int_eq(&l_dims[i], &r_dims[i]);
                     let not_eq = ctx.backend.bool_not(&eq);
-                    ctx.backend.assert(&not_eq);
-
-                    if ctx.backend.check()? {
-                        let loc_info = inst
-                            .location
-                            .map(|l| format!(" at {}", l))
-                            .unwrap_or_default();
-                        return Err(format!(
-                            "Tensor shape mismatch in element-wise operation (dimension {} mismatch){}",
-                            i, loc_info
-                        ));
-                    }
-                    ctx.backend.pop(1);
+                    ctx.check_safety(
+                        path_cond,
+                        &not_eq,
+                        format!("Tensor shape mismatch in element-wise operation (dimension {} mismatch)", i),
+                        inst.location,
+                    )?;
                 }
 
                 // Result has same shape
@@ -407,14 +386,20 @@ pub fn translate<
             }
         }
         InstructionKind::SDiv(dest, lhs, rhs) | InstructionKind::SRem(dest, lhs, rhs) => {
-            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+            let operands = if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
                 ctx.z3_bvs.get(dest),
                 ctx.z3_bvs.get(lhs),
                 ctx.z3_bvs.get(rhs),
             ) {
+                Some((z3_dest.clone(), z3_l.clone(), z3_r.clone()))
+            } else {
+                None
+            };
+
+            if let Some((z3_dest, z3_l, z3_r)) = operands {
                 let bit_width = ctx.func.get_type(*rhs).int_bit_width().unwrap_or(64);
                 let zero = ctx.backend.bv_from_i64(0, bit_width);
-                let is_zero = ctx.backend.bv_eq(z3_r, &zero);
+                let is_zero = ctx.backend.bv_eq(&z3_r, &zero);
 
                 // Optimization: Use interval analysis to skip Z3 check if divisor is non-zero
                 let is_safe = if let Some(interval) = ctx.analysis.intervals.get(rhs) {
@@ -424,41 +409,39 @@ pub fn translate<
                 };
 
                 if !is_safe {
-                    ctx.backend.push();
-                    ctx.backend.assert(path_cond);
-                    ctx.backend.assert(&is_zero);
-                    if ctx.backend.check()? {
-                        let loc_info = inst
-                            .location
-                            .map(|l| format!(" at {}", l))
-                            .unwrap_or_default();
-                        return Err(format!(
-                            "Potential division by zero at v{}{}",
-                            dest.0, loc_info
-                        ));
-                    }
-                    ctx.backend.pop(1);
+                    ctx.check_safety(
+                        path_cond,
+                        &is_zero,
+                        format!("Potential division by zero at v{}", dest.0),
+                        inst.location,
+                    )?;
                 }
 
                 if let InstructionKind::SDiv(_, _, _) = &inst.kind {
-                    let res = ctx.backend.bv_sdiv(z3_l, z3_r);
-                    let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                    let res = ctx.backend.bv_sdiv(&z3_l, &z3_r);
+                    let __inner = ctx.backend.bv_eq(&z3_dest, &res);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                     ctx.backend.assert(&__tmp);
                 } else {
-                    let res = ctx.backend.bv_srem(z3_l, z3_r);
-                    let __inner = ctx.backend.bv_eq(z3_dest, &res);
+                    let res = ctx.backend.bv_srem(&z3_l, &z3_r);
+                    let __inner = ctx.backend.bv_eq(&z3_dest, &res);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                     ctx.backend.assert(&__tmp);
                 }
             }
         }
         InstructionKind::FDiv(dest, lhs, rhs) => {
-            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+            let operands = if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
                 ctx.z3_floats.get(dest),
                 ctx.z3_floats.get(lhs),
                 ctx.z3_floats.get(rhs),
             ) {
+                Some((z3_dest.clone(), z3_l.clone(), z3_r.clone()))
+            } else {
+                None
+            };
+
+            if let Some((z3_dest, z3_l, z3_r)) = operands {
                 let ty = ctx.func.get_type(*rhs);
                 let zero = if ty.is_float32() {
                     ctx.backend.float_from_f32(0.0)
@@ -474,26 +457,17 @@ pub fn translate<
                 };
 
                 if !is_safe {
-                    // Verify safety via Z3
-                    ctx.backend.push();
-                    ctx.backend.assert(path_cond);
-                    let __tmp = ctx.backend.float_eq(z3_r, &zero);
-                    ctx.backend.assert(&__tmp);
-                    if ctx.backend.check()? {
-                        let loc_info = inst
-                            .location
-                            .map(|l| format!(" at {}", l))
-                            .unwrap_or_default();
-                        return Err(format!(
-                            "Potential float division by zero at v{}{}",
-                            dest.0, loc_info
-                        ));
-                    }
-                    ctx.backend.pop(1);
+                    let __tmp = ctx.backend.float_eq(&z3_r, &zero);
+                    ctx.check_safety(
+                        path_cond,
+                        &__tmp,
+                        format!("Potential float division by zero at v{}", dest.0),
+                        inst.location,
+                    )?;
                 }
 
-                let res = ctx.backend.float_div(z3_l, z3_r);
-                let __inner = ctx.backend.float_eq(z3_dest, &res);
+                let res = ctx.backend.float_div(&z3_l, &z3_r);
+                let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
             }
@@ -838,22 +812,13 @@ pub fn translate<
                             };
 
                             if !is_safe {
-                                // Verify safety via Z3
-                                ctx.backend.push();
-                                ctx.backend.assert(path_cond);
                                 let __tmp = ctx.backend.float_lt(z3_src, &zero);
-                                ctx.backend.assert(&__tmp);
-                                if ctx.backend.check()? {
-                                    let loc_info = inst
-                                        .location
-                                        .map(|l| format!(" at {}", l))
-                                        .unwrap_or_default();
-                                    return Err(format!(
-                                        "Potential sqrt of negative number at v{}{}",
-                                        dest.0, loc_info
-                                    ));
-                                }
-                                ctx.backend.pop(1);
+                                ctx.check_safety(
+                                    path_cond,
+                                    &__tmp,
+                                    format!("Potential sqrt of negative number at v{}", dest.0),
+                                    inst.location,
+                                )?;
                             }
                         }
                     }
@@ -882,29 +847,19 @@ pub fn translate<
                 };
 
                 if !is_safe {
-                    // Verify safety via Z3
-                    ctx.backend.push();
-                    ctx.backend.assert(path_cond);
-
                     let is_base_zero = ctx.backend.float_eq(z3_l, &zero);
                     let is_exp_nonpositive = ctx.backend.float_le(z3_r, &zero);
                     let is_base_negative = ctx.backend.float_lt(z3_l, &zero);
-
+ 
                     let a1 = ctx.backend.bool_and(&[&is_base_zero, &is_exp_nonpositive]);
                     let domain_err = ctx.backend.bool_or(&[&a1, &is_base_negative]);
-
-                    ctx.backend.assert(&domain_err);
-                    if ctx.backend.check()? {
-                        let loc_info = inst
-                            .location
-                            .map(|l| format!(" at {}", l))
-                            .unwrap_or_default();
-                        return Err(format!(
-                            "Potential domain error in fpow at v{}{}",
-                            dest.0, loc_info
-                        ));
-                    }
-                    ctx.backend.pop(1);
+ 
+                    ctx.check_safety(
+                        path_cond,
+                        &domain_err,
+                        format!("Potential domain error in fpow at v{}", dest.0),
+                        inst.location,
+                    )?;
                 }
             }
         }

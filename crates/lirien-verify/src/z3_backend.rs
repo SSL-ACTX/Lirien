@@ -61,7 +61,14 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
 
     fn check(&mut self) -> Result<bool, String> {
         match self.solver.check() {
-            SatResult::Sat => Ok(true),
+            SatResult::Sat => {
+                if let Some(model) = self.solver.get_model() {
+                    tracing::debug!(target: "lirien::verify", "[Z3 MODEL]:\n{:?}", model);
+                } else {
+                    tracing::debug!(target: "lirien::verify", "[Z3 MODEL]: None");
+                }
+                Ok(true)
+            }
             SatResult::Unsat => Ok(false),
             SatResult::Unknown => {
                 let reason = self.solver.get_reason_unknown().unwrap_or_else(|| "unknown".to_string());

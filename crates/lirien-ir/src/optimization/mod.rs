@@ -5,10 +5,10 @@ pub mod inference;
 pub mod type_propagation;
 
 use super::ir::Function;
-use tracing::info;
+use tracing::debug;
 
 pub fn optimize(func: &mut Function) {
-    info!(target: "lirien::ssa::opt", "Optimizing IR for '{}'...", func.name);
+    debug!(target: "lirien::ssa::opt", "Optimizing IR for '{}'...", func.name);
 
     // Type Propagation
     type_propagation::propagate_types(func);

@@ -14,6 +14,7 @@ pub fn assert_derived_intervals<
     t_ctx: &mut TranslationContext<'_, B>,
 ) {
     for (val, interval) in &t_ctx.analysis.intervals {
+        tracing::debug!(target: "lirien::verify", "Value v{} has interval {:?}", val.0, interval);
         if let Some(ty) = t_ctx.func.value_types.get(val) {
             if let Some(z3_bv) = t_ctx.z3_bvs.get(val) {
                 if let Some(bit_width) = ty.int_bit_width() {

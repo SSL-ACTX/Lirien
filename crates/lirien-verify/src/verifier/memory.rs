@@ -357,7 +357,7 @@ pub fn translate<
                 check_symbolic_bounds(
                     ctx,
                     path_cond,
-                    &z3_idx,
+                    idx_val,
                     z3_dim_int,
                     tensor.0,
                     inst.location,
@@ -436,7 +436,7 @@ pub fn translate<
                 check_symbolic_bounds(
                     ctx,
                     path_cond,
-                    &z3_idx,
+                    idx_val,
                     z3_dim_int,
                     tensor.0,
                     inst.location,
@@ -742,15 +742,12 @@ pub fn translate<
             let ptr_val = ctx.z3_bvs.get(ptr).cloned().unwrap();
             let zero = ctx.backend.bv_from_i64(0, 64);
             let is_null = ctx.backend.bv_eq(&ptr_val, &zero);
-            
-            ctx.backend.push();
-            ctx.backend.assert(path_cond);
-            ctx.backend.assert(&is_null);
-            if ctx.backend.check()? {
-                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                return Err(format!("Potential null pointer dereference at v{}{}", ptr.0, loc_info));
-            }
-            ctx.backend.pop(1);
+            ctx.check_safety(
+                path_cond,
+                &is_null,
+                format!("Potential null pointer dereference at v{}", ptr.0),
+                inst.location,
+            )?;
 
             let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
             let dest_ty = ctx.func.get_type(*dest);
@@ -782,15 +779,12 @@ pub fn translate<
             let ptr_val = ctx.z3_bvs.get(ptr).cloned().unwrap();
             let zero = ctx.backend.bv_from_i64(0, 64);
             let is_null = ctx.backend.bv_eq(&ptr_val, &zero);
-            
-            ctx.backend.push();
-            ctx.backend.assert(path_cond);
-            ctx.backend.assert(&is_null);
-            if ctx.backend.check()? {
-                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                return Err(format!("Potential null pointer dereference (store) at v{}{}", ptr.0, loc_info));
-            }
-            ctx.backend.pop(1);
+            ctx.check_safety(
+                path_cond,
+                &is_null,
+                format!("Potential null pointer dereference (store) at v{}", ptr.0),
+                inst.location,
+            )?;
 
             let ptr_payload = ctx.z3_arrays.get(ptr).cloned().unwrap();
             let val_ty = ctx.func.get_type(*val);
@@ -837,32 +831,23 @@ fn check_bounds<
     let bit_width = 64;
     let zero = ctx.backend.bv_from_i64(0, bit_width);
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
-    let __tmp = ctx.backend.bv_slt(idx, &zero);
-    ctx.backend.assert(&__tmp);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (negative index) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_slt = ctx.backend.bv_slt(idx, &zero);
+    ctx.check_safety(
+        path_cond,
+        &cond_slt,
+        format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+        location,
+    )?;
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
     let check_len = ctx.backend.bv_from_i64(size, bit_width);
-    let __tmp2 = ctx.backend.bv_sge(idx, &check_len);
-    ctx.backend.assert(&__tmp2);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (index >= length) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_sge = ctx.backend.bv_sge(idx, &check_len);
+    ctx.check_safety(
+        path_cond,
+        &cond_sge,
+        format!("Potential out-of-bounds access (index >= length) at v{}", dest_id),
+        location,
+    )?;
+
     Ok(())
 }
 
@@ -877,39 +862,42 @@ fn check_symbolic_bounds<
 >(
     ctx: &mut TranslationContext<'_, B>,
     path_cond: &B::Bool,
-    idx: &B::BV,
+    idx_val: Value,
     size: &B::Int,
     dest_id: usize,
     location: Option<lirien_ir::ir::SourceLocation>,
 ) -> Result<(), String> {
+    let mut known_non_negative = false;
+    if let Some(interval) = ctx.analysis.intervals.get(&idx_val) {
+        if let lirien_ir::analysis::interval::Bound::Finite(low) = interval.low {
+            if low >= 0.0 {
+                known_non_negative = true;
+            }
+        }
+    }
+
+    let idx = ctx.z3_bvs.get(&idx_val).unwrap();
     let idx_int = ctx.backend.bv_to_int(idx, true);
-    let zero = ctx.backend.int_from_i64(0);
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
-    let __tmp = ctx.backend.int_lt(&idx_int, &zero);
-    ctx.backend.assert(&__tmp);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (negative index) at v{}{}",
-            dest_id, loc_info
-        ));
+    if !known_non_negative {
+        let zero = ctx.backend.int_from_i64(0);
+        let cond_lt = ctx.backend.int_lt(&idx_int, &zero);
+        ctx.check_safety(
+            path_cond,
+            &cond_lt,
+            format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+            location,
+        )?;
     }
-    ctx.backend.pop(1);
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
-    let __tmp2 = ctx.backend.int_ge(&idx_int, size);
-    ctx.backend.assert(&__tmp2);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (index >= length) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_ge = ctx.backend.int_ge(&idx_int, size);
+    ctx.check_safety(
+        path_cond,
+        &cond_ge,
+        format!("Potential out-of-bounds access (index >= length) at v{}", dest_id),
+        location,
+    )?;
+
     Ok(())
 }
 
@@ -932,32 +920,23 @@ fn check_slice_start_bounds<
     let bit_width = 64;
     let zero = ctx.backend.bv_from_i64(0, bit_width);
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
-    let __tmp = ctx.backend.bv_slt(idx, &zero);
-    ctx.backend.assert(&__tmp);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (negative index) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_slt = ctx.backend.bv_slt(idx, &zero);
+    ctx.check_safety(
+        path_cond,
+        &cond_slt,
+        format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+        location,
+    )?;
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
     let check_len = ctx.backend.bv_from_i64(size, bit_width);
-    let __tmp2 = ctx.backend.bv_sgt(idx, &check_len);
-    ctx.backend.assert(&__tmp2);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds access (index > length) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_sgt = ctx.backend.bv_sgt(idx, &check_len);
+    ctx.check_safety(
+        path_cond,
+        &cond_sgt,
+        format!("Potential out-of-bounds access (index > length) at v{}", dest_id),
+        location,
+    )?;
+
     Ok(())
 }
 
@@ -977,34 +956,23 @@ fn check_buffer_bounds<
     dest_id: usize,
     location: Option<lirien_ir::ir::SourceLocation>,
 ) -> Result<(), String> {
-    // Buffer indices and lengths are always 64-bit in Lirien
     let zero = ctx.backend.bv_from_i64(0, 64);
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
-    let __tmp = ctx.backend.bv_slt(idx, &zero);
-    ctx.backend.assert(&__tmp);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds buffer access (index < 0) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
+    let cond_slt = ctx.backend.bv_slt(idx, &zero);
+    ctx.check_safety(
+        path_cond,
+        &cond_slt,
+        format!("Potential out-of-bounds buffer access (index < 0) at v{}", dest_id),
+        location,
+    )?;
 
-    ctx.backend.push();
-    ctx.backend.assert(path_cond);
+    let cond_sge = ctx.backend.bv_sge(idx, len);
+    ctx.check_safety(
+        path_cond,
+        &cond_sge,
+        format!("Potential out-of-bounds buffer access (index >= len) at v{}", dest_id),
+        location,
+    )?;
 
-    let __tmp2 = ctx.backend.bv_sge(idx, len);
-    ctx.backend.assert(&__tmp2);
-    if ctx.backend.check()? {
-        let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-        return Err(format!(
-            "Potential out-of-bounds buffer access (index >= len) at v{}{}",
-            dest_id, loc_info
-        ));
-    }
-    ctx.backend.pop(1);
     Ok(())
 }

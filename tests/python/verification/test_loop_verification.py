@@ -1,5 +1,5 @@
 import unittest
-from lirien import verify, i64, Buffer
+from lirien import verify, i64, Buffer, VerificationError
 
 
 class TestLoopVerification(unittest.TestCase):
@@ -39,6 +39,35 @@ class TestLoopVerification(unittest.TestCase):
         self.assertEqual(d[0], 1)
         self.assertEqual(d[1], 2)
         self.assertEqual(d[2], 3)
+
+    def test_safe_dynamic_loop(self):
+        @verify
+        def safe_dynamic_loop(buf: Buffer[i64], limit: i64) -> i64:
+            if limit <= len(buf):
+                idx = 0
+                for i in range(limit):
+                    buf[idx] = 42
+                    idx = idx + 1
+                return idx
+            return 0
+
+        import array
+
+        b = array.array("q", [0, 0])
+        self.assertEqual(safe_dynamic_loop(b, 2), 2)
+        self.assertEqual(b[0], 42)
+        self.assertEqual(b[1], 42)
+
+    def test_unsafe_dynamic_loop(self):
+        with self.assertRaises(VerificationError):
+
+            @verify
+            def unsafe_dynamic_loop(buf: Buffer[i64], limit: i64) -> i64:
+                idx = 0
+                for i in range(limit):
+                    buf[idx] = 42
+                    idx = idx + 1
+                return idx
 
 
 if __name__ == "__main__":

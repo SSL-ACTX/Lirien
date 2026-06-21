@@ -1,9 +1,9 @@
 use super::super::ir::{Function, InstructionKind, Value, FusedExpr, SourceLocation, Type};
 use std::collections::HashMap;
-use tracing::info;
+use tracing::debug;
 
 pub fn fuse_tensor_kernels(func: &mut Function) {
-    info!(target: "lirien::ssa::opt", "Starting fusion for '{}'", func.name);
+    debug!(target: "lirien::ssa::opt", "Starting fusion for '{}'", func.name);
 
     // 1. Compute use counts for all values in the function.
     let mut use_counts = HashMap::new();
@@ -15,7 +15,7 @@ pub fn fuse_tensor_kernels(func: &mut Function) {
         }
     }
 
-    info!(target: "lirien::ssa::opt", "Use counts: {:?}", use_counts);
+    debug!(target: "lirien::ssa::opt", "Use counts: {:?}", use_counts);
 
     // 2. Iterate through each block and fuse tensor operations.
     let value_types = &func.value_types;
@@ -26,7 +26,7 @@ pub fn fuse_tensor_kernels(func: &mut Function) {
         for inst in &mut block.instructions {
             let mut fused_opt = None;
             
-            info!(target: "lirien::ssa::opt", "Processing instruction: {:?}", inst.kind);
+            debug!(target: "lirien::ssa::opt", "Processing instruction: {:?}", inst.kind);
 
             // Check if this instruction is a candidate to become or extend a fused tensor op.
             match &inst.kind {
@@ -90,7 +90,7 @@ pub fn fuse_tensor_kernels(func: &mut Function) {
             }
 
             if let Some((dest, inputs, expr)) = fused_opt {
-                info!(target: "lirien::ssa::opt", "FUSED instruction generated for v{}!", dest.0);
+                debug!(target: "lirien::ssa::opt", "FUSED instruction generated for v{}!", dest.0);
                 inst.kind = InstructionKind::TensorFused(dest, inputs, expr);
             }
 
@@ -109,7 +109,7 @@ fn should_fuse(
 ) -> bool {
     if let Some((kind, _)) = def_map.get(&val) {
         let u_count = use_counts.get(&val).copied().unwrap_or(0);
-        info!(target: "lirien::ssa::opt", "Checking should_fuse for v{} (u_count: {}), kind: {:?}", val.0, u_count, kind);
+        debug!(target: "lirien::ssa::opt", "Checking should_fuse for v{} (u_count: {}), kind: {:?}", val.0, u_count, kind);
         if u_count == 1 {
             match kind {
                 InstructionKind::TensorAdd(..)

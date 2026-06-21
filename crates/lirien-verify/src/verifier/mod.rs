@@ -81,6 +81,13 @@ pub fn copy_composite<
     new_state
 }
 
+pub struct SafetyCheck<B: SolverBackend> {
+    pub path_cond: B::Bool,
+    pub violation_cond: B::Bool,
+    pub error_message: String,
+    pub location: Option<lirien_ir::ir::SourceLocation>,
+}
+
 pub struct TranslationContext<'a, B: SolverBackend> {
     pub backend: &'a mut B,
     pub func: &'a Function,
@@ -96,11 +103,33 @@ pub struct TranslationContext<'a, B: SolverBackend> {
     pub block_conditions: HashMap<BlockId, B::Bool>,
     pub edge_conditions: HashMap<(BlockId, BlockId), B::Bool>,
     pub has_refinements: bool,
+    pub safety_checks: Vec<SafetyCheck<B>>,
 }
 
 impl<'a, B: SolverBackend> TranslationContext<'a, B> {
     pub fn get_dim_var(&mut self, dim_name: &str) -> B::Int {
         self.backend.int_const(dim_name)
+    }
+
+    pub fn check_safety(
+        &mut self,
+        path_cond: &B::Bool,
+        violation_cond: &B::Bool,
+        error_message: String,
+        location: Option<lirien_ir::ir::SourceLocation>,
+    ) -> Result<(), String> {
+        self.backend.push();
+        self.backend.assert(path_cond);
+        self.backend.assert(violation_cond);
+        let violated = self.backend.check()?;
+        self.backend.pop(1);
+
+        if violated {
+            let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
+            Err(format!("{}{}", error_message, loc_info))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -134,6 +163,7 @@ pub fn verify_with_context<
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
         has_refinements: func.ret_refinement.is_some(),
+        safety_checks: Vec::new(),
     };
 
     memory::init_values(&mut t_ctx)?;
@@ -143,6 +173,18 @@ pub fn verify_with_context<
     translate_instructions(&mut t_ctx)?;
 
     intervals::assert_derived_intervals(&mut t_ctx);
+
+    // Run deferred safety checks
+    for check in &t_ctx.safety_checks {
+        t_ctx.backend.push();
+        t_ctx.backend.assert(&check.path_cond);
+        t_ctx.backend.assert(&check.violation_cond);
+        if t_ctx.backend.check()? {
+            let loc_info = check.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+            return Err(format!("{}{}", check.error_message, loc_info));
+        }
+        t_ctx.backend.pop(1);
+    }
 
     returns::verify_return_refinements(&mut t_ctx)?;
 
