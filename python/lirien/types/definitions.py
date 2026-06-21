@@ -41,7 +41,7 @@ def struct(cls):
     Generates a ctypes Structure behind the scenes.
     """
     from ..decorators import verify
-    from ..signatures import _get_type_name
+    from ..compiler import _get_type_name
 
     # Check if this is a Generic struct
     typevars = set()
@@ -262,7 +262,7 @@ def enum(cls):
     Decorator to mark a class as a Tagged Union (Enum) for Lirien.
     Generates a ctypes Structure with a tag and a Union payload.
     """
-    from ..signatures import _get_type_name
+    from ..compiler import _get_type_name
 
     # Check if this is a Generic ADT
     typevars = set()

@@ -1,5 +1,5 @@
 from typing import Generic, TypeVar
-from .decorators import enum
+from .definitions import enum
 
 T = TypeVar("T")
 E = TypeVar("E")

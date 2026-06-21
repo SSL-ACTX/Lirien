@@ -13,7 +13,7 @@ from typing import (
 from .types.base import TYPE_MAP
 from .types.memory import Buffer, SizedArray, Box, Tensor
 from .types.functions import Closure, FnPointer
-from .signatures import (
+from .compiler import (
     _get_type_name,
     _value_to_lirien_type,
     is_named_tuple,

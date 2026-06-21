@@ -42,6 +42,8 @@ from .decorators import (
     verify,
     jit,
     parallel_for,
+)
+from .diagnostics import (
     get_cpu_info,
     VerificationError,
     configure_tracing,

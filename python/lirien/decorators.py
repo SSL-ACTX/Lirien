@@ -1,9 +1,5 @@
 import inspect
 import ast
-import textwrap
-import os
-import threading
-from contextlib import contextmanager
 from typing import (
     Callable,
     TypeVar,
@@ -17,15 +13,27 @@ from typing import (
 )
 from . import lirien_bridge
 from .types.memory import Buffer, Box, Tensor, SizedArray
-from .signatures import (
+from .compiler import (
+    TypeSubstitutor,
+    EllipsisExpander,
+    RefinementSanitizer,
     _get_type_name,
     _discover_types,
     _get_all_typevars,
-    TypeSubstitutor,
     _value_to_lirien_type,
-    is_named_tuple,
     _get_refinement_parts,
-    _clean_lambda_source,
+    _prepare_source_and_name,
+    _has_protocol,
+    _has_callable,
+    _needs_monomorphization,
+    is_named_tuple,
+)
+from .diagnostics import (
+    VerificationError,
+    format_verification_error,
+    _setup_logging,
+    _restore_logging,
+    _is_verification_disabled,
 )
 from .ffi import (
     _map_ctypes_arguments,
@@ -34,203 +42,6 @@ from .ffi import (
 )
 
 T = TypeVar("T", bound=Callable)
-
-_local_state = threading.local()
-_tracing_stack = []
-
-
-@contextmanager
-def no_verification():
-    """
-    Context manager to temporarily disable Z3 verification for any code compiled
-    within this block.
-    """
-    old_state = getattr(_local_state, "no_verification", False)
-    _local_state.no_verification = True
-    try:
-        yield
-    finally:
-        _local_state.no_verification = old_state
-
-
-def _is_verification_disabled() -> bool:
-    return getattr(_local_state, "no_verification", False)
-
-
-@contextmanager
-def tracing(config: Dict[str, str]):
-    """
-    Context manager to temporarily configure granular tracing for specific Lirien components.
-    """
-    _tracing_stack.append(config)
-    merged = {"all": "info"}
-    for c in _tracing_stack:
-        merged.update(c)
-    configure_tracing(merged)
-    try:
-        yield
-    finally:
-        _tracing_stack.pop()
-        merged = {"all": "info"}
-        for c in _tracing_stack:
-            merged.update(c)
-        configure_tracing(merged)
-
-
-def configure_tracing(config: Dict[str, str]):
-    """
-    Configure granular tracing for Lirien components.
-
-    Example:
-        configure_tracing({"liveness": "debug", "verify": "info"})
-    """
-    lirien_bridge.configure_tracing(config)
-
-
-def get_cpu_info() -> Dict[str, str]:
-    """
-    Get information about the host CPU architecture and enabled SIMD features.
-    """
-    return lirien_bridge.get_cpu_info()
-
-
-def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
-    """
-    Statically verified parallel loop.
-    """
-    for i in range_obj:
-        body_fn(i)
-
-
-# Component names for tracing
-LIVENESS = "liveness"
-VERIFY = "verify"
-Z3 = "verify::z3"
-SSA = "ssa"
-BACKEND = "backend"
-BRIDGE = "bridge"
-ALL = "all"
-
-
-class VerificationError(Exception):
-    """Raised when Lirien formal verification or JIT compilation fails in strict mode."""
-
-    pass
-
-
-def format_verification_error(func_name: str, source: str, error: str) -> str:
-    import re
-
-    # Try to find offset in the error message
-    match = re.search(r"at offset (\d+)", error)
-    if match:
-        offset = int(match.group(1))
-        # Remove the offset info from the error message for cleaner display
-        clean_error = error.replace(match.group(0), "").strip()
-
-        # Find line and column from offset
-        lines = source.splitlines()
-        curr_offset = 0
-        target_line_idx = 0
-        target_col = 0
-        for i, line in enumerate(lines):
-            line_len = len(line) + 1  # +1 for newline
-            if curr_offset <= offset < curr_offset + line_len:
-                target_line_idx = i
-                target_col = offset - curr_offset
-                break
-            curr_offset += line_len
-
-        # Format pretty error
-        res = [f"Lirien Verification Failed for '{func_name}': {clean_error}"]
-        res.append(f"  at line {target_line_idx + 1}, col {target_col + 1}:")
-        res.append("")
-
-        # Context lines
-        start_idx = max(0, target_line_idx - 1)
-        end_idx = min(len(lines), target_line_idx + 2)
-        for i in range(start_idx, end_idx):
-            prefix = "> " if i == target_line_idx else "  "
-            res.append(f"{prefix}{i + 1:4} | {lines[i]}")
-            if i == target_line_idx:
-                res.append("       | " + " " * target_col + "^")
-
-        return "\n".join(res)
-
-    return f"Lirien Verification Failed for '{func_name}': {error}"
-
-
-def _setup_logging(log_level: str) -> Tuple[str, str]:
-    """Override LILA_LOG level and return (log_level, old_log_level) for restoration."""
-    if log_level:
-        old_log = os.environ.get("LILA_LOG", "info")
-        lirien_bridge.set_log_level(log_level)
-        os.environ["LILA_LOG"] = log_level
-        return log_level, old_log
-    return None, None
-
-
-def _restore_logging(log_level: str, old_log: str):
-    """Restore the original LILA_LOG level."""
-    if log_level:
-        lirien_bridge.set_log_level(old_log)
-        os.environ["LILA_LOG"] = old_log
-
-
-def _prepare_source_and_name(
-    func: Callable, class_name: str = None, method_name: str = None
-) -> Tuple[str, str]:
-    """Extract and dedent source code, handling method name overrides and AST adjustments."""
-    source = textwrap.dedent(inspect.getsource(func))
-    target_func_name = method_name if method_name else func.__name__
-
-    if target_func_name == "<lambda>":
-        target_func_name = "lirien_lambda"
-
-    if class_name or func.__name__ == "<lambda>":
-        tree = ast.parse(source)
-        func_def = tree.body[0]
-        func_def.name = target_func_name
-
-        if func_def.args.args and func_def.args.args[0].arg == "self":
-            if not func_def.args.args[0].annotation:
-                func_def.args.args[0].annotation = ast.Name(
-                    id=class_name, ctx=ast.Load()
-                )
-
-        source = ast.unparse(tree)
-
-    return source, target_func_name
-
-
-def _has_ellipsis(ann):
-    """Check if a type annotation contains an Ellipsis (...)."""
-    if ann is Ellipsis:
-        return True
-    # Handle Annotated types
-    if hasattr(ann, "__metadata__"):
-        metadata = ann.__metadata__
-        if metadata:
-            # metadata[0] can be Ellipsis (Buffer[...]) or a tuple (Tensor[T, ...])
-            if any(_has_ellipsis(m) for m in metadata):
-                return True
-            if isinstance(metadata[0], (list, tuple)):
-                if any(_has_ellipsis(m) for m in metadata[0]):
-                    return True
-                # Tensor/SizedArray nested ellipsis check
-                if len(metadata[0]) > 1 and isinstance(metadata[0][1], (list, tuple)):
-                    if any(m is Ellipsis for m in metadata[0][1]):
-                        return True
-    if hasattr(ann, "__args__"):
-        return any(_has_ellipsis(arg) for arg in ann.__args__)
-    if isinstance(ann, (list, tuple)):
-        return any(_has_ellipsis(arg) for arg in ann)
-    return False
-
-
-def _has_protocol(ann):
-    """Check if a type annotation is a typing.Protocol."""
-    return getattr(ann, "_is_protocol", False)
 
 
 class MonomorphizedFunction:
@@ -545,184 +356,6 @@ class MonomorphizedFunction:
         tree.body[0].name = specialized_name
 
         # Expand Ellipsis and Handle Nested Specialization in AST
-        class EllipsisExpander(ast.NodeTransformer):
-            def __init__(self, mapping, scope, parent_mf):
-                self.mapping = mapping
-                self.scope = scope
-                self.parent_mf = parent_mf
-                self.current_param = None
-
-            def visit_arg(self, node):
-                old_param = self.current_param
-                self.current_param = node.arg
-                node.annotation = (
-                    self.visit(node.annotation) if node.annotation else None
-                )
-                self.current_param = old_param
-                return node
-
-            def visit_FunctionDef(self, node):
-                # Visit args manually to set current_param
-                node.args = self.visit(node.args)
-
-                # Visit return annotation
-                old_param = self.current_param
-                self.current_param = "return"
-                if node.returns:
-                    node.returns = self.visit(node.returns)
-                self.current_param = old_param
-
-                # Visit body
-                node.body = [self.visit(stmt) for stmt in node.body]
-                return node
-
-            def visit_Call(self, node):
-                self.generic_visit(node)
-                if isinstance(node.func, ast.Name):
-                    func_name = node.func.id
-                    func_obj = self.scope.get(func_name)
-                    if not func_obj and func_name == self.parent_mf.func.__name__:
-                        func_obj = self.parent_mf
-
-                    if isinstance(func_obj, MonomorphizedFunction):
-                        call_mapping = {}
-                        callee_sig = inspect.signature(func_obj.func)
-                        callee_typevars = _get_all_typevars(callee_sig)
-                        callee_tvar_names = {t.__name__ for t in callee_typevars}
-
-                        # 1. Propagate TypeVars by name (e.g. T -> T)
-                        for k, v in self.mapping.items():
-                            if k in callee_tvar_names:
-                                call_mapping[k] = v
-
-                        # 2. Propagate callables
-                        params = list(callee_sig.parameters.items())
-                        for i, arg in enumerate(node.args):
-                            if i < len(params):
-                                p_name, _ = params[i]
-                                if isinstance(arg, ast.Name):
-                                    mapping_key = f"__callable_{arg.id}"
-                                    if mapping_key in self.mapping:
-                                        call_mapping[f"__callable_{p_name}"] = (
-                                            self.mapping[mapping_key]
-                                        )
-
-                        if call_mapping:
-                            specialized_callee = func_obj._get_specialized_name(
-                                call_mapping
-                            )
-                            node.func.id = specialized_callee
-
-                            # Build stable cache key
-                            call_key = tuple(
-                                sorted(
-                                    (k, tuple(v) if isinstance(v, list) else v)
-                                    for k, v in call_mapping.items()
-                                )
-                            )
-
-                            if call_key not in func_obj.cache:
-                                # Pre-emptively add to cache to prevent infinite recursion
-                                # Use a placeholder or partial compilation if needed,
-                                # but for now we just call specialize.
-                                func_obj.cache[call_key] = None
-                                func_obj.cache[call_key] = func_obj._specialize(
-                                    call_mapping
-                                )
-
-                return node
-
-            def visit_Subscript(self, node):
-                self.generic_visit(node)
-                if isinstance(node.value, ast.Name) and node.value.id in (
-                    "Tensor",
-                    "SizedArray",
-                    "Buffer",
-                ):
-                    # Handle single Ellipsis (Buffer[...])
-                    if (
-                        isinstance(node.slice, ast.Constant)
-                        and node.slice.value is Ellipsis
-                    ):
-                        ellipsis_key = f"__ellipsis_{self.current_param}"
-                        if ellipsis_key in self.mapping:
-                            type_name = self.mapping[ellipsis_key][0]
-                            node.slice = ast.Name(id=type_name, ctx=ast.Load())
-                        return node
-
-                    # Handle Tuple with Ellipsis or TypeVarTuple
-                    if isinstance(node.slice, ast.Tuple):
-                        new_elts = []
-                        for elt in node.slice.elts:
-                            if isinstance(elt, ast.Constant) and elt.value is Ellipsis:
-                                ellipsis_key = f"__ellipsis_{self.current_param}"
-                                if ellipsis_key in self.mapping:
-                                    for dim in self.mapping[ellipsis_key]:
-                                        new_elts.append(ast.Constant(value=dim))
-                                else:
-                                    # Fallback to first ellipsis found if mapping by name fails
-                                    for k, v in self.mapping.items():
-                                        if k.startswith("__ellipsis_"):
-                                            for dim in v:
-                                                new_elts.append(ast.Constant(value=dim))
-                                            break
-                            elif (
-                                isinstance(elt, ast.Subscript)
-                                and isinstance(elt.value, ast.Name)
-                                and elt.value.id == "Unpack"
-                            ):
-                                # It's Unpack[Shape]
-                                if isinstance(elt.slice, ast.Name):
-                                    shape_name = elt.slice.id
-                                    if shape_name in self.mapping:
-                                        dims = self.mapping[shape_name]
-                                        if isinstance(dims, (list, tuple)):
-                                            for dim in dims:
-                                                new_elts.append(ast.Constant(value=dim))
-                            else:
-                                new_elts.append(elt)
-                        node.slice.elts = new_elts
-
-                # Handle Callable/Closure/FnPointer specialization
-                if isinstance(node.value, ast.Name) and node.value.id in (
-                    "Callable",
-                    "Closure",
-                    "FnPointer",
-                ):
-                    callable_key = f"__callable_{self.current_param}"
-                    if callable_key in self.mapping:
-                        target_val = self.mapping[callable_key]
-                        target_name = getattr(target_val, "__name__", str(target_val))
-                        is_closure = getattr(target_val, "__lirien_closure__", False)
-
-                        # Specialize Callable to concrete type
-                        if node.value.id == "Callable":
-                            node.value.id = "Closure" if is_closure else "FnPointer"
-
-                        # Only inject target_name if it's a specific function name
-                        is_generic = (
-                            target_name in ("jit_call", "wrapper")
-                            or "at 0x" in target_name
-                        )
-
-                        if not is_generic:
-                            if isinstance(node.slice, ast.Tuple):
-                                if len(node.slice.elts) == 2:
-                                    node.slice.elts.append(
-                                        ast.Constant(value=target_name)
-                                    )
-                                elif len(node.slice.elts) > 2:
-                                    node.slice.elts[2] = ast.Constant(value=target_name)
-                            elif isinstance(
-                                node.slice, (ast.List, ast.Constant, ast.Name)
-                            ):
-                                node.slice = ast.Tuple(
-                                    elts=[node.slice, ast.Constant(value=target_name)],
-                                    ctx=ast.Load(),
-                                )
-
-                return node
-
         # Get full scope (globals + nonlocals)
         scope = self.func.__globals__.copy()
         try:
@@ -748,45 +381,6 @@ class MonomorphizedFunction:
                 pass  # Already handled if key is 'Opt'
 
         # Inject annotations and sanitize refinement types to prevent Rust-side syntax errors
-        class RefinementSanitizer(ast.NodeTransformer):
-            def __init__(self, sig):
-                self.sig = sig
-
-            def process_ann(self, ann, name_hint):
-                if ann is inspect.Parameter.empty:
-                    return None
-                base_ty, predicate = _get_refinement_parts(ann)
-                if base_ty is not None and predicate is not None:
-                    base_name = _get_type_name(base_ty)
-                    pred_src = _clean_lambda_source(predicate)
-                    ref_str = f"Refined[{base_name}, {pred_src}]"
-                    try:
-                        return ast.parse(ref_str).body[0].value
-                    except Exception:
-                        try:
-                            return ast.parse(base_name).body[0].value
-                        except Exception:
-                            return ast.Name(id=base_name, ctx=ast.Load())
-
-                return None
-
-            def visit_FunctionDef(self, node):
-                # Update parameters
-                for arg in node.args.args:
-                    if arg.arg in self.sig.parameters:
-                        ann = self.sig.parameters[arg.arg].annotation
-                        new_ann = self.process_ann(ann, arg.arg)
-                        if new_ann is not None:
-                            arg.annotation = new_ann
-
-                # Update return annotation
-                if self.sig.return_annotation is not inspect.Signature.empty:
-                    new_ret = self.process_ann(self.sig.return_annotation, "return")
-                    if new_ret is not None:
-                        node.returns = new_ret
-
-                return node
-
         tree = RefinementSanitizer(inspect.signature(self.func)).visit(tree)
 
         transformer = TypeSubstitutor(transformer_mapping)
@@ -1014,50 +608,7 @@ class OverloadedFunction:
         func_def.name = specialized_name
 
         # Inject annotations and sanitize refinement types to prevent Rust-side syntax errors
-        class RefinementSanitizer(ast.NodeTransformer):
-            def __init__(self, sig):
-                self.sig = sig
-
-            def process_ann(self, ann, name_hint):
-                if ann is inspect.Parameter.empty:
-                    return None
-                base_ty, predicate = _get_refinement_parts(ann)
-                if base_ty is not None and predicate is not None:
-                    base_name = _get_type_name(base_ty)
-                    pred_src = _clean_lambda_source(predicate)
-                    ref_str = f"Refined[{base_name}, {pred_src}]"
-                    try:
-                        return ast.parse(ref_str).body[0].value
-                    except Exception:
-                        try:
-                            return ast.parse(base_name).body[0].value
-                        except Exception:
-                            return ast.Name(id=base_name, ctx=ast.Load())
-
-                ann_name = _get_type_name(ann)
-                try:
-                    return ast.parse(ann_name).body[0].value
-                except:
-                    return ast.Name(id=ann_name, ctx=ast.Load())
-
-            def visit_FunctionDef(self, node):
-                # Update parameters
-                for arg in node.args.args:
-                    if arg.arg in self.sig.parameters:
-                        ann = self.sig.parameters[arg.arg].annotation
-                        new_ann = self.process_ann(ann, arg.arg)
-                        if new_ann is not None:
-                            arg.annotation = new_ann
-
-                # Update return annotation
-                if self.sig.return_annotation is not inspect.Signature.empty:
-                    new_ret = self.process_ann(self.sig.return_annotation, "return")
-                    if new_ret is not None:
-                        node.returns = new_ret
-
-                return node
-
-        tree = RefinementSanitizer(sig).visit(tree)
+        tree = RefinementSanitizer(sig, sanitize_all_types=True).visit(tree)
         specialized_source = ast.unparse(tree)
 
         log_lvl, old_log = _setup_logging(self.log_level)
@@ -1192,38 +743,6 @@ def verify(
         sig = inspect.signature(func)
         typevars = _get_all_typevars(sig)
 
-        def _needs_monomorphization(ann):
-            if not ann or ann is inspect.Parameter.empty:
-                return False
-
-            # 1. TypeVars
-            from typing import TypeVar, TypeVarTuple
-
-            if isinstance(ann, (TypeVar, TypeVarTuple)) or hasattr(
-                ann, "__lirien_typevar__"
-            ):
-                return True
-
-            # 2. Subscripted Generic Alias or Origin with parameters
-            origin = get_origin(ann)
-            if origin is not None:
-                if hasattr(origin, "__parameters__") and origin.__parameters__:
-                    return True
-                # Recurse for args
-                for arg in get_args(ann):
-                    if _needs_monomorphization(arg):
-                        return True
-
-            # 3. Specialized Lirien type (already evaluated)
-            if getattr(ann, "__lirien_specialized__", False):
-                return True
-
-            # 4. Others
-            if _has_ellipsis(ann) or _has_protocol(ann) or _has_callable(ann):
-                return True
-
-            return False
-
         should_monomorphize = (
             typevars
             or any(
@@ -1349,3 +868,11 @@ def jit(
         func = strict
         return verify(strict=True, verify=False)(func)
     return verify(strict=strict, log_level=log_level, timeout=timeout, verify=False)
+
+
+def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
+    """
+    Statically verified parallel loop.
+    """
+    for i in range_obj:
+        body_fn(i)

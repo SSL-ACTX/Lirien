@@ -144,7 +144,7 @@ class Box:
                 ptr = ctypes.pointer(value._ctypes_obj)
                 self._ctypes_obj = ctypes.cast(ptr, ctypes.c_void_p)
             else:
-                from ..signatures import _value_to_lirien_type
+                from ..compiler import _value_to_lirien_type
 
                 c_ty = TYPE_MAP.get(_value_to_lirien_type(value), ctypes.c_int64)
                 ptr = ctypes.pointer(c_ty(value))

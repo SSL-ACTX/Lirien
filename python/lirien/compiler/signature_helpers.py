@@ -1,5 +1,4 @@
 import inspect
-import ast
 import sys
 import types
 import ctypes
@@ -14,9 +13,10 @@ from typing import (
     get_origin,
     get_args,
     Annotated,
+    Final,
 )
-from .types.base import TYPE_MAP
-from .types.memory import Box
+from ..types.base import TYPE_MAP
+from ..types.memory import Box
 
 
 def is_named_tuple(cls):
@@ -72,8 +72,6 @@ def _clean_lambda_source(predicate: Any) -> str:
                 if isinstance(node, ast.Lambda):
                     lambdas.append(node)
             if lambdas:
-                # Returns the first lambda found in the AST.
-                # In most cases there's only one.
                 return ast.unparse(lambdas[0]).strip()
         except SyntaxError:
             pass
@@ -94,10 +92,49 @@ def _clean_lambda_source(predicate: Any) -> str:
         return "None"
 
 
+def _is_box_type(ann: Any) -> bool:
+    """Helper to check if an annotation represents a Box pointer type (including forward refs)."""
+    if isinstance(ann, str):
+        s = ann.strip()
+        return (
+            s.startswith("Box[")
+            or s.startswith("Box ")
+            or s.startswith("Optional[Box[")
+            or s.endswith("| None")
+        )
+
+    origin = get_origin(ann) or ann
+    if origin is Box:
+        return True
+    if hasattr(origin, "__name__") and origin.__name__ == "Box":
+        return True
+    if origin is Annotated:
+        args = get_args(ann)
+        if args and _is_box_type(args[0]):
+            return True
+    if "box" in str(ann).lower():
+        return True
+    return False
+
+
 def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
     """Consistently convert a Python-side type to its Lirien IR string representation."""
     if getattr(ty, "__lirien_specialized__", False):
         return ty.__name__
+
+    # Handle typing.NewType
+    if hasattr(ty, "__supertype__"):
+        return _get_type_name(ty.__supertype__, type_mapping)
+
+    # Detect non-pointer Optionals in strings
+    if isinstance(ty, str):
+        s = ty.strip()
+        is_optional = "optional" in s.lower() or ("|" in s and "none" in s.lower())
+        if is_optional and "box" not in s.lower():
+            raise TypeError(
+                f"Lirien only supports Optionals as pointer types. "
+                f"Use Optional[Box[...]] or Box[...] | None instead of {ty}."
+            )
 
     if type_mapping:
         if isinstance(ty, str) and ty in type_mapping:
@@ -162,7 +199,6 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
                 )
                 return f"Tensor[{_get_type_name(base_ty, type_mapping)}, {shape_str}]"
             else:
-                # Fallback for older tensor format
                 base_ty = inner
                 return f"Tensor[{_get_type_name(base_ty, type_mapping)}]"
 
@@ -208,11 +244,20 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
                     f"SizedArray[{_get_type_name(inner[0], type_mapping)}, {inner[1]}]"
                 )
 
-        # Fallback for standard Annotated[T, metadata]
         return _get_type_name(origin, type_mapping)
 
     # Handle subscripted generics (e.g. List[T])
     origin = get_origin(ty)
+
+    # Handle typing.Final
+    if (
+        origin is Final
+        or (hasattr(origin, "__name__") and origin.__name__ == "Final")
+        or "final" in str(origin).lower()
+    ):
+        args = get_args(ty)
+        if args:
+            return _get_type_name(args[0], type_mapping)
 
     # Handle Union types (including Optional)
     if (
@@ -224,21 +269,21 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
         or (sys.version_info >= (3, 10) and origin is types.UnionType)
     ):
         args = get_args(ty)
-        # Check for Box[T] | None (Optional[Box[T]])
-        if len(args) == 2:
-            box_ty = None
-            has_none = False
-            for arg in args:
-                arg_origin = get_origin(arg)
-                if arg_origin is Annotated:
-                    inner_args = get_args(arg)
-                    if inner_args and inner_args[0] is Box:
-                        box_ty = arg
-                elif arg is type(None) or arg is None:
-                    has_none = True
+        has_none = any(arg is type(None) or arg is None for arg in args)
+        if has_none:
+            non_none_args = [
+                arg for arg in args if arg is not type(None) and arg is not None
+            ]
+            for arg in non_none_args:
+                if not _is_box_type(arg):
+                    raise TypeError(
+                        f"Lirien only supports Optionals as pointer types. "
+                        f"Use Optional[Box[{_get_type_name(arg, type_mapping)}]] (or Box[{_get_type_name(arg, type_mapping)}] | None) "
+                        f"instead of non-pointer optional type {ty}."
+                    )
 
-            if box_ty and has_none:
-                inner_name = _get_type_name(box_ty, type_mapping)
+            if non_none_args:
+                inner_name = _get_type_name(non_none_args[0], type_mapping)
                 return f"Nullable[{inner_name}]"
 
     if origin is not None:
@@ -256,7 +301,6 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
                 )
             return "(i64, i64)"  # Default
 
-        # Handle Higher-Order types
         if (
             "fnpointer" in str(ty).lower()
             or "closure" in str(ty).lower()
@@ -266,7 +310,6 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
                 arg_tys, ret_ty = args[0], args[1]
                 target_name = args[2] if len(args) > 2 else None
 
-                # Ensure arg_tys is a list-like
                 if not isinstance(arg_tys, (list, tuple)):
                     arg_tys = [arg_tys]
 
@@ -280,7 +323,6 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
                     return f'{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}, "{target_name}"]'
                 return f"{base}[{arg_str}, {_get_type_name(ret_ty, type_mapping)}]"
 
-        # Standard generic formatting
         if args:
             return (
                 f"{origin_name}["
@@ -310,14 +352,13 @@ def _discover_types(
     )
     type_aliases = {}
 
-    # Combine globals and closure variables
     scope = func.__globals__.copy()
     try:
-        # Also try to get caller's locals to find types defined in the same function
         f_tmp = inspect.currentframe()
         while f_tmp:
             if (
-                "lirien/compiler.py" not in f_tmp.f_code.co_filename
+                "lirien/compiler/" not in f_tmp.f_code.co_filename
+                and "lirien/compiler.py" not in f_tmp.f_code.co_filename
                 and "lirien/decorators.py" not in f_tmp.f_code.co_filename
                 and "lirien/signatures.py" not in f_tmp.f_code.co_filename
                 and "lirien/ffi.py" not in f_tmp.f_code.co_filename
@@ -349,10 +390,8 @@ def _discover_types(
                     )
                     for f_name in obj._fields
                 ]
-            # Tag it so we can separate it later
             obj.__lirien_named_tuple__ = True
         elif is_typed_dict(obj) and name not in typed_dict_layouts:
-            # It's a TypedDict
             typed_dict_layouts[name] = [
                 (
                     f_name,
@@ -361,12 +400,10 @@ def _discover_types(
                 for f_name, f_ty in obj.__annotations__.items()
             ]
 
-            # Generate a ctypes structure for interop
             fields = []
             for f_name, f_ty in obj.__annotations__.items():
                 ty_name = _get_type_name(f_ty, type_mapping).lower()
-                # Find the best match in TYPE_MAP
-                cty = TYPE_MAP.get("i64")  # default
+                cty = TYPE_MAP.get("i64")
                 for match_name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
                     if match_name in ty_name:
                         cty = TYPE_MAP[match_name]
@@ -402,17 +439,14 @@ def _discover_types(
         else:
             base_ty, predicate = _get_refinement_parts(obj)
             if base_ty is not None and predicate is not None:
-                # It's likely a Refined or Annotated refinement type instance
                 try:
                     pred_src = _clean_lambda_source(predicate)
                     if hasattr(base_ty, "__origin__") and hasattr(
                         base_ty, "__metadata__"
                     ):
-                        # Handle Annotated (e.g. Buffer[i64])
                         origin_name = getattr(
                             base_ty.__origin__, "__name__", str(base_ty.__origin__)
                         )
-                        # Extract the first metadata (the item type)
                         item_ty = base_ty.__metadata__[0]
                         base_ty_name = (
                             f"{origin_name}[{_get_type_name(item_ty, type_mapping)}]"
@@ -438,7 +472,6 @@ def _value_to_lirien_type(val: Any) -> str:
     if isinstance(val, float):
         return "f64"
 
-    # Handle Lirien-wrapped objects (Structs, Enums, SizedArrays)
     if (
         hasattr(val, "__lirien_struct__")
         or hasattr(val, "__lirien_enum__")
@@ -449,12 +482,10 @@ def _value_to_lirien_type(val: Any) -> str:
             return val.__name__
         return val.__class__.__name__
 
-    # SIMD and common wrappers
     name = val.__class__.__name__
     if name in ["f32x4", "i32x4", "f64x2", "i64x2", "i8x16", "u8x16", "i16x8", "u16x8"]:
         return name
 
-    # Handle NumPy-like arrays or memoryviews (Buffer Protocol)
     if hasattr(val, "dtype"):
         dt = str(val.dtype).lower()
         if "float32" in dt:
@@ -504,12 +535,10 @@ def _value_to_lirien_type(val: Any) -> str:
         if fmt == "?":
             return "bool"
 
-    # Fallback for Boxed values
     if isinstance(val, Box):
         return _value_to_lirien_type(val.value)
 
     if isinstance(val, ctypes.Array):
-        # Map ctypes array to Buffer[T]
         elt_cty = val._type_
         elt_lirien = "i64"
         for lirien_name, cty in TYPE_MAP.items():
@@ -539,7 +568,7 @@ def _get_all_typevars(sig: inspect.Signature) -> set:
 def _find_typevars(ann: Any, found: set = None) -> set:
     """Recursively find all TypeVars, LirienTypeVars, and TypeVarTuples in a type annotation."""
     from typing import TypeVar
-    from .types.arithmetic import TypeExpr
+    from ..types.arithmetic import TypeExpr
 
     if found is None:
         found = set()
@@ -553,7 +582,6 @@ def _find_typevars(ann: Any, found: set = None) -> set:
             _find_typevars(arg, found)
         return found
 
-    # Handle Unpack (for TypeVarTuple)
     origin = get_origin(ann)
     if origin is not None and "Unpack" in str(origin):
         args = get_args(ann)
@@ -574,77 +602,3 @@ def _find_typevars(ann: Any, found: set = None) -> set:
             _find_typevars(arg, found)
 
     return found
-
-
-class TypeSubstitutor(ast.NodeTransformer):
-    """AST visitor to replace TypeVar names with concrete type names or literals."""
-
-    def __init__(self, mapping: Dict[str, Any]):
-        self.mapping = mapping
-
-    def visit_Call(self, node):
-        # We MUST NOT call generic_visit first if we want to replace the whole Call node
-        if isinstance(node.func, ast.Name) and node.func.id == "len":
-            if len(node.args) == 1 and isinstance(node.args[0], ast.Name):
-                name = node.args[0].id
-                if name in self.mapping:
-                    val = self.mapping[name]
-                    if isinstance(val, (list, tuple)):
-                        return ast.Constant(value=len(val))
-        self.generic_visit(node)
-        return node
-
-    def visit_BinOp(self, node):
-        node = self.generic_visit(node)
-        # Constant fold arithmetic ops if both sides are now constants
-        if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
-            l, r = node.left.value, node.right.value
-            if isinstance(l, (int, float)) and isinstance(r, (int, float)):
-                res = None
-                if isinstance(node.op, ast.Add):
-                    res = l + r
-                elif isinstance(node.op, ast.Sub):
-                    res = l - r
-                elif isinstance(node.op, ast.Mult):
-                    res = l * r
-                elif isinstance(node.op, ast.FloorDiv):
-                    res = l // r
-                elif isinstance(node.op, ast.Div):
-                    res = l / r
-                elif isinstance(node.op, ast.Mod):
-                    res = l % r
-                elif isinstance(node.op, ast.Pow):
-                    res = l**r
-
-                if res is not None:
-                    return ast.Constant(value=res)
-        return node
-
-    def visit_UnaryOp(self, node):
-        node = self.generic_visit(node)
-        if isinstance(node.operand, ast.Constant):
-            val = node.operand.value
-            if isinstance(val, (int, float)):
-                if isinstance(node.op, ast.USub):
-                    return ast.Constant(value=-val)
-                elif isinstance(node.op, ast.UAdd):
-                    return ast.Constant(value=val)
-        return node
-
-    def visit_Subscript(self, node):
-        if isinstance(node.value, ast.Name) and node.value.id in self.mapping:
-            val = self.mapping[node.value.id]
-            if getattr(val, "__lirien_specialized__", False):
-                return ast.Name(id=val.__name__, ctx=node.ctx)
-
-        self.generic_visit(node)
-        return node
-
-    def visit_Name(self, node):
-        if node.id in self.mapping:
-            val = self.mapping[node.id]
-            if isinstance(val, int):
-                return ast.Constant(value=val)
-            name = getattr(val, "__name__", str(val))
-            return ast.Name(id=name, ctx=node.ctx)
-        return self.generic_visit(node)
