@@ -116,8 +116,39 @@ impl CFGBuilder {
         self.update_location(expr_offset);
         let dest = self.func.next_value();
 
-        let l_ty = self.func.get_type(lhs);
-        let r_ty = self.func.get_type(rhs);
+        let mut l_ty = self.func.get_type(lhs);
+        let mut r_ty = self.func.get_type(rhs);
+
+        // Strip refinement and literal wrappers to get base type
+        while let Type::Refined(inner, _) | Type::Literal(inner, _) = l_ty {
+            l_ty = *inner;
+        }
+        while let Type::Refined(inner, _) | Type::Literal(inner, _) = r_ty {
+            r_ty = *inner;
+        }
+
+        if let Type::Optional(_) = l_ty {
+            let tag_val = self.func.next_value();
+            self.func.set_type(tag_val, Type::Bool);
+            push_inst!(self, InstructionKind::StructLoad(tag_val, lhs, 0));
+            lhs = tag_val;
+            l_ty = Type::Bool;
+        }
+        if let Type::Optional(_) = r_ty {
+            let tag_val = self.func.next_value();
+            self.func.set_type(tag_val, Type::Bool);
+            push_inst!(self, InstructionKind::StructLoad(tag_val, rhs, 0));
+            rhs = tag_val;
+            r_ty = Type::Bool;
+        }
+
+        // Unify Bool and I64 (e.g. comparing tag to None/0)
+        if l_ty == Type::Bool && r_ty == Type::I64 {
+            self.func.set_type(rhs, Type::Bool);
+        } else if l_ty == Type::I64 && r_ty == Type::Bool {
+            self.func.set_type(lhs, Type::Bool);
+        }
+
         let is_float =
             matches!(l_ty, Type::F32 | Type::F64) || matches!(r_ty, Type::F32 | Type::F64);
 

@@ -2,6 +2,50 @@ use crate::backend::SolverBackend;
 use crate::verifier::TranslationContext;
 use lirien_ir::ir::{InstructionKind, Type};
 
+fn types_compatible(a: &Type, r: &Type) -> bool {
+    let a = a.base_type();
+    let r = r.base_type();
+
+    if a == &Type::Unknown || r == &Type::Unknown {
+        return true;
+    }
+
+    match (a, r) {
+        (Type::Pointer(a_inner), Type::Pointer(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::Pointer(a_inner), Type::NullablePointer(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::NullablePointer(a_inner), Type::NullablePointer(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::Optional(a_inner), Type::Optional(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::Closure(_, a_args, a_ret, _), Type::Closure(_, r_args, r_ret, _)) => {
+            if a_args.len() != r_args.len() {
+                return false;
+            }
+            for (aa, rr) in a_args.iter().zip(r_args.iter()) {
+                if !types_compatible(aa, rr) {
+                    return false;
+                }
+            }
+            types_compatible(a_ret, r_ret)
+        }
+        (Type::Tensor(a_inner, _), Type::Tensor(r_inner, _)) => types_compatible(a_inner, r_inner),
+        (Type::Tuple(a_types), Type::Tuple(r_types)) => {
+            if a_types.len() != r_types.len() {
+                return false;
+            }
+            for (aa, rr) in a_types.iter().zip(r_types.iter()) {
+                if !types_compatible(aa, rr) {
+                    return false;
+                }
+            }
+            true
+        }
+        (Type::Array(a_inner, a_size), Type::Array(r_inner, r_size)) => {
+            a_size == r_size && types_compatible(a_inner, r_inner)
+        }
+        (Type::Buffer(a_inner), Type::Buffer(r_inner)) => types_compatible(a_inner, r_inner),
+        _ => a == r,
+    }
+}
+
 pub fn verify_return_refinements<
     B: SolverBackend<
         Bool = z3::ast::Bool,
@@ -19,6 +63,10 @@ pub fn verify_return_refinements<
         for inst in &block.instructions {
             if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
                 let actual_ty = t_ctx.func.get_type(*ret_val);
+                if !types_compatible(&actual_ty, &ret_ty) {
+                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                    return Err(format!("Type mismatch in return: expected {:?}, got {:?}{}", ret_ty, actual_ty, loc_info));
+                }
                 
                 // Shape verification
                 if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&actual_ty, &ret_ty) {

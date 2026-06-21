@@ -171,10 +171,18 @@ impl CFGBuilder {
 
                 if let Some((ref var_name, true)) = none_comp {
                     let old_val = self.read_variable(var_name.clone(), prev_block)?;
-                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                    let ty = self.func.get_type(old_val);
+                    if let Type::NullablePointer(inner) = ty {
                         let new_val = self.func.next_value();
                         self.func.set_type(new_val, Type::Pointer(inner.clone()));
                         push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), true_block, new_val);
+                    } else if let Type::Optional(inner) = ty {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, *inner.clone());
+                        let align = inner.align(&self.func.struct_layouts);
+                        let payload_offset = (1 + align - 1) & !(align - 1);
+                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
                         self.write_variable(var_name.clone(), true_block, new_val);
                     }
                 }
@@ -193,10 +201,18 @@ impl CFGBuilder {
 
                 if let Some((ref var_name, false)) = none_comp {
                     let old_val = self.read_variable(var_name.clone(), prev_block)?;
-                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                    let ty = self.func.get_type(old_val);
+                    if let Type::NullablePointer(inner) = ty {
                         let new_val = self.func.next_value();
                         self.func.set_type(new_val, Type::Pointer(inner.clone()));
                         push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), false_block, new_val);
+                    } else if let Type::Optional(inner) = ty {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, *inner.clone());
+                        let align = inner.align(&self.func.struct_layouts);
+                        let payload_offset = (1 + align - 1) & !(align - 1);
+                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
                         self.write_variable(var_name.clone(), false_block, new_val);
                     }
                 }
@@ -238,10 +254,18 @@ impl CFGBuilder {
 
                 if let Some((ref var_name, true)) = none_comp {
                     let old_val = self.read_variable(var_name.clone(), header_block)?;
-                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                    let ty = self.func.get_type(old_val);
+                    if let Type::NullablePointer(inner) = ty {
                         let new_val = self.func.next_value();
                         self.func.set_type(new_val, Type::Pointer(inner.clone()));
                         push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), body_block, new_val);
+                    } else if let Type::Optional(inner) = ty {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, *inner.clone());
+                        let align = inner.align(&self.func.struct_layouts);
+                        let payload_offset = (1 + align - 1) & !(align - 1);
+                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
                         self.write_variable(var_name.clone(), body_block, new_val);
                     }
                 }
@@ -262,10 +286,18 @@ impl CFGBuilder {
 
                 if let Some((ref var_name, false)) = none_comp {
                     let old_val = self.read_variable(var_name.clone(), header_block)?;
-                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                    let ty = self.func.get_type(old_val);
+                    if let Type::NullablePointer(inner) = ty {
                         let new_val = self.func.next_value();
                         self.func.set_type(new_val, Type::Pointer(inner.clone()));
                         push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), exit_block, new_val);
+                    } else if let Type::Optional(inner) = ty {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, *inner.clone());
+                        let align = inner.align(&self.func.struct_layouts);
+                        let payload_offset = (1 + align - 1) & !(align - 1);
+                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
                         self.write_variable(var_name.clone(), exit_block, new_val);
                     }
                 }

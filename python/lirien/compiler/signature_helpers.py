@@ -126,15 +126,19 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
     if hasattr(ty, "__supertype__"):
         return _get_type_name(ty.__supertype__, type_mapping)
 
-    # Detect non-pointer Optionals in strings
+    # Detect Optionals in strings and rewrite to Nullable name
     if isinstance(ty, str):
         s = ty.strip()
         is_optional = "optional" in s.lower() or ("|" in s and "none" in s.lower())
-        if is_optional and "box" not in s.lower():
-            raise TypeError(
-                f"Lirien only supports Optionals as pointer types. "
-                f"Use Optional[Box[...]] or Box[...] | None instead of {ty}."
-            )
+        if is_optional:
+            if s.startswith("Optional[") and s.endswith("]"):
+                inner = s[len("Optional[") : -1]
+                return f"Nullable[{inner}]"
+            elif "|" in s:
+                parts = [p.strip() for p in s.split("|")]
+                non_none_parts = [p for p in parts if p.lower() != "none"]
+                if non_none_parts:
+                    return f"Nullable[{non_none_parts[0]}]"
 
     if type_mapping:
         if isinstance(ty, str) and ty in type_mapping:
@@ -274,14 +278,6 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
             non_none_args = [
                 arg for arg in args if arg is not type(None) and arg is not None
             ]
-            for arg in non_none_args:
-                if not _is_box_type(arg):
-                    raise TypeError(
-                        f"Lirien only supports Optionals as pointer types. "
-                        f"Use Optional[Box[{_get_type_name(arg, type_mapping)}]] (or Box[{_get_type_name(arg, type_mapping)}] | None) "
-                        f"instead of non-pointer optional type {ty}."
-                    )
-
             if non_none_args:
                 inner_name = _get_type_name(non_none_args[0], type_mapping)
                 return f"Nullable[{inner_name}]"

@@ -33,6 +33,7 @@ pub enum Type {
     Tuple(Vec<Type>),
     Pointer(Box<Type>),
     NullablePointer(Box<Type>),
+    Optional(Box<Type>),
     FnPointer(Vec<Type>, Box<Type>, Option<String>),
     Closure(String, Vec<Type>, Box<Type>, Option<String>),
     Refined(Box<Type>, String),
@@ -159,7 +160,7 @@ impl Type {
 
     pub fn is_composite(&self) -> bool {
         match self {
-            Type::Struct(_) | Type::TypedDict(_) | Type::NamedTuple(_) | Type::Tuple(_) | Type::Enum(_) => true,
+            Type::Struct(_) | Type::TypedDict(_) | Type::NamedTuple(_) | Type::Tuple(_) | Type::Enum(_) | Type::Optional(_) => true,
             Type::Array(inner, Some(_)) => {
                 // If the inner type is not a primitive, we treat fixed arrays as composite for offsets
                 !inner.is_int() && !inner.is_float()
@@ -212,6 +213,16 @@ impl Type {
                 (offset + total_align - 1) & !(total_align - 1)
             }
             Type::Refined(inner, _) | Type::Literal(inner, _) => inner.size(struct_layouts),
+            Type::Optional(inner) => {
+                let tag_size = 1;
+                let payload_align = inner.align(struct_layouts);
+                let payload_size = inner.size(struct_layouts);
+                let mut offset = tag_size;
+                offset = (offset + payload_align - 1) & !(payload_align - 1);
+                offset += payload_size;
+                let total_align = self.align(struct_layouts);
+                (offset + total_align - 1) & !(total_align - 1)
+            }
             Type::Enum(name) => {
                 if let Some(variants) = struct_layouts.get(name) {
                     let mut max_payload_size = 0;
@@ -303,7 +314,7 @@ impl Type {
                 }
                 max_align
             }
-            Type::Refined(inner, _) | Type::Literal(inner, _) => inner.align(struct_layouts),
+            Type::Refined(inner, _) | Type::Literal(inner, _) | Type::Optional(inner) => inner.align(struct_layouts),
             _ => 8,
         }
     }

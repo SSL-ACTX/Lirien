@@ -74,6 +74,10 @@ Lirien is an experimental research compiler. It is under active development and 
 
 | Item | Notes |
 | :--- | :--- |
+| **Non-Pointer Optionals (`T \| None`)** | Inline tagged value-type Optionals (like Rust's `Option<T>`) for primitives and structs. |
+| **Verified Growable List (`List[T]`)** | Zero-overhead, heap-allocated dynamic list with Z3 bounds checking and allocation safety. |
+| **Strided Array Slices (`arr[start:end:step]`)** | Support step/stride parameter in slice indexing, complete with Z3 bounds checks and Cranelift lowers. |
+| **Verified Matrix Multiplication (`@` operator)** | Shape-checked 2D matrix multiplication with compile-time dimension matching via Z3 and JIT lowering. |
 | Automated loop invariant synthesis | Abstract interpretation to derive invariants without user annotations |
 
 ---

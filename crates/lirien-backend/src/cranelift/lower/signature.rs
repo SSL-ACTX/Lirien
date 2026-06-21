@@ -104,7 +104,7 @@ pub fn build_cranelift_signature(
             sig.params.push(AbiParam::new(types::I64)); // SRet pointer
             is_sret = true;
         }
-    } else if ret_ty.is_simd() {
+    } else if ret_ty.is_simd() || matches!(ret_ty, lirien_ir::ir::Type::Optional(_) | lirien_ir::ir::Type::Struct(_)) {
         sig.params.push(AbiParam::new(types::I64)); // SRet pointer
         is_sret = true;
     } else if *ret_ty != lirien_ir::ir::Type::Unknown {

@@ -40,6 +40,7 @@ impl fmt::Display for Type {
             }
             Type::Pointer(t) => write!(f, "Box<{}>", t),
             Type::NullablePointer(t) => write!(f, "Box<{}>?", t),
+            Type::Optional(t) => write!(f, "Optional<{}>", t),
             Type::FnPointer(args, ret, target) => {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
                 if let Some(t) = target {

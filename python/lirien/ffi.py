@@ -57,6 +57,41 @@ def _get_ctypes_type(ann_str: str) -> Any:
     return ctypes.c_int64
 
 
+_optional_ctypes_cache = {}
+
+
+def get_optional_ctypes(inner_cty):
+    if inner_cty in _optional_ctypes_cache:
+        return _optional_ctypes_cache[inner_cty]
+
+    class OptionalCtypes(ctypes.Structure):
+        _fields_ = [("has_value", ctypes.c_bool), ("value", inner_cty)]
+
+    _optional_ctypes_cache[inner_cty] = OptionalCtypes
+    return OptionalCtypes
+
+
+def _is_value_optional(ann):
+    from typing import get_origin, get_args, Union
+    import types
+    import sys
+
+    actual_ann = getattr(ann, "base_type", ann)
+    origin = get_origin(actual_ann) or actual_ann
+    if origin is Union or (sys.version_info >= (3, 10) and origin is types.UnionType):
+        args = get_args(actual_ann)
+        has_none = any(arg is type(None) or arg is None for arg in args)
+        if has_none:
+            non_none_args = [
+                arg for arg in args if arg is not type(None) and arg is not None
+            ]
+            if non_none_args:
+                from .compiler.signature_helpers import _is_box_type
+
+                return not _is_box_type(non_none_args[0]), non_none_args[0]
+    return False, None
+
+
 def _get_flattened_ctypes_types(
     ty: Any, type_mapping: Dict[str, str] = None
 ) -> List[Any]:
@@ -212,6 +247,7 @@ def _map_ctypes_arguments(
                 "callable",
                 "box",
                 "tensor",
+                "nullable",
                 "f32x4",
                 "i32x4",
                 "f64x2",
@@ -409,9 +445,27 @@ def _handle_pointer_return(
     arg_map: List[Any],
     type_mapping: Dict[str, str] = None,
 ) -> Tuple[bool, Any, List[Any], List[Any], List[Any]]:
-    """Determine if return-by-pointer is needed and update c_args/arg_map."""
     ret_ann_str = _get_type_name(ret_ann, type_mapping).lower()
     raw_ann_str = str(ret_ann).lower()
+    is_val_opt, inner_type = _is_value_optional(ret_ann)
+    is_struct = getattr(ret_ann, "__lirien_struct__", False)
+
+    if is_val_opt or is_struct:
+        if is_val_opt:
+            if getattr(inner_type, "__lirien_struct__", False):
+                inner_cty = inner_type.__lirien_ctypes__
+            else:
+                inner_cty = _get_ctypes_type(_get_type_name(inner_type, type_mapping))
+            ResultStruct = get_optional_ctypes(inner_cty)
+        else:
+            ResultStruct = ret_ann.__lirien_ctypes__
+
+        new_c_args = [ctypes.c_void_p] + c_args
+        new_arg_map = []
+        for info in arg_map:
+            # Adjust index for SRet
+            new_arg_map.append((info[0], info[1] + 1) + info[2:])
+        return True, ResultStruct, new_c_args, new_arg_map, []
 
     # Detect if we need return-by-pointer (SRet style)
     is_tuple = (
@@ -740,7 +794,25 @@ def _prepare_runtime_args(
             for j in range(dim_count):
                 processed_args.append(ctypes.c_int64(arg.shape[j]))
         elif arg_type == "pointer":
-            if hasattr(arg, "__lirien_ptr__"):
+            is_val_opt = False
+            inner_type = None
+            if len(arg_info) > 2:
+                is_val_opt, inner_type = _is_value_optional(arg_info[2])
+
+            if is_val_opt:
+                if getattr(inner_type, "__lirien_struct__", False):
+                    inner_cty = inner_type.__lirien_ctypes__
+                else:
+                    inner_cty = _get_ctypes_type(_get_type_name(inner_type))
+                OptStruct = get_optional_ctypes(inner_cty)
+                if arg is None:
+                    c_val = OptStruct(has_value=False)
+                else:
+                    val_obj = arg._ctypes_obj if hasattr(arg, "_ctypes_obj") else arg
+                    c_val = OptStruct(has_value=True, value=val_obj)
+                processed_args.append(ctypes.c_void_p(ctypes.addressof(c_val)))
+                anchors.append(c_val)
+            elif hasattr(arg, "__lirien_ptr__"):
                 processed_args.append(ctypes.c_void_p(arg.__lirien_ptr__))
             elif hasattr(arg, "_ctypes_obj"):
                 # If it's already a pointer or c_void_p, pass it directly.
@@ -1051,8 +1123,24 @@ def _create_wrapper(
                     getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
                 )
             else:
-                # SIMD Return
-                return ret_struct
+                is_val_opt, inner_type = _is_value_optional(sig.return_annotation)
+                if is_val_opt:
+                    if ret_struct.has_value:
+                        val_obj = ret_struct.value
+                        if getattr(inner_type, "__lirien_struct__", False):
+                            struct_inst = inner_type.__new__(inner_type)
+                            struct_inst._ctypes_obj = val_obj
+                            return struct_inst
+                        return val_obj
+                    else:
+                        return None
+                elif getattr(sig.return_annotation, "__lirien_struct__", False):
+                    struct_inst = sig.return_annotation.__new__(sig.return_annotation)
+                    struct_inst._ctypes_obj = ret_struct
+                    return struct_inst
+                else:
+                    # SIMD Return
+                    return ret_struct
 
         return _wrap_return_value(res, sig.return_annotation, type_mapping, sig, args)
 

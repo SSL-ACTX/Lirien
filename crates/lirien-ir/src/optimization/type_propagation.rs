@@ -239,6 +239,23 @@ pub fn propagate_types(func: &mut Function) {
                                     new_types.insert(*d, downgraded_ty.clone());
                                     current_ty = downgraded_ty;
                                 }
+                            } else if !current_ty.is_pointer_like() && current_ty != Type::Unknown {
+                                let mut needs_downgrade = false;
+                                let mut inner_ty = None;
+                                for val in mappings.values() {
+                                    if let Type::Optional(ref incoming_inner) = func.get_type(*val) {
+                                        if **incoming_inner == current_ty {
+                                            needs_downgrade = true;
+                                            inner_ty = Some(incoming_inner.clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                                if needs_downgrade {
+                                    let downgraded_ty = Type::Optional(inner_ty.unwrap());
+                                    new_types.insert(*d, downgraded_ty.clone());
+                                    current_ty = downgraded_ty;
+                                }
                             }
 
                             for val in mappings.values() {
@@ -279,6 +296,12 @@ pub fn propagate_types(func: &mut Function) {
                                             if matches!(base_ty, Type::NullablePointer(_)) || matches!(b_ty, Type::NullablePointer(_)) {
                                                 base_ty = Type::NullablePointer(p1.clone());
                                             }
+                                        } else {
+                                            all_base_types_match = false;
+                                        }
+                                    } else if let (Type::Optional(ref p1), other) | (other, Type::Optional(ref p1)) = (&base_ty, &b_ty) {
+                                        if other == &**p1 || other == &Type::Unknown || matches!(other, Type::Optional(p2) if p1 == p2) {
+                                            base_ty = Type::Optional(p1.clone());
                                         } else {
                                             all_base_types_match = false;
                                         }
@@ -499,6 +522,14 @@ pub fn propagate_types(func: &mut Function) {
                                         curr_offset += f_ty.size(&func.struct_layouts);
                                     }
                                 }
+                            } else if let Type::Optional(inner) = obj_ty {
+                                let align = inner.align(&func.struct_layouts);
+                                let payload_offset = (1 + align - 1) & !(align - 1);
+                                if *offset == 0 {
+                                    new_types.insert(*d, Type::Bool);
+                                } else if *offset == payload_offset {
+                                    new_types.insert(*d, *inner.clone());
+                                }
                             }
                         }
                     }
@@ -522,6 +553,14 @@ pub fn propagate_types(func: &mut Function) {
                                     }
                                     curr_offset += f_ty.size(&func.struct_layouts);
                                 }
+                            }
+                        } else if let Type::Optional(inner) = obj_ty {
+                            let align = inner.align(&func.struct_layouts);
+                            let payload_offset = (1 + align - 1) & !(align - 1);
+                            if *offset == 0 && func.get_type(*val) == Type::Unknown {
+                                new_types.insert(*val, Type::Bool);
+                            } else if *offset == payload_offset && func.get_type(*val) == Type::Unknown {
+                                new_types.insert(*val, *inner.clone());
                             }
                         }
                     }

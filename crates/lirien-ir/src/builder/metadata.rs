@@ -172,7 +172,14 @@ pub fn parse_type(
                     let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
-                        other => Ok(Type::NullablePointer(Box::new(other))),
+                        Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
+                        other => {
+                            if other.is_pointer_like() {
+                                Ok(Type::NullablePointer(Box::new(other)))
+                            } else {
+                                Ok(Type::Optional(Box::new(other)))
+                            }
+                        }
                     }
                 }
                 "fnpointer" | "callable" => {
@@ -264,7 +271,14 @@ pub fn parse_type(
                     let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
-                        other => Ok(Type::NullablePointer(Box::new(other))),
+                        Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
+                        other => {
+                            if other.is_pointer_like() {
+                                Ok(Type::NullablePointer(Box::new(other)))
+                            } else {
+                                Ok(Type::Optional(Box::new(other)))
+                            }
+                        }
                     }
                 }
                 "union" => {
@@ -285,7 +299,14 @@ pub fn parse_type(
                                 if let Some(inner) = inner_ty {
                                     return match inner {
                                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
-                                        other => Ok(Type::NullablePointer(Box::new(other))),
+                                        Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
+                                        other => {
+                                            if other.is_pointer_like() {
+                                                Ok(Type::NullablePointer(Box::new(other)))
+                                            } else {
+                                                Ok(Type::Optional(Box::new(other)))
+                                            }
+                                        }
                                     };
                                 }
                             }
@@ -330,7 +351,14 @@ pub fn parse_type(
             if has_none && inner != Type::Unknown {
                 match inner {
                     Type::Pointer(p) => Ok(Type::NullablePointer(p)),
-                    other => Ok(Type::NullablePointer(Box::new(other))),
+                    Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
+                    other => {
+                        if other.is_pointer_like() {
+                            Ok(Type::NullablePointer(Box::new(other)))
+                        } else {
+                            Ok(Type::Optional(Box::new(other)))
+                        }
+                    }
                 }
             } else {
                 Err(BuilderError::General("Only T | None is supported for unions".to_string(), None))

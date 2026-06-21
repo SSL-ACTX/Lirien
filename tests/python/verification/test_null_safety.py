@@ -128,6 +128,35 @@ class TestNullSafety(unittest.TestCase):
         self.assertEqual(main_func(Box(SimpleNode(42))), 42)
         self.assertEqual(main_func(None), 0)
 
+    def test_non_pointer_optional(self):
+        @verify
+        def get_value_or_default(x: Optional[i64], default_val: i64) -> i64:
+            if x is not None:
+                return x
+            return default_val
+
+        self.assertEqual(get_value_or_default(42, 100), 42)
+        self.assertEqual(get_value_or_default(None, 100), 100)
+
+        import sys
+
+        if sys.version_info >= (3, 10):
+
+            @verify
+            def get_value_or_default_union(x: i64 | None, default_val: i64) -> i64:
+                if x is not None:
+                    return x
+                return default_val
+
+            self.assertEqual(get_value_or_default_union(42, 100), 42)
+            self.assertEqual(get_value_or_default_union(None, 100), 100)
+
+        with self.assertRaises(Exception):
+
+            @verify
+            def unsafe_value_access(x: Optional[i64]) -> i64:
+                return x
+
 
 if __name__ == "__main__":
     unittest.main()

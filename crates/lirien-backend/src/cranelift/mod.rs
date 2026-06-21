@@ -48,6 +48,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         | SsaType::Enum(_)
         | SsaType::Pointer(_)
         | SsaType::NullablePointer(_)
+        | SsaType::Optional(_)
         | SsaType::Tuple(_) => {
             types::I64 // Pointer
         }
@@ -340,7 +341,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             unpacked_values,
             buffer_lengths,
             tensor_dims: HashMap::new(),
-            is_tuple_return: matches!(ssa_func.return_type, SsaType::Tuple(_)),
+            is_tuple_return: is_ptr_return,
             sret_ptr: None,
         };
 
