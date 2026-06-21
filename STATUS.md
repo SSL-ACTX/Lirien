@@ -1,28 +1,84 @@
-# Lirien Project Status & Roadmap
+# Lirien — Project Status
 
-Lirien is an experimental formal verification and JIT compiler for a safe subset of Python.
+Lirien is an experimental research compiler. It is under active development and is not production-ready. This document tracks the current implementation status and planned work.
 
-## Roadmap & Future Directions
+---
 
-1. [ ] **Automated Loop Invariant Synthesis**: Researching Abstract Interpretation to automatically derive loop invariants.
+## Active Development
 
-## Completed Features
-- [x] **Flat Value Types (`@value`)**: Support for stack-allocated, non-boxed structs and inline nested buffer allocations to reduce heap pressure.
-- [x] **Zero-Cost ADTs**: Full support for variants with primitive, tuple, and None payloads.
-- [x] **Optimized Match Dispatch**: Cranelift `switch` based jump tables for $O(1)$ variant dispatch.
-- [x] **Z3-Backed Exhaustiveness Checking**: Formal proof that all ADT variants are handled in `match` blocks.
-- [x] **Pattern Guards (`if` clauses)**: Integration of Liquid Type refinements into `match` cases.
-- [x] **Recursive ADTs (Boxed Variants)**: Support for heap-allocated recursive data structures (e.g., Linked Lists).
-- [x] **Nested Pattern Matching**: Recursive destructuring of nested ADTs and structs.
-- [x] **Interval Analysis**: Optimized range tracking to skip redundant Z3 solver calls for simple proofs.
-- [x] **Native SIMD Support**: High-performance vector types (`f32x4`, `i32x4`, etc.) with native CPU lowering.
-- [x] **IEEE 754 Floating-Point Verification**: Formal proofs for float operations, including div-by-zero and domain checks.
-- [x] **GIL-less Parallelism**: `parallel_for` on raw memory buffers.
-- [x] **Liquid Types**: Base support for formal verification with Z3.
-- [x] **Type-Level Arithmetic (`N + 1`)**: Symbolic shape constraints and arithmetic on TypeVars for rank-polymorphic generic code.
-- [x] **Zero-Copy Array Slicing (`arr[start:end]`)**: First-class IR support for memory views, fully verified by Z3 to be safe and in-bounds.
-- [x] **Pythonic Result ADTs**: Generic `Result[T, E]` type with `Ok()` and `Err()` constructors, leveraging optimized match dispatch.
-- [x] **Cross-Function Type Inference**: Global registry for specialized function signatures, enabling zero-annotation composition.
-- [x] **Literal Types & Loop Unrolling**: Hijacking `typing.Literal` for "Const Generics" and AST-level unrolling.
-- [x] **Monomorphization (TypeVar)**: C++ style templates using Python's `TypeVar` for zero-overhead generic code.
-- [x] **Centralized Granular Tracing**: Rust & Python tracing system.
+| Area | Status |
+| :--- | :--- |
+| SSA IR & CFG builder | Stable |
+| Z3 formal verification | Stable |
+| Cranelift code generation | Stable |
+| Python DSL & FFI layer | Stable |
+| AOT IR caching | Stable |
+| Flow-sensitive type narrowing | Stable |
+| Optimization passes (DCE, constant folding, type propagation) | Stable |
+
+---
+
+## Implemented Features
+
+### Type System
+- Refinement types (`Refined[T, pred]` / `Annotated[T, pred]`) with Z3-discharged predicates across all reachable paths
+- Symbolic refinement DSL (`V`) — point-free predicate expressions without explicit `lambda`
+- Automatic postcondition inference via `Refined[T, ...]` using interval analysis
+- Monomorphization via `TypeVar` — zero-overhead generics specialized per call site
+- Const generics — integer `TypeVar` dimensions with symbolic arithmetic (`N + 1`)
+- Variadic generics via `TypeVarTuple` and `Unpack` for rank-polymorphic functions
+- `typing.Protocol` static dispatch — monomorphized for both `@struct` and `@adt` types
+- `typing.overload` multiple dispatch — per-signature machine-code specialization
+- `typing.Literal` loop unrolling — compile-time integer constants with exact Z3 induction values
+- `TypedDict` zero-cost struct layout — string key access compiled to byte offsets
+
+### Memory & Data Structures
+- `@struct` / `@value` — flat, C-ABI-compatible layouts with inlined nested structs
+- `@adt` — tagged unions with O(1) Cranelift `switch`-based variant dispatch
+- `Box[T]` — heap-allocated pointer type
+- `Optional[Box[T]]` / `Box[T] | None` — null-pointer optimization (raw 64-bit pointer, `None` = `0x0`)
+- Flow-sensitive smart casts — automatic type narrowing after `is None` / `is not None` guards
+- `Tuple` / `NamedTuple` — recursively register-flattened; SRet convention for aggregates > 16 bytes
+- `SizedArray[T, N]` — statically-sized arrays with Z3-verified index bounds
+- `Buffer[T]` / `Buffer[...]` — Python buffer protocol interop with zero-copy slicing and direct iteration
+- `Tensor[T, *Shape]` — rank-polymorphic tensors with type-level shape tracking
+- `Result[T, E]` — generic result type with `Ok` / `Err` variants
+
+### Verification
+- Arithmetic safety — division by zero, overflow
+- Memory safety — null dereference, out-of-bounds access
+- Refinement predicate checking across all CFG paths
+- Match exhaustiveness — Z3 proves all `@adt` variants are handled
+- Match guards (`case Pattern if condition:`) — guards encoded as SMT constraints
+- Inductive reasoning for recursive functions
+- Interval analysis — skips Z3 solver calls for trivially provable constraints
+
+### Code Generation
+- Cranelift JIT backend — native machine code in executable memory
+- C-ABI trampoline via PyO3 — verified functions replace the Python callable directly
+- SIMD types — `f32x4`, `f64x2`, `i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `i64x2`
+- GIL-free `parallel_for` on raw memory buffers
+
+### Developer Tooling
+- `@jit` decorator — Cranelift compilation without Z3 verification
+- `no_verification()` — thread-local context manager to disable Z3 for a block
+- `tracing()` — nestable context manager for per-subsystem structured log output
+- `configure_tracing()` — persistent global tracing configuration
+- Source-mapped diagnostics — `SourceLocation` on every IR instruction
+- AOT IR caching — `seahash`-keyed `.lir` binaries in `.lirien_cache/`, skip re-verification on hit
+- Auto-derived `__repr__` and `__eq__` on `@struct`, `@value`, and `@adt` types
+
+---
+
+## Roadmap
+
+| Item | Notes |
+| :--- | :--- |
+| Automated loop invariant synthesis | Abstract interpretation to derive invariants without user annotations |
+
+---
+
+## Known Limitations
+
+- **Closed-world assumption.** Dynamic attribute access (`getattr`, `setattr`, `__dict__`), `eval()`, and `exec()` are not supported. All parameters and return types require explicit annotations.
+- **Compiler is not formally verified.** The Rust implementation (SSA builder, Z3 encoding, Cranelift lowering) has not been proven correct. See [SECURITY.md](SECURITY.md) for the full threat model.
