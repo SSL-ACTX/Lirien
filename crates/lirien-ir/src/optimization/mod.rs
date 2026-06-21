@@ -1,5 +1,6 @@
 pub mod constant_folding;
 pub mod dce;
+pub mod fusion;
 pub mod inference;
 pub mod type_propagation;
 
@@ -14,6 +15,9 @@ pub fn optimize(func: &mut Function) {
 
     // Constant Folding
     constant_folding::fold_constants(func);
+
+    // Tensor Kernel Fusion
+    fusion::fuse_tensor_kernels(func);
 
     // Dead Code Elimination
     dce::eliminate_dead_code(func);

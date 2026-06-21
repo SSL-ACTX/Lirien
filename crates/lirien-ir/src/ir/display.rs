@@ -1,4 +1,4 @@
-use super::instruction::{Instruction, InstructionKind};
+use super::instruction::{Instruction, InstructionKind, FusedExpr};
 use super::types::{AccessPath, BlockId, PathElement, SourceLocation, Type, Value};
 use std::fmt;
 
@@ -96,6 +96,19 @@ impl fmt::Display for BlockId {
 impl fmt::Display for SourceLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "offset {}", self.offset)
+    }
+}
+
+impl fmt::Display for FusedExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FusedExpr::Input(v) => write!(f, "{}", v),
+            FusedExpr::Scalar(v) => write!(f, "{}", v),
+            FusedExpr::Add(l, r) => write!(f, "({} + {})", l, r),
+            FusedExpr::Sub(l, r) => write!(f, "({} - {})", l, r),
+            FusedExpr::Mul(l, r) => write!(f, "({} * {})", l, r),
+            FusedExpr::Div(l, r) => write!(f, "({} / {})", l, r),
+        }
     }
 }
 
@@ -520,6 +533,18 @@ impl fmt::Display for Instruction {
                 "  {} = tmin {}{}{}",
                 d, t, loc_str, constraints_str
             ),
+            InstructionKind::TensorFused(d, inputs, expr) => {
+                let inputs_str: Vec<String> = inputs.iter().map(|v| v.to_string()).collect();
+                write!(
+                    f,
+                    "  {} = tfused [{}] {} {}{}",
+                    d,
+                    inputs_str.join(", "),
+                    expr,
+                    loc_str,
+                    constraints_str
+                )
+            }
             InstructionKind::TensorDim(d, t, i) => write!(
                 f,
                 "  {} = tdim {}[{}] {}{}",

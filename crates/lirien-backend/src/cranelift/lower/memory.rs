@@ -346,6 +346,64 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             ctx.values.insert(*dest, res_ptr);
             ctx.tensor_dims.insert(*dest, target_dim_vals);
         }
+        InstructionKind::TensorFused(dest, inputs, expr) => {
+            let first_tensor_input = inputs
+                .iter()
+                .find(|&&in_val| ctx.ssa_func.get_type(in_val).is_tensor())
+                .expect("TensorFused must have at least one tensor input");
+            let dims = ctx
+                .tensor_dims
+                .get(first_tensor_input)
+                .expect("Tensor dimensions not found")
+                .clone();
+
+            let mut total_size = dims[0];
+            for &dim in dims.iter().skip(1) {
+                total_size = ctx.builder.ins().imul(total_size, dim);
+            }
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // size
+            sig.returns.push(AbiParam::new(types::I64)); // ptr
+            let callee = ctx
+                .module
+                .declare_function("malloc", Linkage::Import, &sig)
+                .unwrap();
+            let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
+            let four = ctx.builder.ins().iconst(types::I64, 4);
+            let size_in_bytes = ctx.builder.ins().imul(total_size, four);
+            let call = ctx.builder.ins().call(local_callee, &[size_in_bytes]);
+            let dest_ptr = ctx.builder.inst_results(call)[0];
+
+            let loop_header = ctx.builder.create_block();
+            let loop_body_block = ctx.builder.create_block();
+            let loop_exit = ctx.builder.create_block();
+
+            ctx.builder.append_block_param(loop_header, types::I64);
+
+            let zero = ctx.builder.ins().iconst(types::I64, 0);
+            ctx.builder.ins().jump(loop_header, &[zero]);
+
+            ctx.builder.switch_to_block(loop_header);
+            let idx = ctx.builder.block_params(loop_header)[0];
+            let cmp = ctx.builder.ins().icmp(IntCC::SignedLessThan, idx, total_size);
+            ctx.builder.ins().brif(cmp, loop_body_block, &[], loop_exit, &[]);
+
+            ctx.builder.switch_to_block(loop_body_block);
+            let res_val = eval_fused_expr(&mut ctx.builder, &ctx.values, idx, expr);
+            let offset = ctx.builder.ins().imul_imm(idx, 4);
+            let addr = ctx.builder.ins().iadd(dest_ptr, offset);
+            ctx.builder.ins().store(MemFlags::new(), res_val, addr, 0);
+
+            let one = ctx.builder.ins().iconst(types::I64, 1);
+            let next_idx = ctx.builder.ins().iadd(idx, one);
+            ctx.builder.ins().jump(loop_header, &[next_idx]);
+
+            ctx.builder.switch_to_block(loop_exit);
+
+            ctx.values.insert(*dest, dest_ptr);
+            ctx.tensor_dims.insert(*dest, dims);
+        }
         InstructionKind::TensorAdd(dest, lhs, rhs) => lower_tensor_arith(ctx, dest, lhs, rhs, 0)?,
         InstructionKind::TensorSub(dest, lhs, rhs) => lower_tensor_arith(ctx, dest, lhs, rhs, 1)?,
         InstructionKind::TensorMul(dest, lhs, rhs) => lower_tensor_arith(ctx, dest, lhs, rhs, 2)?,
@@ -669,3 +727,43 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
     }
     Ok(())
 }
+
+fn eval_fused_expr(
+    builder: &mut cranelift::frontend::FunctionBuilder,
+    values: &std::collections::HashMap<lirien_ir::ir::Value, Value>,
+    idx: Value,
+    expr: &lirien_ir::ir::FusedExpr,
+) -> Value {
+    match expr {
+        lirien_ir::ir::FusedExpr::Input(val) => {
+            let t_ptr = values.get(val).copied().unwrap();
+            let offset = builder.ins().imul_imm(idx, 4);
+            let addr = builder.ins().iadd(t_ptr, offset);
+            builder.ins().load(types::F32, MemFlags::new(), addr, 0)
+        }
+        lirien_ir::ir::FusedExpr::Scalar(val) => {
+            values.get(val).copied().unwrap()
+        }
+        lirien_ir::ir::FusedExpr::Add(l, r) => {
+            let lv = eval_fused_expr(builder, values, idx, l);
+            let rv = eval_fused_expr(builder, values, idx, r);
+            builder.ins().fadd(lv, rv)
+        }
+        lirien_ir::ir::FusedExpr::Sub(l, r) => {
+            let lv = eval_fused_expr(builder, values, idx, l);
+            let rv = eval_fused_expr(builder, values, idx, r);
+            builder.ins().fsub(lv, rv)
+        }
+        lirien_ir::ir::FusedExpr::Mul(l, r) => {
+            let lv = eval_fused_expr(builder, values, idx, l);
+            let rv = eval_fused_expr(builder, values, idx, r);
+            builder.ins().fmul(lv, rv)
+        }
+        lirien_ir::ir::FusedExpr::Div(l, r) => {
+            let lv = eval_fused_expr(builder, values, idx, l);
+            let rv = eval_fused_expr(builder, values, idx, r);
+            builder.ins().fdiv(lv, rv)
+        }
+    }
+}
+

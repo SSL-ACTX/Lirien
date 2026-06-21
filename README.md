@@ -336,6 +336,27 @@ t3 = Tensor.alloc((2, 3, 4), f32)
 get_rank(t3)  # Returns 3.
 ```
 
+#### Tensor Arithmetic and Kernel Fusion
+Element-wise arithmetic operators (`+`, `-`, `*`, `/`) are first-class on `Tensor` types and lower to native kernels. Scalar operands are automatically broadcast across all elements.
+
+Compound expressions are **kernel-fused** at the IR level: an expression like `a * b + d` is not split into two separate passes over memory. The optimizer detects the chain, emits a single fused kernel instruction (`tmul` → `tadd` folded), and Cranelift lowers it to one native call — no intermediate tensor allocation.
+
+```python
+from lirien import verify, Tensor, f32
+
+@verify
+def scale(a: Tensor[f32, "M", "N"], s: f32) -> Tensor[f32, "M", "N"]:
+    return a * s  # scalar broadcast — one kernel
+
+@verify
+def fma(
+    a: Tensor[f32, "M", "N"],
+    b: Tensor[f32, "M", "N"],
+    d: Tensor[f32, "M", "N"],
+) -> Tensor[f32, "M", "N"]:
+    return a * b + d  # fused — single kernel, no intermediate allocation
+```
+
 #### Algebraic Data Types and Result
 `@adt` defines tagged unions with named variants. Dispatch is compiled to a Cranelift `switch`-based jump table for O(1) variant selection. Z3 verifies that all `match` blocks are exhaustive and that variant fields are accessed only when the correct tag is active. Match arms support guards (`if <condition>`) which are also fully Z3-verified.
 

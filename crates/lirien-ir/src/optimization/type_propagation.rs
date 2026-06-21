@@ -404,6 +404,14 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, func.get_type(*lhs));
                         }
                     }
+                    InstructionKind::TensorFused(d, inputs, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            if let Some(first_input) = inputs.first() {
+                                new_types.insert(*d, func.get_type(*first_input));
+                            }
+                        }
+                    }
                     InstructionKind::ArrayLoad(d, arr, _) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {

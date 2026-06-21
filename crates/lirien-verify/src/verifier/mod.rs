@@ -244,7 +244,8 @@ fn translate_instructions<
                 | InstructionKind::Avg(..)
                 | InstructionKind::SIMDSplat(..)
                 | InstructionKind::SIMDExtractLane(..)
-                | InstructionKind::SIMDInsertLane(..) => {
+                | InstructionKind::SIMDInsertLane(..)
+                | InstructionKind::TensorFused(..) => {
                     arithmetic::translate(t_ctx, inst, &path_cond)?;
                 }
                 InstructionKind::Jump(_)

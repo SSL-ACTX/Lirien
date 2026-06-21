@@ -77,6 +77,36 @@ class TestTensorArithmetic(unittest.TestCase):
         self.assertEqual(B[1, 0], 6.0)
         self.assertEqual(B[1, 1], 8.0)
 
+    def test_tensor_fusion(self):
+        @verify
+        def tensor_fuse(
+            a: Tensor[f32, "M", "N"], b: Tensor[f32, "M", "N"], d: Tensor[f32, "M", "N"]
+        ) -> Tensor[f32, "M", "N"]:
+            return a * b + d
+
+        A = Tensor.alloc((2, 2), f32)
+        B = Tensor.alloc((2, 2), f32)
+        D = Tensor.alloc((2, 2), f32)
+
+        A[0, 0] = 1.0
+        A[0, 1] = 2.0
+        A[1, 0] = 3.0
+        A[1, 1] = 4.0
+        B[0, 0] = 2.0
+        B[0, 1] = 3.0
+        B[1, 0] = 4.0
+        B[1, 1] = 5.0
+        D[0, 0] = 5.0
+        D[0, 1] = 6.0
+        D[1, 0] = 7.0
+        D[1, 1] = 8.0
+
+        C = tensor_fuse(A, B, D)
+        self.assertEqual(C[0, 0], 7.0)
+        self.assertEqual(C[0, 1], 12.0)
+        self.assertEqual(C[1, 0], 19.0)
+        self.assertEqual(C[1, 1], 28.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -273,6 +273,62 @@ pub fn translate<
                 }
             }
         }
+        InstructionKind::TensorFused(dest, inputs, _) => {
+            let tensor_inputs: Vec<&lirien_ir::ir::Value> = inputs.iter().filter(|in_val| {
+                ctx.func.get_type(**in_val).is_tensor()
+            }).collect();
+
+            if let Some(&first_tensor) = tensor_inputs.first() {
+                if let Some(first_dims) = ctx.z3_tensor_dims.get(first_tensor).cloned() {
+                    for &other_tensor in tensor_inputs.iter().skip(1) {
+                        if let Some(other_dims) = ctx.z3_tensor_dims.get(other_tensor).cloned() {
+                            if first_dims.len() != other_dims.len() {
+                                return Err(format!(
+                                    "Tensor rank mismatch in fused operation at v{}",
+                                    dest.0
+                                ));
+                            }
+
+                            for i in 0..first_dims.len() {
+                                ctx.backend.push();
+                                ctx.backend.assert(path_cond);
+                                let eq = ctx.backend.int_eq(&first_dims[i], &other_dims[i]);
+                                let not_eq = ctx.backend.bool_not(&eq);
+                                ctx.backend.assert(&not_eq);
+
+                                if ctx.backend.check()? {
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
+                                    return Err(format!(
+                                        "Tensor shape mismatch in fused operation (dimension {} mismatch){}",
+                                        i, loc_info
+                                    ));
+                                }
+                                ctx.backend.pop(1);
+                            }
+                        }
+                    }
+
+                    ctx.z3_tensor_dims.insert(*dest, first_dims.clone());
+                }
+            }
+
+            let dest_ty = ctx.func.get_type(*dest);
+            let (inner_ty, _) = match dest_ty {
+                lirien_ir::ir::Type::Tensor(inner, dims) => (inner, dims),
+                _ => (Box::new(lirien_ir::ir::Type::F32), Vec::new()),
+            };
+
+            let bit_width = inner_ty.int_bit_width().unwrap_or(64);
+            let res_array = ctx.backend.array_const(
+                &format!("{}_v{}_tensor_fused_res_{}", ctx.func.name, dest.0, ctx.uid),
+                inner_ty.is_float(),
+                bit_width,
+            );
+            ctx.z3_arrays.insert(*dest, res_array);
+        }
         InstructionKind::TensorAdd(dest, lhs, rhs)
         | InstructionKind::TensorSub(dest, lhs, rhs)
         | InstructionKind::TensorMul(dest, lhs, rhs)

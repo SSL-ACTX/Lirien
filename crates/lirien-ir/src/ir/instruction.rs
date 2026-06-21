@@ -2,6 +2,16 @@ use super::types::{BlockId, SourceLocation, Type, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FusedExpr {
+    Input(Value),
+    Scalar(Value),
+    Add(Box<FusedExpr>, Box<FusedExpr>),
+    Sub(Box<FusedExpr>, Box<FusedExpr>),
+    Mul(Box<FusedExpr>, Box<FusedExpr>),
+    Div(Box<FusedExpr>, Box<FusedExpr>),
+}
+
 #[macro_export]
 macro_rules! lirien_instructions {
     ($mac:ident) => {
@@ -768,6 +778,13 @@ macro_rules! lirien_instructions {
                 side_effects: true,
                 category: Parallel
             },
+            TensorFused(dest: Value, inputs: Vec<Value>, expr: FusedExpr) {
+                display: "{} = tfused (...) ",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Arithmetic
+            },
             Nop() {
                 display: "nop",
                 def: None,
@@ -859,26 +876,12 @@ impl Instruction {
                             InstructionKind::TensorStore(_, _, indices, _) => {
                                 for v in indices { operands.push(*v); }
                             }
-                            InstructionKind::TensorDim(_, tensor, _) => {
-                                operands.push(*tensor);
+                            InstructionKind::TensorFused(_, inputs, _) => {
+                                for v in inputs { operands.push(*v); }
                             }
                             InstructionKind::TensorBroadcast(_, src, dims) => {
                                 operands.push(*src);
                                 for v in dims { operands.push(*v); }
-                            }
-                            InstructionKind::TensorAdd(_, l, r)
-                            | InstructionKind::TensorSub(_, l, r)
-                            | InstructionKind::TensorMul(_, l, r)
-                            | InstructionKind::TensorDiv(_, l, r) => {
-                                operands.push(*l);
-                                operands.push(*r);
-                            }
-                            InstructionKind::TensorScalarAdd(_, t, s)
-                            | InstructionKind::TensorScalarSub(_, t, s)
-                            | InstructionKind::TensorScalarMul(_, t, s)
-                            | InstructionKind::TensorScalarDiv(_, t, s) => {
-                                operands.push(*t);
-                                operands.push(*s);
                             }
                             InstructionKind::StructCreate(_, _, args) => {
                                 for v in args { operands.push(*v); }
