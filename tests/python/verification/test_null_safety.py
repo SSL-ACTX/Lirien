@@ -110,6 +110,24 @@ class TestNullSafety(unittest.TestCase):
             self.assertEqual(tail.value.as_Cons()[0], 20)
             self.assertIsNone(tail.value.as_Cons()[1])
 
+    def test_flow_sensitive_smart_cast(self):
+        @struct
+        class SimpleNode:
+            val: i64
+
+        @verify
+        def process_simple(n: Box[SimpleNode]) -> i64:
+            return n.val
+
+        @verify
+        def main_func(n: Optional[Box[SimpleNode]]) -> i64:
+            if n is not None:
+                return process_simple(n)
+            return 0
+
+        self.assertEqual(main_func(Box(SimpleNode(42))), 42)
+        self.assertEqual(main_func(None), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

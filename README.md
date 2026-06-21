@@ -25,6 +25,8 @@ The result is a compiler that can statically guarantee the absence of certain cl
 ### Feature Overview
 
 - **Refinement Types:** Logical predicates attached to types and verified by Z3 across all reachable control-flow paths.
+- **Symbolic Refinement DSL (`V`):** Point-free predicate expressions written with the `V` placeholder instead of raw lambdas — composable with standard arithmetic and logical operators.
+- **Flow-Sensitive Smart Casts:** After a `is None` guard, the compiler automatically narrows an `Optional[Box[T]]` to `Box[T]` in the taken branch, eliminating redundant null checks and enabling precise Z3 reasoning on the narrowed type.
 - **Formal Memory Safety:** Z3 proves non-nullity before every pointer dereference and validates all buffer accesses against their declared bounds.
 - **Native Code Generation:** Functions decorated with `@verify` are compiled to machine code via Cranelift and called directly through a C-ABI trampoline, bypassing the CPython interpreter and GIL.
 - **Flat Struct Layout:** `@struct` and `@value` types are compiled to C-compatible, flat memory layouts. Nested structs are inlined by byte offset, not represented as pointer chains.
@@ -55,11 +57,15 @@ The result is a compiler that can statically guarantee the absence of certain cl
 #### Liquid Types: Statically Enforced Invariants
 A refinement type is a base type paired with a logical predicate. Z3 checks that every assignment and function call satisfies the predicate along all reachable paths. Lirien can also infer postconditions automatically using `...`, deriving the tightest interval bounds via static analysis.
 
+Both `Refined[T, pred]` and the standard PEP 593 `Annotated[T, pred]` syntax are accepted interchangeably.
+
 ```python
+from typing import Annotated
 from lirien import verify, i64, Refined
 
-# Positive constrains i64 to values strictly greater than 0.
+# These two are equivalent:
 Positive = Refined[i64, lambda x: x > 0]
+Positive = Annotated[i64, lambda x: x > 0]
 
 @verify
 def divide_verified(n: i64, d: Positive) -> i64:
@@ -73,6 +79,23 @@ def clamp(x: i64) -> Refined[i64, ...]:
     if x > 10: return 10
     if x < 1: return 1
     return x
+```
+
+#### Symbolic Refinement DSL (`V`)
+The `V` object is a composable symbolic placeholder for the refined value. It supports standard comparison and arithmetic operators, producing predicate expressions without requiring an explicit `lambda`. Complex predicates can be built by chaining `&` and `|`.
+
+```python
+from lirien import verify, i64, Refined, V
+
+# Equivalent to: Refined[i64, lambda x: x > 0]
+Positive = Refined[i64, V > 0]
+
+# Compound predicate — value must be in [1, 100] and odd.
+BoundedOdd = Refined[i64, (V >= 1) & (V <= 100) & (V % 2 != 0)]
+
+@verify
+def next_odd(n: BoundedOdd) -> Refined[i64, V > 0]:
+    return n + 2
 ```
 
 #### Inductive Proofs: Recursive Functions
@@ -121,11 +144,11 @@ def parallel_scale(vec: Buffer[f64], factor: f64) -> None:
 ```
 
 #### Static Dispatch via `typing.Protocol`
-`typing.Protocol` is used to express structural interfaces. Functions accepting a Protocol parameter are monomorphized at the call site: a separate, specialized machine-code body is emitted for each concrete struct type, eliminating dynamic dispatch and vtable lookups.
+`typing.Protocol` is used to express structural interfaces. Both `@struct` and `@adt` types can implement protocols. Functions accepting a Protocol parameter are monomorphized at the call site: a separate, specialized machine-code body is emitted for each concrete type, eliminating dynamic dispatch and vtable lookups.
 
 ```python
 from typing import Protocol
-from lirien import verify, f32, struct
+from lirien import verify, f32, struct, adt
 
 class Renderable(Protocol):
     def render(self) -> f32: ...
@@ -136,14 +159,25 @@ class Circle:
     def render(self) -> f32:
         return self.radius * 3.14
 
+@adt
+class Shape:
+    Rect: f32
+    Dot: f32
+    def render(self) -> f32:
+        match self:
+            case Shape.Rect(w): return w * w
+            case Shape.Dot(_):  return 0.0
+
 @verify
 def draw(obj: Renderable) -> f32:
-    # Compiled as a direct call to Circle_render.
+    # Compiled as a direct call to Circle_render or Shape_render.
     return obj.render()
 ```
 
-#### Null-Pointer Optimization
+#### Null-Pointer Optimization & Flow-Sensitive Smart Casts
 `Optional[Box[T]]` (equivalently `Box[T] | None`) is represented as a raw 64-bit pointer where `None` is the address `0x0`. No wrapper object is allocated. Z3 proves non-nullity before every dereference; accessing `.val` or any field on a potentially-null pointer without a prior `None` check is a compile-time error.
+
+The compiler also performs **flow-sensitive smart casts**: after an `is None` (or `is not None`) guard, the type of the variable is automatically narrowed in the respective branch. The SSA builder inserts a cast instruction, and Z3 reasons about the narrowed type with exact precision — no redundant solver queries.
 
 ```python
 @struct
@@ -154,7 +188,15 @@ class Node:
 @verify
 def sum_list(n: Optional[Box[Node]]) -> i64:
     if n is None: return 0
+    # After the guard, `n` is narrowed to Box[Node].
+    # Z3 knows n != 0x0 here; .val is safe without an additional check.
     return n.val + sum_list(n.next)
+
+# Python 3.10+ union syntax is also supported:
+@verify
+def increment(n: Box[Node] | None) -> i64:
+    if n is None: return -1
+    return n.val + 1
 ```
 
 #### Monomorphization and Const Generics
@@ -233,6 +275,8 @@ def process_pixels(a: i8x16, b: i8x16) -> i8x16:
 #### C-Compatible Struct Layout
 `@struct` types are compiled to flat, C-ABI-compatible memory layouts. Nested structs are inlined by absolute byte offset rather than represented as pointers. Refinement predicates can reference nested fields.
 
+`@struct` and `@value` classes automatically receive field-by-field `__repr__` and `__eq__` implementations at class-creation time, so they work naturally in Python test code and REPL sessions without any extra boilerplate.
+
 ```python
 from lirien import struct, f64, i32, Refined
 
@@ -247,6 +291,11 @@ class Trace:
     id: i32
 
 SafeTrace = Refined[Trace, lambda t: t.p.x > 0]
+
+# Auto-derived behaviour:
+p = Point(1.0, 2.0)
+print(p)          # Point(x=1.0, y=2.0)
+assert p == Point(1.0, 2.0)  # True
 ```
 
 #### Stack-Allocated Value Types
@@ -288,10 +337,10 @@ get_rank(t3)  # Returns 3.
 ```
 
 #### Algebraic Data Types and Result
-`@adt` defines tagged unions with named variants. Dispatch is compiled to a Cranelift `switch`-based jump table for O(1) variant selection. Z3 verifies that all `match` blocks are exhaustive and that variant fields are accessed only when the correct tag is active.
+`@adt` defines tagged unions with named variants. Dispatch is compiled to a Cranelift `switch`-based jump table for O(1) variant selection. Z3 verifies that all `match` blocks are exhaustive and that variant fields are accessed only when the correct tag is active. Match arms support guards (`if <condition>`) which are also fully Z3-verified.
 
 ```python
-from lirien import verify, i64, adt, Box, Result, Ok, Err
+from lirien import verify, i64, f64, adt, Box, Result, Ok, Err
 
 @adt
 class Node:
@@ -304,6 +353,21 @@ def sum_list(n: Node) -> i64:
         case Node.Cons(val, next):
             return val + sum_list(next)
         case Node.Nil:
+            return 0
+
+@adt
+class Shape:
+    Circle: f64
+    Rectangle: (i64, i64)
+
+@verify
+def classify(s: Shape) -> i64:
+    match s:
+        case Shape.Circle(r) if r > 10.0:  # guard — Z3 verified
+            return 1  # large
+        case Shape.Circle(_):
+            return 2  # small
+        case _:
             return 0
 
 @verify
@@ -332,6 +396,26 @@ def scale_nested(data: Tuple[Point, i64]) -> Point:
 # At the ABI level: three i64 inputs (x, y, factor), two i64 outputs (new_x, new_y).
 ```
 
+#### `TypedDict`: Zero-Cost Struct-Like Dicts
+`TypedDict` types are compiled to the same flat, C-ABI-compatible memory layout as `@struct`. String key accesses (`cfg["timeout"]`) are resolved to absolute byte offsets at compile time and completely eliminated from the emitted code — no hashing, no dictionary lookup at runtime.
+
+```python
+from typing import TypedDict
+from lirien import verify, i64
+
+class Config(TypedDict):
+    id: i64
+    timeout: i64
+    enabled: bool
+
+@verify
+def configure(cfg: Config) -> i64:
+    # Compiles to: load.i64 (base_ptr + 8) — the string key is gone.
+    if cfg["enabled"]:
+        return cfg["timeout"]
+    return 0
+```
+
 #### Buffer Interop and Zero-Copy Slicing
 `Buffer[T]` wraps any object implementing the Python buffer protocol (including NumPy arrays). Loop indices over a `Buffer` are bounded by its declared length and verified by Z3. Slicing produces a zero-copy memory view; Z3 proves the slice is within the original buffer's bounds.
 
@@ -352,11 +436,76 @@ def sum_slice(data: Buffer[i64], start: i64) -> i64:
     for i in range(len(view)):
         total += view[i]
     return total
+
+@verify
+def sum_direct(buf: Buffer[i64]) -> i64:
+    # Direct iteration — no explicit index needed.
+    total = 0
+    for x in buf:
+        total = total + x
+    return total
+```
+
+`Buffer[...]` (ellipsis element type) defers the element type to the runtime format of the passed memoryview. Lirien infers and specializes the function body for the concrete type on the first call.
+
+```python
+import array
+from lirien import verify, Buffer, f32
+
+@verify
+def buf_sum(buf: Buffer[...]) -> f32:
+    s = 0.0
+    for i in range(len(buf)):
+        s += buf[i]
+    return s
+
+data = array.array("f", [1.0, 2.0, 3.0, 4.0])
+buf_sum(memoryview(data))  # element type inferred as f32 at call time
 ```
 
 ---
 
 ### Developer Tooling
+
+#### `@jit`: Skip Verification, Keep Speed
+`@jit` compiles a function directly to native machine code via Cranelift, bypassing Z3 entirely. Use it for hot paths whose correctness is guaranteed by construction or by upstream `@verify` callers.
+
+```python
+from lirien import jit, i64
+
+@jit
+def fast_sum(a: i64, b: i64) -> i64:
+    return a + b
+```
+
+#### `no_verification`: Temporarily Disable Z3 for a Block
+`no_verification()` is a thread-local context manager that disables Z3 verification for every `@verify`-decorated function compiled while the block is active. Useful in test fixtures or benchmarking scaffolding where verification latency is undesirable.
+
+```python
+from lirien import verify, no_verification, i64
+
+with no_verification():
+    # These functions are compiled without Z3 — Cranelift only.
+    @verify
+    def bench_target(x: i64) -> i64:
+        return x * x
+```
+
+#### `tracing()`: Scoped Per-Subsystem Tracing
+`tracing()` is a nestable context manager that configures structured log output for specific compiler subsystems for the duration of the block, then restores the prior configuration on exit. It stacks correctly with nested `with tracing(...)` blocks.
+
+```python
+from lirien import verify, tracing, LIVENESS, VERIFY, SSA, Z3
+
+with tracing({VERIFY: "debug", Z3: "trace", SSA: "info"}):
+    @verify
+    def checked_fn(x: i64) -> i64:
+        return x + 1
+
+# configure_tracing() is still available for persistent, global configuration.
+from lirien import configure_tracing, BACKEND
+configure_tracing({BACKEND: "warn"})
+```
 
 #### Source-Level Diagnostics
 Verification failures are reported with source file, line, and column information. The IR carries `SourceLocation` metadata that maps every instruction back to the original Python source.
@@ -367,19 +516,6 @@ Verification failures are reported with source file, line, and column informatio
    |
  3 |    return n // d
    |                ^--- Logic error detected here
-```
-
-#### Granular Tracing
-Individual compiler subsystems can be configured to emit structured tracing output at selectable log levels, without modifying source code.
-
-```python
-from lirien import configure_tracing, LIVENESS, VERIFY, SSA
-
-configure_tracing({
-    LIVENESS: "debug",
-    SSA: "debug",
-    VERIFY: "info"
-})
 ```
 
 ---
@@ -464,8 +600,12 @@ graph TD
 | **JIT backend** | Cranelift 0.100+ |
 | **IR serialization** | `bincode` (format), `seahash` (cache key) |
 | **Python interop** | PyO3, `ctypes`, NumPy buffer protocol |
-| **Optimization passes** | DCE, constant folding, type propagation, loop unrolling |
-| **Diagnostics** | Source-mapped error locations, per-subsystem tracing |
+| **Optimization passes** | DCE, constant folding, type propagation, loop unrolling, flow-sensitive type narrowing |
+| **Diagnostics** | Source-mapped error locations, per-subsystem `tracing()` context manager |
+| **Decorator variants** | `@verify` (Z3 + JIT), `@jit` (JIT only, no Z3) |
+| **Refinement DSL** | `V` symbolic placeholder; `Refined[T, V > 0]` point-free predicate syntax |
+| **Optional safety** | `Box[T] \| None` / `Optional[Box[T]]` with flow-sensitive smart casts |
+| **Auto-derived methods** | `__repr__` and `__eq__` on `@struct`, `@value`, and `@adt` types |
 
 ---
 

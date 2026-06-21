@@ -134,6 +134,7 @@ impl CFGBuilder {
                 Ok(())
             }
             ast::Stmt::If(s) => {
+                let none_comp = self.get_none_comparison(&s.test);
                 let cond = self.visit_expr(*s.test)?;
                 let cond = self.auto_load(cond);
 
@@ -167,6 +168,17 @@ impl CFGBuilder {
                 self.start_block(true_block);
                 push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} true)", cond));
+
+                if let Some((ref var_name, true)) = none_comp {
+                    let old_val = self.read_variable(var_name.clone(), prev_block)?;
+                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, Type::Pointer(inner.clone()));
+                        push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), true_block, new_val);
+                    }
+                }
+
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
@@ -178,6 +190,17 @@ impl CFGBuilder {
                 self.start_block(false_block);
                 push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} false)", cond));
+
+                if let Some((ref var_name, false)) = none_comp {
+                    let old_val = self.read_variable(var_name.clone(), prev_block)?;
+                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, Type::Pointer(inner.clone()));
+                        push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), false_block, new_val);
+                    }
+                }
+
                 for stmt in s.orelse {
                     self.visit_stmt(stmt)?;
                 }
@@ -191,6 +214,7 @@ impl CFGBuilder {
                 Ok(())
             }
             ast::Stmt::While(s) => {
+                let none_comp = self.get_none_comparison(&s.test);
                 let header_block = self.create_block();
                 let body_block = self.create_block();
                 let exit_block = self.create_block();
@@ -211,6 +235,17 @@ impl CFGBuilder {
                 self.start_block(body_block);
                 push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} true)", cond));
+
+                if let Some((ref var_name, true)) = none_comp {
+                    let old_val = self.read_variable(var_name.clone(), header_block)?;
+                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, Type::Pointer(inner.clone()));
+                        push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), body_block, new_val);
+                    }
+                }
+
                 for stmt in s.body {
                     self.visit_stmt(stmt)?;
                 }
@@ -224,6 +259,17 @@ impl CFGBuilder {
                 self.start_block(exit_block);
                 push_inst!(self, InstructionKind::Nop())
                     .add_constraint(format!("(= {} false)", cond));
+
+                if let Some((ref var_name, false)) = none_comp {
+                    let old_val = self.read_variable(var_name.clone(), header_block)?;
+                    if let Type::NullablePointer(inner) = self.func.get_type(old_val) {
+                        let new_val = self.func.next_value();
+                        self.func.set_type(new_val, Type::Pointer(inner.clone()));
+                        push_inst!(self, InstructionKind::Assign(new_val, old_val));
+                        self.write_variable(var_name.clone(), exit_block, new_val);
+                    }
+                }
+
                 self.seal_block(exit_block)?;
                 Ok(())
             }
@@ -1104,5 +1150,30 @@ impl CFGBuilder {
             }
             _ => Err(builder_error!(UnsupportedStatement, "Unsupported nested pattern type: {:?}", pattern)),
         }
+    }
+
+    fn get_none_comparison(&self, test: &ast::Expr) -> Option<(String, bool)> {
+        if let ast::Expr::Compare(ref s) = test {
+            if s.ops.len() == 1 && s.comparators.len() == 1 {
+                let op = s.ops[0];
+                let is_none_comp = if let ast::Expr::Constant(ref c) = s.comparators[0] {
+                    matches!(c.value, ast::Constant::None)
+                } else {
+                    false
+                };
+
+                if is_none_comp {
+                    if let ast::Expr::Name(ref n) = *s.left {
+                        let var_name = n.id.to_string();
+                        match op {
+                            ast::CmpOp::Is | ast::CmpOp::Eq => return Some((var_name, false)),
+                            ast::CmpOp::IsNot | ast::CmpOp::NotEq => return Some((var_name, true)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }

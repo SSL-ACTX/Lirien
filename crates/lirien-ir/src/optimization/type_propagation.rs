@@ -222,8 +222,25 @@ pub fn propagate_types(func: &mut Function) {
                         }
                     }
                     InstructionKind::Phi(d, mappings) => {
-                        let current_ty = func.get_type(*d);
+                        let mut current_ty = func.get_type(*d);
                         if current_ty != Type::Unknown {
+                            if let Type::Pointer(ref p_inner) = current_ty {
+                                let mut needs_downgrade = false;
+                                for val in mappings.values() {
+                                    if let Type::NullablePointer(ref incoming_inner) = func.get_type(*val) {
+                                        if incoming_inner == p_inner {
+                                            needs_downgrade = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if needs_downgrade {
+                                    let downgraded_ty = Type::NullablePointer(p_inner.clone());
+                                    new_types.insert(*d, downgraded_ty.clone());
+                                    current_ty = downgraded_ty;
+                                }
+                            }
+
                             for val in mappings.values() {
                                 let v_ty = func.get_type(*val);
                                 if v_ty == Type::Unknown {
@@ -256,6 +273,14 @@ pub fn propagate_types(func: &mut Function) {
                                             base_ty = Type::F32;
                                         } else {
                                             base_ty = Type::F64;
+                                        }
+                                    } else if let (Type::Pointer(ref p1) | Type::NullablePointer(ref p1), Type::Pointer(ref p2) | Type::NullablePointer(ref p2)) = (&base_ty, &b_ty) {
+                                        if p1 == p2 {
+                                            if matches!(base_ty, Type::NullablePointer(_)) || matches!(b_ty, Type::NullablePointer(_)) {
+                                                base_ty = Type::NullablePointer(p1.clone());
+                                            }
+                                        } else {
+                                            all_base_types_match = false;
                                         }
                                     } else {
                                         all_base_types_match = false;
