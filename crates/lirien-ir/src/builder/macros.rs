@@ -1,3 +1,14 @@
+//! Macros for JIT builder code generation and validation.
+//!
+//! This module provides utility macros to simplify instruction creation (`push_inst`),
+//! type checking (`ensure_type`), and error formatting (`builder_error`).
+
+/// Appends a new instruction to the builder and automatically attaches the current source location.
+///
+/// # Examples
+/// ```ignore
+/// push_inst!(builder, InstructionKind::Add(dest, lhs, rhs));
+/// ```
 #[macro_export]
 macro_rules! push_inst {
     ($builder:expr, $kind:expr) => {{
@@ -17,6 +28,7 @@ macro_rules! push_inst {
     }};
 }
 
+/// Asserts that an SSA value matches an expected type, returning a `TypeMismatch` error if it doesn't.
 #[macro_export]
 macro_rules! ensure_type {
     ($builder:expr, $val:expr, $expected:expr, $loc:expr) => {{
@@ -31,6 +43,9 @@ macro_rules! ensure_type {
     }};
 }
 
+/// Helper macro to construct a [`BuilderError`](crate::builder::error::BuilderError).
+///
+/// Can construct specific error variants or generic/internal error messages with or without locations.
 #[macro_export]
 macro_rules! builder_error {
     (TypeMismatch, $expected:expr, $found:expr) => {
@@ -54,3 +69,4 @@ macro_rules! builder_error {
         $crate::builder::error::BuilderError::$variant(format!($($arg)*), None)
     };
 }
+

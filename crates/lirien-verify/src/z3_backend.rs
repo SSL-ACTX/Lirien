@@ -1,17 +1,27 @@
+//! Z3-based implementation of the solver backend.
+//!
+//! Maps abstract [`SolverBackend`] calls directly to the `z3-rs` API.
+
 use crate::backend::SolverBackend;
 use z3::ast::{Array, Ast, Bool, Float, Int, BV};
 use z3::{Context, Params, SatResult, Solver};
 use z3_sys;
 
+/// Solver backend implementing [`SolverBackend`] using Z3.
+///
+/// Wraps Z3's AST context and solver instance. Note that `z3-rs` v0.20 is configured
+/// to utilize thread-local contexts, so explicit context parameter passing is avoided.
 pub struct Z3Backend<'ctx> {
     ctx: &'ctx Context,
     solver: &'ctx Solver,
 }
 
 impl<'ctx> Z3Backend<'ctx> {
+    /// Creates a new `Z3Backend` wrapping a given Z3 context and solver instance.
     pub fn new(ctx: &'ctx Context, solver: &'ctx Solver) -> Self {
         Self { ctx, solver }
     }
+
 
     fn unify_floats(&mut self, a: &Float, b: &Float) -> (Float, Float) {
         let sort_a = a.get_sort();

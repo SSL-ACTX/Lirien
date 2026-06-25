@@ -1,13 +1,25 @@
+//! Free variable capture analysis.
+//!
+//! This module analyzes Python AST elements (like inner functions or lambdas) to detect
+//! references to free variables defined in outer scopes (closures).
+
 use rustpython_ast as ast;
 use rustpython_ast::Visitor;
 use std::collections::HashSet;
 
+/// AST visitor to detect variable captures (non-local free variables).
+///
+/// Traverses expressions and statements to identify variable reads
+/// that are not locally defined or passed as arguments.
 pub struct CaptureVisitor {
+    /// Collected names of captured variables.
     pub captures: HashSet<String>,
+    /// Tracked variables that have been defined or bound within the current local scope.
     pub defined: HashSet<String>,
 }
 
 impl CaptureVisitor {
+    /// Creates a new `CaptureVisitor` initialized with function parameters as defined names.
     pub fn new(params: Vec<String>) -> Self {
         let mut defined = HashSet::new();
         for p in params {
@@ -19,6 +31,7 @@ impl CaptureVisitor {
         }
     }
 }
+
 
 impl Visitor for CaptureVisitor {
     fn visit_expr(&mut self, expr: ast::Expr) {

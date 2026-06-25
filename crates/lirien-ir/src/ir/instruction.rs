@@ -1,16 +1,33 @@
+//! Definition of Lirien JIT IR instructions.
+//!
+//! This module defines the complete instruction set of the Lirien Intermediate
+//! Representation, including integer/float arithmetic, bitwise operators, memory access,
+//! control flow, closures, SIMD, tensors, and verification constraints.
+//!
+//! Instructions are defined via a declarative macro [`crate::lirien_instructions!`] to keep
+//! code generation, serialization, visitation, def-use analysis, and display formatting unified.
+
 use super::types::{BlockId, SourceLocation, Type, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Represents a fused algebraic expression, typically used inside tensor fusion operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FusedExpr {
+    /// Fused tensor input variable.
     Input(Value),
+    /// Fused scalar constant or variable.
     Scalar(Value),
+    /// Fused addition.
     Add(Box<FusedExpr>, Box<FusedExpr>),
+    /// Fused subtraction.
     Sub(Box<FusedExpr>, Box<FusedExpr>),
+    /// Fused multiplication.
     Mul(Box<FusedExpr>, Box<FusedExpr>),
+    /// Fused division.
     Div(Box<FusedExpr>, Box<FusedExpr>),
 }
+
 
 #[macro_export]
 macro_rules! lirien_instructions {
@@ -798,23 +815,38 @@ macro_rules! lirien_instructions {
 
 macro_rules! generate_instruction_kind {
     ($($name:ident($($arg_name:ident : $arg_ty:ty),*) { $($rest:tt)* }),* $(,)?) => {
+        /// Represents the kind of instruction and its typed fields in Lirien JIT IR.
+        ///
+        /// This enum is macro-generated from the list of instruction definitions
+        /// in [`crate::lirien_instructions!`].
         #[derive(Debug, Clone, Serialize, Deserialize)]
         pub enum InstructionKind {
-            $($name($($arg_ty),*)),*
+            $(
+                #[allow(missing_docs)]
+                $name($($arg_ty),*)
+            ),*
         }
     }
 }
 
 lirien_instructions!(generate_instruction_kind);
 
+/// A wrapper struct for a Lirien JIT IR instruction.
+///
+/// Combines the [`InstructionKind`] payload with source mapping ([`SourceLocation`])
+/// and refinement logic verification preconditions (`constraints`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Instruction {
+    /// The specific operation and its operands.
     pub kind: InstructionKind,
+    /// Location of the corresponding line in Python source code.
     pub location: Option<SourceLocation>,
+    /// Refinement type verification predicates or preconditions.
     pub constraints: Vec<String>,
 }
 
 impl Instruction {
+    /// Creates a new `Instruction` of the specified kind, with optional source location.
     pub fn new(kind: InstructionKind, location: Option<SourceLocation>) -> Self {
         Self {
             kind,
@@ -823,16 +855,20 @@ impl Instruction {
         }
     }
 
+    /// Builder pattern method to attach constraints to an instruction.
     pub fn with_constraints(mut self, constraints: Vec<String>) -> Self {
         self.constraints = constraints;
         self
     }
 
+    /// Appends a refinement constraint to this instruction.
     pub fn add_constraint(&mut self, constraint: String) -> &mut Self {
         self.constraints.push(constraint);
         self
     }
 
+
+    /// Returns the defined SSA value if this instruction defines one, or `None` if it does not.
     #[allow(unused_variables)]
     pub fn get_def(&self) -> Option<Value> {
         macro_rules! match_def {
@@ -851,6 +887,7 @@ impl Instruction {
         lirien_instructions!(match_def)
     }
 
+    /// Returns a vector of all SSA values consumed/used as operands by this instruction.
     #[allow(unused_variables)]
     pub fn get_uses(&self) -> Vec<Value> {
         macro_rules! match_uses {
@@ -926,6 +963,7 @@ impl Instruction {
         lirien_instructions!(match_uses)
     }
 
+    /// Returns `true` if this instruction has side effects (e.g. store, JUMP, call).
     #[allow(unused_variables)]
     pub fn has_side_effects(&self) -> bool {
         macro_rules! match_side_effects {
@@ -944,6 +982,7 @@ impl Instruction {
         lirien_instructions!(match_side_effects)
     }
 
+    /// Helper method to accept a visitor pattern implementing [`InstructionVisitor`].
     #[allow(unused_variables)]
     pub fn visit<V: InstructionVisitor<R>, R>(&self, visitor: &mut V) -> R {
         macro_rules! match_visit {
@@ -978,6 +1017,8 @@ macro_rules! define_visitor_methods {
     }
 }
 
+/// Visitor pattern interface for visiting all possible IR instructions.
 pub trait InstructionVisitor<R> {
     lirien_instructions!(define_visitor_methods);
 }
+

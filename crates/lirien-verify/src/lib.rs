@@ -1,3 +1,10 @@
+//! # Lirien Verify
+//!
+//! This crate implements the formal verification engine for the Lirien compiler.
+//! It translates the SSA IR control flow graph and refinement constraints into SMT-LIB formulas
+//! and invokes Z3 to formally verify that the JIT-compiled functions satisfy their liquid type contracts
+//! and are free of logical errors (e.g. out-of-bounds array access, null pointer dereferences).
+
 pub mod backend;
 pub mod refinement;
 pub mod verifier;
@@ -13,6 +20,15 @@ use tracing::info;
 
 static VERIFY_COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// Entry point to formally verify a Lirien JIT function using Z3.
+///
+/// Runs:
+/// 1. Dataflow liveness analysis to minimize verification state.
+/// 2. Numeric range/interval analysis to infer bounds (hints for Z3).
+/// 3. Constraint-to-SMT mapping, asserting path conditions and checking refinement safety goals.
+///
+/// # Errors
+/// Returns an error string if a verification contract is violated, or SMT solver fails/times out.
 pub fn verify(func: &Function, timeout_ms: u32) -> Result<Option<String>, String> {
     info!(target: "lirien::verify", "Verifying function '{}'...", func.name);
 

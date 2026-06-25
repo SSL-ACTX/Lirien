@@ -1,3 +1,8 @@
+//! Abstract interpretation and interval range analysis pass.
+//!
+//! This module analyzes values inside a [`Function`]'s SSA Control Flow Graph to infer
+//! their numeric ranges. The results are used for bound verification and optimizations.
+
 pub mod narrowing;
 pub mod ops;
 pub mod refinement;
@@ -8,7 +13,15 @@ pub use types::{Bound, Interval, IntervalAnalysisResults};
 use crate::ir::{Function, InstructionKind, Value};
 use std::collections::HashMap;
 
+/// Performs numeric interval/range analysis on a [`Function`].
+///
+/// Infer ranges for SSA values by iteratively propagating bounds through instructions
+/// (using abstract arithmetic operators) until a fixed point is reached (or 50 iterations pass).
+///
+/// It initializes argument ranges based on their annotated type width, refines them with Z3 liquid type
+/// constraints (if available), and narrows ranges through conditional branch edges.
 pub fn analyze(func: &Function) -> IntervalAnalysisResults {
+
     let mut intervals: HashMap<Value, Interval> = HashMap::new();
     let mut block_narrowing: HashMap<(Value, crate::ir::BlockId), Interval> = HashMap::new();
 

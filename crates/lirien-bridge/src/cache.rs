@@ -1,3 +1,8 @@
+//! In-process and disk cache for compiled JIT functions.
+//!
+//! Exposes APIs to lookup and store verification bounds, IR layouts, and compiled pointers
+//! to avoid re-verifying and re-compiling functions that haven't changed.
+
 use lirien_ir::ir::{Function, Type};
 use lirien_ir::registry::SerializedSignature;
 use seahash::SeaHasher;
@@ -10,11 +15,15 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use tracing::{debug, info};
 
+/// Structure representing serialized JIT cache payload stored on disk.
 #[derive(Serialize, Deserialize)]
 pub struct CachedPayload {
+    /// List of IR functions within the cached compilation group.
     pub functions: Vec<Function>,
+    /// Signatures of external dependencies checked during cache verification.
     pub dependencies: HashMap<String, SerializedSignature>,
 }
+
 
 /// An in-process cached entry for a fully compiled function.
 /// Keyed by the IR hash (same hash used for the disk cache).

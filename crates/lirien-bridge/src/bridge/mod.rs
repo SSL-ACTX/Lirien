@@ -1,3 +1,8 @@
+//! Core compilation bridge orchestrator.
+//!
+//! Exposes the primary interface called by the Python `@verify` decorator to trigger AST
+//! parsing, range checking, Z3 logic verification, and Cranelift compilation.
+
 use crate::cache;
 use lirien_ir::registry::{FunctionSignature, GLOBAL_REGISTRY};
 use pyo3::prelude::*;
@@ -6,10 +11,23 @@ use rustpython_parser::Parse;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
+/// The primary entry point called by the Python `@verify` decorator.
+///
+/// Under the hood, this function:
+/// 1. Computes a cache hash of the function source, metadata, layouts, and verification settings.
+/// 2. Performs a lookup in the L1 (in-process) and L2 (disk) caches.
+/// 3. If missing, compiles the Python source to JIT SSA IR, optionally running formal Z3 verification.
+/// 4. Lowers the IR to native machine assembly using Cranelift.
+/// 5. Saves intermediate artifacts to caches.
+/// 6. Registers the compiled function symbol pointer, returning it back to Python.
+///
+/// # Errors
+/// Returns a `PyErr` if parsing, transformation, range analysis, logic proof verification, or compilation fails.
 #[pyfunction]
 #[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), typed_dict_layouts=HashMap::new(), timeout_ms=5000, verify=true))]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_and_compile(
+
     source: String,
     func_name: String,
     struct_layouts: HashMap<String, Vec<(String, String)>>,

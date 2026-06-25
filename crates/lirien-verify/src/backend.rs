@@ -1,16 +1,44 @@
+//! Abstract SMT solver backend interface.
+//!
+//! This module defines the [`SolverBackend`] trait, which abstracts the underlying solver logic,
+//! allowing the verifier to remain solver-agnostic. The primary implementation is Z3.
+
+/// Abstract interface representing SMT-solver operations and SMT-logic types.
 pub trait SolverBackend {
+    /// Boolean solver expression type.
     type Bool: Clone;
+    /// Infinite-precision integer solver expression type.
     type Int: Clone;
+    /// Floating-point solver expression type.
     type Float: Clone;
+    /// Bit-vector (fixed-width integer) solver expression type.
     type BV: Clone;
+    /// Unidimensional array solver expression type.
     type Array: Clone;
 
+    /// Checks the satisfiability of the active solver assertions.
+    ///
+    /// Returns `true` if satisfiable, `false` if unsatisfiable (logical contradiction).
+    ///
+    /// # Errors
+    /// Returns an error string if solver times out or encounters a backend failure.
     fn check(&mut self) -> Result<bool, String>;
+
+    /// Sets the solver timeout in milliseconds.
     fn set_timeout(&mut self, timeout_ms: u32);
+
+    /// Asserts a boolean condition in the current solver context.
     fn assert(&mut self, cond: &Self::Bool);
+
+    /// Asserts that a premise implies a conclusion.
     fn assert_implies(&mut self, premise: &Self::Bool, conclusion: &Self::Bool);
+
+    /// Pushes a new solver assertion scope (backtracking point).
     fn push(&mut self);
+
+    /// Pops a specified number of solver assertion scopes.
     fn pop(&mut self, num: u32);
+
 
     fn bool_const(&mut self, name: &str) -> Self::Bool;
     fn bool_from_bool(&mut self, val: bool) -> Self::Bool;

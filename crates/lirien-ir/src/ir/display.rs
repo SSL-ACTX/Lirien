@@ -1,8 +1,14 @@
+//! Formatting and pretty-printing implementations for Lirien JIT IR types and instructions.
+//!
+//! This module implements [`std::fmt::Display`] for IR objects like
+//! [`Type`], [`Value`], [`BlockId`], [`Instruction`], and others.
+
 use super::instruction::{Instruction, InstructionKind, FusedExpr};
 use super::types::{AccessPath, BlockId, PathElement, SourceLocation, Type, Value};
 use std::fmt;
 
 impl fmt::Display for Type {
+
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::I8 => write!(f, "i8"),

@@ -1,3 +1,9 @@
+//! AST to SSA-CFG compiler implementation.
+//!
+//! This module coordinates the transformation pipeline, parsing Python AST, building
+//! basic blocks, resolving variable reads and writes to generate single-assignment values,
+//! and resolving loop phis.
+
 pub mod capture_analysis;
 pub mod error;
 pub mod macros;
@@ -15,24 +21,36 @@ use rustpython_ast as ast;
 use rustpython_parser::Parse;
 use std::collections::{HashMap, HashSet};
 
+/// Core builder for constructing the Control Flow Graph in Static Single Assignment form.
 pub struct CFGBuilder {
+    /// The function IR being built.
     pub func: Function,
+    /// The current basic block index.
     pub current_block: BlockId,
+    /// Active Python source code location for error reporting and mapping.
     pub current_location: Option<SourceLocation>,
+    /// User defined type aliases.
     pub type_aliases: HashMap<String, String>,
+    /// Set of known named tuple layouts.
     pub named_tuple_names: HashSet<String>,
+    /// Set of known typed dictionary layouts.
     pub typed_dict_names: HashSet<String>,
+    /// Set of known enum layouts.
     pub enum_names: HashSet<String>,
-    // Maps variable name -> (BlockId -> Value)
+    /// Map of variable names to their active SSA value within each block.
     pub variable_defs: HashMap<String, HashMap<BlockId, Value>>,
-    // Track Phi nodes that need to be filled once all predecessors are processed (for loops)
+    /// Unfinished Phi nodes from join points that are resolved once loop predecessors are sealed.
     pub incomplete_phis: HashMap<BlockId, HashMap<String, Value>>,
+    /// Sealed basic blocks (all predecessor blocks are known).
     pub sealed_blocks: HashSet<BlockId>,
-    // Stack of (header_block, exit_block) for loops
+    /// Active loop block tracking for break and continue statements: (header, exit).
     pub loop_stack: Vec<(BlockId, BlockId)>,
+    /// Collected lambda helper functions compiled from the AST.
     pub lambdas: Vec<Function>,
 }
+
 impl CFGBuilder {
+    /// Retrieves the layout byte size of the specified type.
     pub fn get_type_size(&self, ty: &Type) -> usize {
         ty.size(&self.func.struct_layouts)
     }

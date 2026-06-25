@@ -1,8 +1,15 @@
+//! # Lirien Bridge
+//!
+//! PyO3-based extension module providing Python bindings for the Lirien verifier and compiler.
+//! Exposes APIs to trigger formal verification, compilation, runtime diagnostics configuration,
+//! and CPU feature detection.
+
 pub mod bridge;
 pub mod cache;
 
 use pyo3::prelude::*;
 
+/// The raw PyO3 module initialization function.
 #[pymodule]
 fn lirien_bridge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ::lirien_core::init_diagnostics();
@@ -13,6 +20,8 @@ fn lirien_bridge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
+
+/// Returns target CPU properties such as architecture, ISA name, and supported SIMD features.
 #[pyfunction]
 fn get_cpu_info() -> PyResult<std::collections::HashMap<String, String>> {
     use cranelift_codegen::settings::Configurable;
@@ -60,6 +69,9 @@ fn get_cpu_info() -> PyResult<std::collections::HashMap<String, String>> {
     Ok(info)
 }
 
+/// Sets the runtime logging level filter.
+///
+/// Under the hood, this reloads the global `tracing-subscriber::EnvFilter`.
 #[pyfunction]
 fn set_log_level(level: String) -> PyResult<()> {
     ::lirien_core::set_log_level(&level)
@@ -67,9 +79,11 @@ fn set_log_level(level: String) -> PyResult<()> {
     Ok(())
 }
 
+/// Configures tracing options dynamically by mapping components to target log levels.
 #[pyfunction]
 fn configure_tracing(config: std::collections::HashMap<String, String>) -> PyResult<()> {
     ::lirien_core::configure_tracing(config)
         .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
     Ok(())
 }
+

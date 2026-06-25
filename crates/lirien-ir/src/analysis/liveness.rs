@@ -1,13 +1,27 @@
+//! Liveness analysis for SSA values.
+//!
+//! This module performs standard backward dataflow analysis to calculate the set of live
+//! values at the entry and exit of each basic block, and at each individual instruction.
+
 use crate::ir::{BlockId, Function, InstructionKind, Value};
 use std::collections::{HashMap, HashSet};
 
+/// Results of the liveness analysis pass.
 pub struct LivenessAnalysisResults {
+    /// Mapping from basic block to the set of live SSA variables at block entry.
     pub live_in: HashMap<BlockId, HashSet<Value>>,
+    /// Mapping from basic block to the set of live SSA variables at block exit.
     pub live_out: HashMap<BlockId, HashSet<Value>>,
+    /// Mapping from `(block_id, instruction_index)` to the set of live SSA variables after the instruction execution.
     pub inst_live_out: HashMap<(usize, usize), HashSet<Value>>,
 }
 
+/// Executes liveness analysis on a given [`Function`].
+///
+/// Computes liveness sets backwards using fixed-point iteration. Special care is taken
+/// for Phi nodes, where their operands are treated as live only along the incoming control-flow edge.
 pub fn analyze_liveness(func: &Function) -> LivenessAnalysisResults {
+
     let mut live_in: HashMap<BlockId, HashSet<Value>> = HashMap::new();
     let mut live_out: HashMap<BlockId, HashSet<Value>> = HashMap::new();
 

@@ -1,6 +1,12 @@
+//! Helper utility functions for parsing and Z3 SMT expression construction.
+//!
+//! Provides floating-point promotions (precision unification), relational
+//! comparison constructors, and basic S-expression text splitting.
+
 use z3::ast::{Ast, Bool, Float};
 use z3_sys;
 
+/// Promotes two floats to the same precision sort if they differ (e.g. promoting f32 to f64).
 pub fn unify_floats(a: &Float, b: &Float) -> (Float, Float) {
     let sort_a = a.get_sort();
     let sort_b = b.get_sort();
@@ -40,6 +46,8 @@ pub fn unify_floats(a: &Float, b: &Float) -> (Float, Float) {
     }
 }
 
+
+/// Constructs a float equality SMT expression (`lhs == rhs`), unifying their precision types first.
 pub fn float_eq(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
@@ -53,6 +61,7 @@ pub fn float_eq(a: &Float, b: &Float) -> Bool {
     }
 }
 
+/// Constructs a float less-than SMT expression (`lhs < rhs`), unifying their precision types first.
 pub fn float_lt(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
@@ -66,6 +75,7 @@ pub fn float_lt(a: &Float, b: &Float) -> Bool {
     }
 }
 
+/// Constructs a float less-than-or-equal SMT expression (`lhs <= rhs`), unifying their precision types first.
 pub fn float_le(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
@@ -79,6 +89,7 @@ pub fn float_le(a: &Float, b: &Float) -> Bool {
     }
 }
 
+/// Constructs a float greater-than SMT expression (`lhs > rhs`), unifying their precision types first.
 pub fn float_gt(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
@@ -92,6 +103,7 @@ pub fn float_gt(a: &Float, b: &Float) -> Bool {
     }
 }
 
+/// Constructs a float greater-than-or-equal SMT expression (`lhs >= rhs`), unifying their precision types first.
 pub fn float_ge(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
@@ -105,6 +117,17 @@ pub fn float_ge(a: &Float, b: &Float) -> Bool {
     }
 }
 
+/// Splits a Lisp-like S-expression string into its top-level token groups.
+///
+/// Keeps parentheses-enclosed subgroups together.
+///
+/// # Examples
+/// ```ignore
+/// assert_eq!(
+///     split_sexpr_parts("(+ 1 (* 2 v3))"),
+///     vec!["(+ 1 (* 2 v3))"]
+/// );
+/// ```
 pub fn split_sexpr_parts(s: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut current_start = 0;
@@ -131,3 +154,4 @@ pub fn split_sexpr_parts(s: &str) -> Vec<&str> {
     }
     parts
 }
+

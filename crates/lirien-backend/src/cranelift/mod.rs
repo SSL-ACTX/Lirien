@@ -1,3 +1,8 @@
+//! Cranelift compilation coordinator.
+//!
+//! Translates Lirien IR types and basic block flows into Cranelift IR,
+//! links native math helper symbols and memory routines, compiles, and registers target function pointers.
+
 use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
@@ -10,19 +15,31 @@ use tracing::info;
 
 pub mod lower;
 
+/// Structure representing active Cranelift compilation state mappings.
 pub struct CodegenContext<'a, M: Module> {
+    /// Cranelift function builder helper.
     pub builder: FunctionBuilder<'a>,
+    /// Cranelift target module compilation unit.
     pub module: &'a mut M,
+    /// Reference to the source SSA function.
     pub ssa_func: &'a SsaFunction,
+    /// Maps Lirien block IDs to Cranelift blocks.
     pub blocks: HashMap<SsaBlockId, Block>,
+    /// Maps Lirien values to Cranelift values.
     pub values: HashMap<SsaValue, Value>,
+    /// Maps Lirien composite/unpacked aggregates to their flattened Cranelift values.
     pub unpacked_values: HashMap<SsaValue, Vec<Value>>,
+    /// Maps buffer references to their Cranelift integer lengths.
     pub buffer_lengths: HashMap<SsaValue, Value>,
+    /// Maps tensor references to their Cranelift integer dimension variables.
     pub tensor_dims: HashMap<SsaValue, Vec<Value>>,
+    /// True if the function returns a multi-register or memory-flushed tuple aggregate.
     pub is_tuple_return: bool,
+    /// Pointer to the pre-allocated struct return value buffer (sret).
     pub sret_ptr: Option<Value>,
 }
 
+/// Translates a Lirien IR type to its corresponding Cranelift machine type.
 pub fn translate_type(ty: &SsaType) -> types::Type {
     match ty {
         SsaType::I8 | SsaType::U8 | SsaType::Bool => types::I8,
@@ -57,7 +74,16 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
     }
 }
 
+/// Compiles a Lirien JIT function IR structure into machine code via Cranelift.
+///
+/// Under the hood, this sets up target architecture attributes, maps external dynamic library symbols
+/// (like sin, cos, malloc, memcpy), lower instructions using the [`lower`] sub-module, compiles to
+/// executable memory pages, and registers the compiled signature in the [`lirien_ir::registry`].
+///
+/// # Errors
+/// Returns an error string if machine lowering, parsing, or JIT linking fails.
 pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
+
     info!(target: "lirien::jit", "Compiling SSA to Machine Code via Cranelift for '{}'...", ssa_func.name);
 
     let mut flag_builder = settings::builder();

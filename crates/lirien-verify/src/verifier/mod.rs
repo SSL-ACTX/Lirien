@@ -1,3 +1,9 @@
+//! Core logic verifier pipeline and translation context.
+//!
+//! Translates the Lirien Intermediate Representation (IR) into solver constraints
+//! and checks logic assertions against runtime invariants, refinement types,
+//! and safety checks (e.g. array bounds or pointer validity).
+
 use crate::backend::SolverBackend;
 use lirien_ir::analysis::interval::IntervalAnalysisResults;
 use lirien_ir::ir::{BlockId, Function, InstructionKind, Type, Value};
@@ -12,6 +18,7 @@ pub mod memory;
 pub mod returns;
 pub mod tuples;
 
+/// Recursively flattens composite types (structs, tuples) to calculate the offsets of their primitive leaf components.
 pub fn get_leaf_offsets(
     ty: &Type,
     struct_layouts: &HashMap<String, Vec<(String, Type)>>,
@@ -48,6 +55,7 @@ pub fn get_leaf_offsets(
     }
 }
 
+/// Copies a composite structure's leaf primitives from a source variable to a destination offset within memory.
 pub fn copy_composite<
     'a,
     B: SolverBackend<
@@ -81,36 +89,62 @@ pub fn copy_composite<
     new_state
 }
 
+/// A safety constraint check registered with the solver.
 pub struct SafetyCheck<B: SolverBackend> {
+    /// Boolean condition representing the path taken to reach this check.
     pub path_cond: B::Bool,
+    /// Boolean condition representing the logic contract violation (e.g. `index >= bounds`).
     pub violation_cond: B::Bool,
+    /// Error message detailing the nature of the contract violation.
     pub error_message: String,
+    /// Optional Python source location mapping.
     pub location: Option<lirien_ir::ir::SourceLocation>,
 }
 
+/// Active verifier translation context mapping Lirien IR values to SMT variables.
 pub struct TranslationContext<'a, B: SolverBackend> {
+    /// The solver backend reference.
     pub backend: &'a mut B,
+    /// The function IR structure.
     pub func: &'a Function,
+    /// Inferred range interval analysis results.
     pub analysis: &'a IntervalAnalysisResults,
+    /// Unique verifier session ID (used to generate fresh names).
     pub uid: usize,
+    /// Maps IR values to solver Int variables.
     pub z3_ints: HashMap<Value, B::Int>,
+    /// Maps IR values to solver Float variables.
     pub z3_floats: HashMap<Value, B::Float>,
+    /// Maps IR values to solver Bit-Vector (BV) variables.
     pub z3_bvs: HashMap<Value, B::BV>,
+    /// Maps IR values to solver memory Arrays.
     pub z3_arrays: HashMap<Value, B::Array>,
+    /// Maps IR tensors to their solver Int dimensions.
     pub z3_tensor_dims: HashMap<Value, Vec<B::Int>>,
+    /// Maps IR buffer references to their starting memory offsets.
     pub array_offsets: HashMap<Value, B::Int>,
+    /// Maps IR tuple aggregates to their constituent flattened values.
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
+    /// Block reachability execution conditions.
     pub block_conditions: HashMap<BlockId, B::Bool>,
+    /// Conditional edge path variables.
     pub edge_conditions: HashMap<(BlockId, BlockId), B::Bool>,
+    /// Track if any refinement constraints were registered.
     pub has_refinements: bool,
+    /// Registered assertions that must hold for soundness.
     pub safety_checks: Vec<SafetyCheck<B>>,
 }
 
 impl<'a, B: SolverBackend> TranslationContext<'a, B> {
+    /// Generates a solver Int constant representing a named tensor dimension.
     pub fn get_dim_var(&mut self, dim_name: &str) -> B::Int {
         self.backend.int_const(dim_name)
     }
 
+    /// Evaluates safety violation satisfiability in isolation using push/pop scopes.
+    ///
+    /// # Errors
+    /// Returns an error string containing the error message if the violation condition is satisfiable.
     pub fn check_safety(
         &mut self,
         path_cond: &B::Bool,
@@ -133,6 +167,13 @@ impl<'a, B: SolverBackend> TranslationContext<'a, B> {
     }
 }
 
+/// Formally verifies a Lirien JIT function using SMT context building and safety checks.
+///
+/// It constructs the translation context, initializes block path conditions, translates all IR
+/// instructions to SMT constraints, asserts refinements, and checks safety checks.
+///
+/// # Errors
+/// Returns an error string if logic contracts are violated or SMT solving times out.
 pub fn verify_with_context<
     B: SolverBackend<
         Bool = z3::ast::Bool,
@@ -148,6 +189,7 @@ pub fn verify_with_context<
     _liveness: lirien_ir::analysis::liveness::LivenessAnalysisResults,
     uid: usize,
 ) -> Result<Option<String>, String> {
+
     let mut t_ctx = TranslationContext {
         backend,
         func,

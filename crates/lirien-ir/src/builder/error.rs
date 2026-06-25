@@ -1,26 +1,47 @@
+//! Error representation for the JIT compiler builder.
+//!
+//! This module defines the [`BuilderError`] enum and the [`BuilderResult`] type alias
+//! used to track compilation errors when transforming Python AST into Lirien IR.
+
 use crate::ir::SourceLocation;
 use std::fmt;
 
+/// Errors encountered when compiling Python AST into Lirien Intermediate Representation.
 #[derive(Debug)]
 pub enum BuilderError {
+    /// Attempted to read a variable before it was defined.
     UnboundVariable(String, Option<SourceLocation>),
+    /// A type mismatch occurred (e.g. assigning a float to an integer field).
     TypeMismatch {
+        /// Description of the expected type.
         expected: String,
+        /// Description of the actual type found.
         found: String,
+        /// Source location where the mismatch occurred.
         location: Option<SourceLocation>,
     },
+    /// Field or attribute access failed on a compound object.
     AttributeNotFound {
+        /// Target object type or identifier.
         target: String,
+        /// Attribute name that was not found.
         attr: String,
+        /// Source location where the access occurred.
         location: Option<SourceLocation>,
     },
+    /// Encountered a Python expression that is unsupported by Lirien.
     UnsupportedExpression(String, Option<SourceLocation>),
+    /// Encountered a Python statement that is unsupported by Lirien.
     UnsupportedStatement(String, Option<SourceLocation>),
+    /// A generic or user-defined compilation error.
     General(String, Option<SourceLocation>),
+    /// An unexpected or compiler-internal assertion failure.
     Internal(String, Option<SourceLocation>),
 }
 
+
 impl BuilderError {
+    /// Attaches or updates the source location on the compiler builder error.
     pub fn with_location(self, loc: SourceLocation) -> Self {
         match self {
             BuilderError::UnboundVariable(s, _) => BuilderError::UnboundVariable(s, Some(loc)),
@@ -114,4 +135,6 @@ impl From<String> for BuilderError {
     }
 }
 
+/// Specialized Result type for the builder, yielding a [`BuilderError`] upon failure.
 pub type BuilderResult<T> = Result<T, BuilderError>;
+
