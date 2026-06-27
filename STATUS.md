@@ -44,6 +44,7 @@ Lirien is an experimental research compiler. It is under active development and 
 - `Buffer[T]` / `Buffer[...]` — Python buffer protocol interop with zero-copy slicing (including strided slicing `arr[start:end:step]`) and direct iteration
 - `Tensor[T, *Shape]` — rank-polymorphic tensors with type-level shape tracking and verified 2D matrix multiplication (`@` operator)
 - `Result[T, E]` — generic result type with `Ok` / `Err` variants
+- `List[T]` — heap-allocated dynamic lists with bounds checking and length semantics modeled and verified by Z3
 
 ### Verification
 - Arithmetic safety — division by zero, overflow
@@ -75,9 +76,7 @@ Lirien is an experimental research compiler. It is under active development and 
 
 ## Roadmap
 
-| Item | Notes |
-| :--- | :--- |
-| **Verified Growable List (`List[T]`)** | Zero-overhead, heap-allocated dynamic list with Z3 bounds checking and allocation safety. |
+All currently planned core features have been implemented.
 
 ---
 

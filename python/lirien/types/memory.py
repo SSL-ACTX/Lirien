@@ -247,6 +247,168 @@ class Array(Generic[T]):
         self.data[idx] = val
 
 
+class ListHeaderStructure(ctypes.Structure):
+    _fields_ = [
+        ("data", ctypes.c_void_p),
+        ("len", ctypes.c_size_t),
+        ("cap", ctypes.c_size_t),
+    ]
+
+
+class List(Generic[T]):
+    """
+    Verified Growable List.
+    Usage: l = List[i64]()
+    """
+
+    def __init__(self, c_ptr=None, elem_type=None):
+        self._elem_type = elem_type
+        if c_ptr is not None:
+            if isinstance(c_ptr, int):
+                self._ctypes_obj = ctypes.c_void_p(c_ptr)
+            else:
+                self._ctypes_obj = c_ptr
+        else:
+            header = ListHeaderStructure(data=None, len=0, cap=0)
+            self._header_ref = header
+            self._ctypes_obj = ctypes.pointer(header)
+
+    @property
+    def elem_type(self):
+        if self._elem_type is None:
+            orig_class = getattr(self, "__orig_class__", None)
+            if orig_class:
+                from typing import get_args
+
+                args = get_args(orig_class)
+                if args:
+                    self._elem_type = args[0]
+        return self._elem_type
+
+    @property
+    def _header(self):
+        if isinstance(self._ctypes_obj, ctypes.c_void_p):
+            return ctypes.cast(
+                self._ctypes_obj, ctypes.POINTER(ListHeaderStructure)
+            ).contents
+        else:
+            return self._ctypes_obj.contents
+
+    def append(self, val):
+        header = self._header
+        elem_cty = ctypes.c_int64
+        is_struct = False
+        elem_t = self.elem_type
+        if elem_t is not None:
+            if getattr(elem_t, "__lirien_struct__", False):
+                elem_cty = elem_t.__lirien_ctypes__
+                is_struct = True
+            else:
+                elem_ty_str = str(elem_t).lower()
+                for name, cty in TYPE_MAP.items():
+                    if name in elem_ty_str:
+                        elem_cty = cty
+                        break
+
+        elem_size = ctypes.sizeof(elem_cty)
+
+        if header.len == header.cap:
+            new_cap = 4 if header.cap == 0 else header.cap * 2
+            new_data_cty = ctypes.c_ubyte * (new_cap * elem_size)
+            new_data_obj = new_data_cty()
+            if header.data:
+                ctypes.memmove(new_data_obj, header.data, header.len * elem_size)
+            if not hasattr(self, "_data_buffers"):
+                self._data_buffers = []
+            self._data_buffers.append(new_data_obj)
+            header.data = ctypes.cast(
+                ctypes.pointer(new_data_obj), ctypes.c_void_p
+            ).value
+            header.cap = new_cap
+
+        elem_addr = header.data + header.len * elem_size
+        if is_struct:
+            val_obj = val._ctypes_obj if hasattr(val, "_ctypes_obj") else val
+            ctypes.memmove(elem_addr, ctypes.addressof(val_obj), elem_size)
+        else:
+            elem_cty.from_address(elem_addr).value = val
+        header.len += 1
+
+    def __getitem__(self, idx):
+        header = self._header
+        len_val = header.len
+        if idx < 0:
+            idx = int(len_val) + idx
+        if idx < 0 or idx >= len_val:
+            raise IndexError("List index out of range")
+
+        elem_cty = ctypes.c_int64
+        is_struct = False
+        elem_t = self.elem_type
+        if elem_t is not None:
+            if getattr(elem_t, "__lirien_struct__", False):
+                elem_cty = elem_t.__lirien_ctypes__
+                is_struct = True
+            else:
+                elem_ty_str = str(elem_t).lower()
+                for name, cty in TYPE_MAP.items():
+                    if name in elem_ty_str:
+                        elem_cty = cty
+                        break
+
+        elem_size = ctypes.sizeof(elem_cty)
+        elem_addr = header.data + idx * elem_size
+        if is_struct:
+            val = elem_cty.from_address(elem_addr)
+            wrapper = elem_t.__new__(elem_t)
+            wrapper._ctypes_obj = val
+            return wrapper
+        else:
+            return elem_cty.from_address(elem_addr).value
+
+    def __setitem__(self, idx, val):
+        header = self._header
+        len_val = header.len
+        if idx < 0:
+            idx = int(len_val) + idx
+        if idx < 0 or idx >= len_val:
+            raise IndexError("List index out of range")
+
+        elem_cty = ctypes.c_int64
+        is_struct = False
+        elem_t = self.elem_type
+        if elem_t is not None:
+            if getattr(elem_t, "__lirien_struct__", False):
+                elem_cty = elem_t.__lirien_ctypes__
+                is_struct = True
+            else:
+                elem_ty_str = str(elem_t).lower()
+                for name, cty in TYPE_MAP.items():
+                    if name in elem_ty_str:
+                        elem_cty = cty
+                        break
+
+        elem_size = ctypes.sizeof(elem_cty)
+        elem_addr = header.data + idx * elem_size
+        if is_struct:
+            val_obj = val._ctypes_obj if hasattr(val, "_ctypes_obj") else val
+            ctypes.memmove(elem_addr, ctypes.addressof(val_obj), elem_size)
+        else:
+            elem_cty.from_address(elem_addr).value = val
+
+    def __len__(self):
+        return self._header.len
+
+    def __class_getitem__(cls, base_type):
+        class ListAnnotated:
+            def __new__(cls_ann, *args, **kwargs):
+                return List(*args, elem_type=base_type, **kwargs)
+
+        anno = Annotated[cls, base_type]
+        anno.new_instance = lambda c_ptr: List(c_ptr, elem_type=base_type)
+        return anno
+
+
 class SymbolicExpr:
     __lirien_symbolic__ = True
 

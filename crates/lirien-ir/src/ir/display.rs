@@ -35,6 +35,7 @@ impl fmt::Display for Type {
                 None => write!(f, "Array<{}>", t),
             },
             Type::Buffer(t) => write!(f, "Buffer<{}>", t),
+            Type::List(t) => write!(f, "List<{}>", t),
             Type::Tensor(t, dims) => write!(f, "Tensor<{}, {}>", t, dims.join(", ")),
             Type::Struct(name) => write!(f, "Struct<{}>", name),
             Type::TypedDict(name) => write!(f, "TypedDict<{}>", name),
@@ -662,6 +663,21 @@ impl fmt::Display for Instruction {
                 "  {} = extract {}[{}] (tuple){}{}",
                 d, t, i, loc_str, constraints_str
             ),
+            InstructionKind::ListCreate(d, t) => {
+                write!(f, "  {} = list_create (as {}){}{}", d, t, loc_str, constraints_str)
+            }
+            InstructionKind::ListAppend(d, list, val) => {
+                write!(f, "  {} = list_append {}, {}{}{}", d, list, val, loc_str, constraints_str)
+            }
+            InstructionKind::ListLen(d, list) => {
+                write!(f, "  {} = list_len {}{}{}", d, list, loc_str, constraints_str)
+            }
+            InstructionKind::ListLoad(d, list, idx) => {
+                write!(f, "  {} = list_load {}[{}]{}{}", d, list, idx, loc_str, constraints_str)
+            }
+            InstructionKind::ListStore(d, list, idx, val) => {
+                write!(f, "  {} = list_store {}[{}] <- {}{}{}", d, list, idx, val, loc_str, constraints_str)
+            }
             InstructionKind::Alloc(d, t) => {
                 write!(f, "  {} = alloc {}{}{}", d, t, loc_str, constraints_str)
             }

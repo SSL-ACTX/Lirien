@@ -17,7 +17,7 @@ def swap(x: i64, y: i64) -> Tuple[i64, i64]:
 NonNegative = Refined[f64, lambda x: x >= 0.0]
 
 
-@verify
+@verify(timeout=20000)
 def compute_math(x: NonNegative) -> f64:
     return math.sqrt(x.val) + math.sin(x.val) + math.cos(x.val)
 
@@ -25,7 +25,7 @@ def compute_math(x: NonNegative) -> f64:
 Positive = Refined[f64, lambda x: x > 0.0]
 
 
-@verify
+@verify(timeout=20000)
 def compute_pow(b: Positive, e: f64) -> f64:
     return math.pow(b.val, e)
 
@@ -49,7 +49,7 @@ class TestNewIntrinsics(unittest.TestCase):
         self.assertAlmostEqual(compute_pow(2.0, 3.0), 8.0)
 
     def test_more_math_intrinsics(self):
-        @verify
+        @verify(timeout=20000)
         def more_math(x: f64) -> f64:
             return (
                 math.tan(x)

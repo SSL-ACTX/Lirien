@@ -90,6 +90,15 @@ impl CFGBuilder {
                                 ));
                                 self.func.set_type(dest_arr, Type::Buffer(inner));
                             }
+                            Type::List(inner) => {
+                                push_inst!(self, InstructionKind::ListStore(
+                                    dest_arr,
+                                    arr,
+                                    idx,
+                                    value,
+                                ));
+                                self.func.set_type(dest_arr, Type::List(inner));
+                            }
                             Type::Array(inner, size) => {
                                 push_inst!(self, InstructionKind::ArrayStore(
                                     dest_arr,

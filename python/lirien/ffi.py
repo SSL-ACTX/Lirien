@@ -11,7 +11,7 @@ from typing import (
     Tuple as typing_Tuple,
 )
 from .types.base import TYPE_MAP
-from .types.memory import Buffer, SizedArray, Box, Tensor
+from .types.memory import Buffer, SizedArray, Box, Tensor, List
 from .types.functions import Closure, FnPointer
 from .compiler import (
     _get_type_name,
@@ -226,7 +226,7 @@ def _map_ctypes_arguments(
 
         is_ptr_wrapper = False
         if isinstance(origin, type) and issubclass(
-            origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor)
+            origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor, List)
         ):
             is_ptr_wrapper = True
 
@@ -247,6 +247,7 @@ def _map_ctypes_arguments(
                 "callable",
                 "box",
                 "tensor",
+                "list",
                 "nullable",
                 "f32x4",
                 "i32x4",
@@ -594,6 +595,7 @@ def _create_jit_wrapper(
                 "closure",
                 "box",
                 "tensor",
+                "list",
                 "f32x4",
                 "i32x4",
                 "f64x2",
@@ -923,10 +925,32 @@ def _wrap_return_value(
 ) -> Any:
     """Wrap the JIT return value if it represents a higher-order function or Tensor."""
     from .types import FnPointer, Closure, i64, Tensor
+    from .types.memory import List as LirienList
     from typing import get_origin
 
     actual_ann = getattr(ret_ann, "base_type", ret_ann)
     origin = get_origin(actual_ann) or actual_ann
+
+    is_list = (
+        isinstance(origin, type) and issubclass(origin, LirienList)
+    ) or "list" in str(ret_ann).lower()
+
+    if is_list:
+        import ctypes
+        from typing import get_args, Annotated
+
+        ptr_val = res
+        if not isinstance(ptr_val, int):
+            ptr_val = ctypes.cast(ptr_val, ctypes.c_void_p).value
+
+        if get_origin(actual_ann) is Annotated:
+            ann_args = get_args(actual_ann)
+            elem_type = ann_args[1] if len(ann_args) > 1 else None
+        else:
+            ann_args = get_args(actual_ann)
+            elem_type = ann_args[0] if ann_args else None
+        return LirienList(c_ptr=ctypes.c_void_p(ptr_val), elem_type=elem_type)
+
     is_tensor = (
         isinstance(origin, type) and issubclass(origin, Tensor)
     ) or "tensor" in str(ret_ann).lower()

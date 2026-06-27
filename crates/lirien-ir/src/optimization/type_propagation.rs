@@ -355,6 +355,38 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, func.get_type(*buf));
                         }
                     }
+                    InstructionKind::ListCreate(d, elem_ty) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::List(Box::new(elem_ty.clone())));
+                        }
+                    }
+                    InstructionKind::ListAppend(d, list, _val) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, func.get_type(*list));
+                        }
+                    }
+                    InstructionKind::ListLen(d, _list) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::I64);
+                        }
+                    }
+                    InstructionKind::ListLoad(d, list, _idx) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            if let Type::List(inner) = func.get_type(*list).base_type() {
+                                new_types.insert(*d, (**inner).clone());
+                            }
+                        }
+                    }
+                    InstructionKind::ListStore(d, list, _idx, _val) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, func.get_type(*list));
+                        }
+                    }
                     InstructionKind::IToF(d, _, ty)
                     | InstructionKind::FToI(d, _, ty)
                     | InstructionKind::FConv(d, _, ty) => {
@@ -636,6 +668,8 @@ pub fn propagate_types(func: &mut Function) {
                     let ty = func.get_type(*arr);
                     if let Type::Buffer(_) = ty {
                         Some(InstructionKind::BufferLoad(*d, *arr, *idx))
+                    } else if let Type::List(_) = ty {
+                        Some(InstructionKind::ListLoad(*d, *arr, *idx))
                     } else {
                         None
                     }
@@ -644,6 +678,8 @@ pub fn propagate_types(func: &mut Function) {
                     let ty = func.get_type(*arr);
                     if let Type::Buffer(inner) = ty {
                         Some(InstructionKind::BufferStore(*d, *arr, *idx, *val, *inner))
+                    } else if let Type::List(_) = ty {
+                        Some(InstructionKind::ListStore(*d, *arr, *idx, *val))
                     } else {
                         None
                     }

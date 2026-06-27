@@ -127,6 +127,10 @@ pub fn parse_type(
                     let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
+                "list" => {
+                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    Ok(Type::List(Box::new(inner)))
+                }
                 "tensor" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.is_empty() {
@@ -584,7 +588,7 @@ fn expr_to_string_internal(
             let (base, b_ty) = expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
             let (slice, _) = expr_to_string_internal(&s.slice, arg_name, base_ty, struct_layouts)?;
             let inner_ty = match b_ty {
-                Type::Array(t, _) | Type::Buffer(t) | Type::Tensor(t, _) => *t,
+                Type::Array(t, _) | Type::Buffer(t) | Type::List(t) | Type::Tensor(t, _) => *t,
                 _ => Type::Unknown,
             };
             Ok((format!("(select {} {})", base, slice), inner_ty))

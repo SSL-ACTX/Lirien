@@ -127,7 +127,7 @@ pub fn init_values<
                 bit_width,
             );
             ctx.z3_arrays.insert(val, payload_val);
-        } else if let Type::Buffer(_) = inner_ty {
+        } else if let Type::Buffer(_) | Type::List(_) = inner_ty {
             let z3_len = ctx
                 .backend
                 .bv_const(&format!("{}_v{}_len_{}", ctx.func.name, i, ctx.uid), 64);
@@ -582,6 +582,60 @@ pub fn translate<
             let __inner = ctx.backend.bv_eq(&z3_dest, &z3_len);
             let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
             ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::ListCreate(dest, _elem_ty) => {
+            let z3_len = ctx.backend.bv_from_i64(0, 64);
+            ctx.z3_bvs.insert(*dest, z3_len);
+        }
+        InstructionKind::ListAppend(dest, list, _val) => {
+            let z3_list_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
+                format!("ListAppend: list v{} not found in z3_bvs", list.0)
+            })?;
+            let one = ctx.backend.bv_from_i64(1, 64);
+            let z3_new_len = ctx.backend.bv_add(&z3_list_len, &one);
+            ctx.z3_bvs.insert(*dest, z3_new_len);
+        }
+        InstructionKind::ListLen(dest, list) => {
+            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
+                format!("ListLen: list v{} not found in z3_bvs", list.0)
+            })?;
+            ctx.z3_bvs.insert(*dest, z3_len);
+        }
+        InstructionKind::ListLoad(dest, list, index) => {
+            let z3_idx = ctx.z3_bvs.get(index).cloned().ok_or_else(|| {
+                format!("ListLoad: index v{} not found in z3_bvs", index.0)
+            })?;
+            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
+                format!("ListLoad: list v{} not found in z3_bvs", list.0)
+            })?;
+            check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
+
+            let dest_ty = ctx.func.get_type(*dest);
+            if dest_ty.is_float() {
+                let is_f32 = dest_ty.is_float32();
+                let z3_val = ctx.backend.float_const(
+                    &format!("{}_v{}_load_{}", ctx.func.name, dest.0, ctx.uid),
+                    is_f32,
+                );
+                ctx.z3_floats.insert(*dest, z3_val);
+            } else {
+                let bit_width = dest_ty.int_bit_width().unwrap_or(64);
+                let z3_val = ctx.backend.bv_const(
+                    &format!("{}_v{}_load_{}", ctx.func.name, dest.0, ctx.uid),
+                    bit_width,
+                );
+                ctx.z3_bvs.insert(*dest, z3_val);
+            }
+        }
+        InstructionKind::ListStore(dest, list, index, _val) => {
+            let z3_idx = ctx.z3_bvs.get(index).cloned().ok_or_else(|| {
+                format!("ListStore: index v{} not found in z3_bvs", index.0)
+            })?;
+            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
+                format!("ListStore: list v{} not found in z3_bvs", list.0)
+            })?;
+            check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
+            ctx.z3_bvs.insert(*dest, z3_len);
         }
         InstructionKind::StructCreate(dest, struct_name, args) => {
             let dest_ty = ctx.func.get_type(*dest);

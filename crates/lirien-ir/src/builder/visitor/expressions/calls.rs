@@ -7,6 +7,20 @@ use rustpython_ast as ast;
 impl CFGBuilder {
     pub(crate) fn visit_call(&mut self, s: ast::ExprCall) -> BuilderResult<Value> {
         let expr_offset = s.range.start().to_usize();
+
+        // Check for List constructor (e.g. List[i64]())
+        if let ast::Expr::Subscript(sub) = &*s.func {
+            if let ast::Expr::Name(n) = &*sub.value {
+                if n.id.as_str() == "List" {
+                    let list_elem_ty = crate::builder::metadata::parse_type(&sub.slice, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
+                    let dest = self.func.next_value();
+                    push_inst!(self, InstructionKind::ListCreate(dest, list_elem_ty.clone()));
+                    self.func.set_type(dest, Type::List(Box::new(list_elem_ty)));
+                    return Ok(dest);
+                }
+            }
+        }
+
         let (func_name, method_obj, is_indirect) = match &*s.func {
             ast::Expr::Name(n) => {
                 let name = n.id.to_string();
@@ -31,7 +45,7 @@ impl CFGBuilder {
                             (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                         } else if let Type::Enum(enum_name) = curr_ty {
                             (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
-                        } else if let Type::Tensor(..) = curr_ty {
+                        } else if let Type::Tensor(..) | Type::List(..) = curr_ty {
                             (attr.attr.to_string(), Some(obj), false)
                         } else {
                             return Err(builder_error!(
@@ -50,7 +64,7 @@ impl CFGBuilder {
                         (format!("{}_{}", struct_name, attr.attr), Some(obj), false)
                     } else if let Type::Enum(enum_name) = curr_ty {
                         (format!("{}_{}", enum_name, attr.attr), Some(obj), false)
-                    } else if let Type::Tensor(..) = curr_ty {
+                    } else if let Type::Tensor(..) | Type::List(..) = curr_ty {
                         (attr.attr.to_string(), Some(obj), false)
                     } else {
                         return Err(builder_error!(
@@ -280,6 +294,25 @@ impl CFGBuilder {
                 push_inst!(self, kind);
                 self.func.set_type(dest, *inner);
                 return Ok(dest);
+            } else if let Type::List(inner) = obj_ty {
+                if func_name.as_str() == "append" {
+                    if s.args.len() != 1 {
+                        return Err(builder_error!(General, "append() expects 1 argument"));
+                    }
+                    let mut val = self.visit_expr(s.args[0].clone())?;
+                    val = self.auto_load(val);
+                    let dest = self.func.next_value();
+                    push_inst!(self, InstructionKind::ListAppend(dest, obj, val));
+                    self.func.set_type(dest, Type::List(inner.clone()));
+
+                    // Write back dest to the base list expression if it is a write target
+                    if let ast::Expr::Attribute(attr) = &*s.func {
+                        self.handle_assignment_target(&attr.value, dest)?;
+                    }
+                    return Ok(dest);
+                } else {
+                    return Err(builder_error!(General, "Unknown List method: {}", func_name));
+                }
             }
         }
 
@@ -384,6 +417,11 @@ impl CFGBuilder {
             if let Type::Buffer(_) = ty {
                 let dest = self.func.next_value();
                 push_inst!(self, InstructionKind::BufferLen(dest, arg));
+                self.func.set_type(dest, Type::I64);
+                return Ok(dest);
+            } else if let Type::List(_) = ty {
+                let dest = self.func.next_value();
+                push_inst!(self, InstructionKind::ListLen(dest, arg));
                 self.func.set_type(dest, Type::I64);
                 return Ok(dest);
             } else if let Type::Array(_, Some(size)) = ty {

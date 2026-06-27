@@ -60,6 +60,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I16X8 | SsaType::U16X8 => types::I16X8,
         SsaType::Array(_, _)
         | SsaType::Buffer(_)
+        | SsaType::List(_)
         | SsaType::Tensor(_, _)
         | SsaType::Struct(_)
         | SsaType::TypedDict(_)
@@ -254,6 +255,78 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }
     }
 
+    #[repr(C)]
+    struct ListHeader {
+        data: *mut u8,
+        len: usize,
+        cap: usize,
+    }
+
+    extern "C" fn lirien_list_new() -> *mut ListHeader {
+        Box::into_raw(Box::new(ListHeader {
+            data: std::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        }))
+    }
+
+    extern "C" fn lirien_list_append(list: *mut ListHeader, item_ptr: *const u8, elem_size: usize) {
+        unsafe {
+            let list = &mut *list;
+            if list.len == list.cap {
+                let new_cap = if list.cap == 0 { 4 } else { list.cap * 2 };
+                let new_data = if list.data.is_null() {
+                    std::alloc::alloc(std::alloc::Layout::from_size_align(new_cap * elem_size, 8).unwrap())
+                } else {
+                    std::alloc::realloc(
+                        list.data,
+                        std::alloc::Layout::from_size_align(list.cap * elem_size, 8).unwrap(),
+                        new_cap * elem_size,
+                    )
+                };
+                if new_data.is_null() {
+                    panic!("Out of memory in lirien_list_append");
+                }
+                list.data = new_data;
+                list.cap = new_cap;
+            }
+            std::ptr::copy_nonoverlapping(
+                item_ptr,
+                list.data.add(list.len * elem_size),
+                elem_size,
+            );
+            list.len += 1;
+        }
+    }
+
+    extern "C" fn lirien_list_len(list: *mut ListHeader) -> usize {
+        unsafe { (*list).len }
+    }
+
+    extern "C" fn lirien_list_get(list: *mut ListHeader, index: usize, elem_size: usize) -> *mut u8 {
+        unsafe {
+            let list = &*list;
+            if index >= list.len {
+                panic!("Index out of bounds in lirien_list_get: {} >= {}", index, list.len);
+            }
+            list.data.add(index * elem_size)
+        }
+    }
+
+    extern "C" fn lirien_list_set(list: *mut ListHeader, index: usize, item_ptr: *const u8, elem_size: usize) {
+        unsafe {
+            let list = &mut *list;
+            if index >= list.len {
+                panic!("Index out of bounds in lirien_list_set: {} >= {}", index, list.len);
+            }
+            std::ptr::copy_nonoverlapping(
+                item_ptr,
+                list.data.add(index * elem_size),
+                elem_size,
+            );
+        }
+    }
+
     jit_builder.symbol("malloc", malloc as *const u8);
     jit_builder.symbol("memcpy", memcpy as *const u8);
     jit_builder.symbol("sin", lirien_sin as *const u8);
@@ -275,6 +348,11 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("lirien_tensor_reduce_f32", lirien_tensor_reduce_f32 as *const u8);
     jit_builder.symbol("lirien_tensor_scalar_arith_f32", lirien_tensor_scalar_arith_f32 as *const u8);
     jit_builder.symbol("lirien_tensor_broadcast_f32", lirien_tensor_broadcast_f32 as *const u8);
+    jit_builder.symbol("lirien_list_new", lirien_list_new as *const u8);
+    jit_builder.symbol("lirien_list_append", lirien_list_append as *const u8);
+    jit_builder.symbol("lirien_list_len", lirien_list_len as *const u8);
+    jit_builder.symbol("lirien_list_get", lirien_list_get as *const u8);
+    jit_builder.symbol("lirien_list_set", lirien_list_set as *const u8);
 
     let mut module = JITModule::new(jit_builder);
     let mut ctx = module.make_context();

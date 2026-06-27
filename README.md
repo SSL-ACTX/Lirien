@@ -28,6 +28,7 @@ The result is a compiler that can statically guarantee the absence of certain cl
 - **Symbolic Refinement DSL (`V`):** Point-free predicate expressions written with the `V` placeholder instead of raw lambdas — composable with standard arithmetic and logical operators.
 - **Flow-Sensitive Smart Casts:** After a `is None` guard, the compiler automatically narrows an `Optional[Box[T]]` to `Box[T]` in the taken branch, eliminating redundant null checks and enabling precise Z3 reasoning on the narrowed type.
 - **Formal Memory Safety:** Z3 proves non-nullity before every pointer dereference and validates all buffer accesses against their declared bounds.
+- **Verified Growable List (`List[T]`):** Heap-allocated dynamic arrays with bounds checking and length semantics fully modeled and verified by Z3.
 - **Native Code Generation:** Functions decorated with `@verify` are compiled to machine code via Cranelift and called directly through a C-ABI trampoline, bypassing the CPython interpreter and GIL.
 - **Flat Struct Layout:** `@struct` and `@value` types are compiled to C-compatible, flat memory layouts. Nested structs are inlined by byte offset, not represented as pointer chains.
 - **Const Generics and Type-Level Arithmetic:** Integer dimensions are bound statically using `TypeVar`, and symbolic arithmetic (e.g., `N + 1`) is evaluated at JIT time.
@@ -437,6 +438,27 @@ def configure(cfg: Config) -> i64:
     return 0
 ```
 
+#### Verified Growable Lists (`List[T]`)
+`List[T]` represents a dynamically-sized list stored on the heap. Z3 models the list length and validates all index accesses against the dynamic bounds of the list to prevent out-of-bounds reads and writes.
+
+```python
+from lirien import verify, List, i64, Refined
+
+@verify
+def safe_index(l: List[i64], idx: i64) -> i64:
+    # Z3 verifies index safety. Accessing l[idx] directly without guards is a compile error.
+    if idx >= 0 and idx < len(l):
+        return l[idx]
+    return 0
+
+@verify
+def build_list() -> List[i64]:
+    l = List[i64]()
+    l.append(42)
+    l.append(100)
+    return l
+```
+
 #### Buffer Interop and Zero-Copy Slicing
 `Buffer[T]` wraps any object implementing the Python buffer protocol (including NumPy arrays). Loop indices over a `Buffer` are bounded by its declared length and verified by Z3. Slicing produces a zero-copy memory view; Z3 proves the slice is within the original buffer's bounds.
 
@@ -615,7 +637,7 @@ graph TD
 | **Generics** | Monomorphization via `TypeVar`; rank polymorphism via `TypeVarTuple` |
 | **Const generics** | Integer `TypeVar` dimensions with symbolic arithmetic (`N + 1`) |
 | **Callable types** | `FnPointer`, `Closure`, `Callable` |
-| **Aggregate types** | `@struct`, `@value`, `Tuple`, `NamedTuple`, `@adt`, `Box`, `SizedArray`, `Buffer`, `Tensor` |
+| **Aggregate types** | `@struct`, `@value`, `Tuple`, `NamedTuple`, `@adt`, `Box`, `SizedArray`, `Buffer`, `Tensor`, `List` |
 | **Concurrency** | `parallel_for` on raw memory buffers (no GIL) |
 | **SMT solver** | Z3 v4.12+ — bitvector, floating-point, and array theories |
 | **JIT backend** | Cranelift 0.100+ |
@@ -669,10 +691,7 @@ To maintain sound verification, Lirien restricts the subset of Python it accepts
 
 ### Roadmap
 
-| Item | Status |
-| :--- | :--- |
-| Automated loop invariant synthesis (abstract interpretation) | WIP |
-| Verified Growable List (`List[T]`) | Planned |
+All currently planned core features have been implemented.
 
 ---
 

@@ -150,8 +150,12 @@ fn lower_instruction_internal<M: Module>(
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::ArraySlice(_, _, _, _)
         | InstructionKind::BufferLoad(_, _, _)
-
         | InstructionKind::BufferStore(_, _, _, _, _)
+        | InstructionKind::ListCreate(_, _)
+        | InstructionKind::ListAppend(_, _, _)
+        | InstructionKind::ListLen(_, _)
+        | InstructionKind::ListLoad(_, _, _)
+        | InstructionKind::ListStore(_, _, _, _)
         | InstructionKind::TensorLoad(_, _, _)
         | InstructionKind::TensorStore(_, _, _, _)
         | InstructionKind::TensorDim(_, _, _)

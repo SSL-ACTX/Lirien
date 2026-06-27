@@ -155,6 +155,114 @@ fn lower_tensor_scalar_arith<M: Module>(
 
 pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), LoweringError> {
     match kind {
+        InstructionKind::ListCreate(dest, _elem_ty) => {
+            let mut sig = ctx.module.make_signature();
+            sig.returns.push(AbiParam::new(types::I64)); // list ptr
+
+            let func = ctx.module.declare_function("lirien_list_new", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[]);
+            let list_ptr = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, list_ptr);
+        }
+        InstructionKind::ListAppend(dest, list, val) => {
+            let list_ptr = get_val(&ctx.values, list);
+            let val_ty = ctx.ssa_func.get_type(*val);
+            let val_ptr = if val_ty.is_composite() {
+                get_val(&ctx.values, val)
+            } else {
+                let size = val_ty.size(&ctx.ssa_func.struct_layouts);
+                let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    size as u32,
+                ));
+                let addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
+                super::storage::store_to_memory(ctx, *val, addr, 0);
+                addr
+            };
+            let elem_size = val_ty.size(&ctx.ssa_func.struct_layouts);
+            let elem_size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // list
+            sig.params.push(AbiParam::new(types::I64)); // val_ptr
+            sig.params.push(AbiParam::new(types::I64)); // elem_size
+
+            let func = ctx.module.declare_function("lirien_list_append", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            ctx.builder.ins().call(local_func, &[list_ptr, val_ptr, elem_size_val]);
+
+            ctx.values.insert(*dest, list_ptr);
+        }
+        InstructionKind::ListLen(dest, list) => {
+            let list_ptr = get_val(&ctx.values, list);
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // list
+            sig.returns.push(AbiParam::new(types::I64)); // len
+
+            let func = ctx.module.declare_function("lirien_list_len", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[list_ptr]);
+            let len_val = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, len_val);
+        }
+        InstructionKind::ListLoad(dest, list, index) => {
+            let list_ptr = get_val(&ctx.values, list);
+            let idx_val = get_val(&ctx.values, index);
+            let dest_ty = ctx.ssa_func.get_type(*dest);
+            let elem_size = dest_ty.size(&ctx.ssa_func.struct_layouts);
+            let elem_size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // list
+            sig.params.push(AbiParam::new(types::I64)); // index
+            sig.params.push(AbiParam::new(types::I64)); // elem_size
+            sig.returns.push(AbiParam::new(types::I64)); // elem_ptr
+
+            let func = ctx.module.declare_function("lirien_list_get", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[list_ptr, idx_val, elem_size_val]);
+            let addr = ctx.builder.inst_results(call)[0];
+
+            if dest_ty.is_composite() {
+                ctx.values.insert(*dest, addr);
+            } else {
+                let cl_ty = translate_type(&dest_ty);
+                let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), addr, 0);
+                ctx.values.insert(*dest, res);
+            }
+        }
+        InstructionKind::ListStore(dest, list, index, val) => {
+            let list_ptr = get_val(&ctx.values, list);
+            let idx_val = get_val(&ctx.values, index);
+            let val_ty = ctx.ssa_func.get_type(*val);
+            let val_ptr = if val_ty.is_composite() {
+                get_val(&ctx.values, val)
+            } else {
+                let size = val_ty.size(&ctx.ssa_func.struct_layouts);
+                let slot = ctx.builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    size as u32,
+                ));
+                let addr = ctx.builder.ins().stack_addr(types::I64, slot, 0);
+                super::storage::store_to_memory(ctx, *val, addr, 0);
+                addr
+            };
+            let elem_size = val_ty.size(&ctx.ssa_func.struct_layouts);
+            let elem_size_val = ctx.builder.ins().iconst(types::I64, elem_size as i64);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // list
+            sig.params.push(AbiParam::new(types::I64)); // index
+            sig.params.push(AbiParam::new(types::I64)); // val_ptr
+            sig.params.push(AbiParam::new(types::I64)); // elem_size
+
+            let func = ctx.module.declare_function("lirien_list_set", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            ctx.builder.ins().call(local_func, &[list_ptr, idx_val, val_ptr, elem_size_val]);
+
+            ctx.values.insert(*dest, list_ptr);
+        }
         InstructionKind::BufferLoad(dest, buf, idx) => {
             let buf_ptr = get_val(&ctx.values, buf);
             let idx_val = get_val(&ctx.values, idx);

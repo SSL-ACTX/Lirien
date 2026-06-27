@@ -555,6 +555,41 @@ macro_rules! lirien_instructions {
                 side_effects: false,
                 category: Memory
             },
+            ListCreate(dest: Value, element_type: Type) {
+                display: "{} = list_create (as {})",
+                def: Some(*dest),
+                uses: [],
+                side_effects: true,
+                category: Memory
+            },
+            ListAppend(dest: Value, list: Value, val: Value) {
+                display: "{} = list_append {}, {}",
+                def: Some(*dest),
+                uses: [*list, *val],
+                side_effects: true,
+                category: Memory
+            },
+            ListLen(dest: Value, list: Value) {
+                display: "{} = list_len {}",
+                def: Some(*dest),
+                uses: [*list],
+                side_effects: false,
+                category: Memory
+            },
+            ListLoad(dest: Value, list: Value, index: Value) {
+                display: "{} = list_load {}[{}]",
+                def: Some(*dest),
+                uses: [*list, *index],
+                side_effects: false,
+                category: Memory
+            },
+            ListStore(dest: Value, list: Value, index: Value, val: Value) {
+                display: "{} = list_store {}[{}] <- {}",
+                def: Some(*dest),
+                uses: [*list, *index, *val],
+                side_effects: true,
+                category: Memory
+            },
             TensorLoad(dest: Value, tensor: Value, indices: Vec<Value>) {
                 display: "{} = tload {}[...] ",
                 def: Some(*dest),

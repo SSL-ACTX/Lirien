@@ -32,6 +32,7 @@ from .types import (
     Callable,
     Closure,
     Tensor,
+    List,
     V,
 )
 from .types.arithmetic import (
@@ -72,6 +73,7 @@ __all__ = [
     "SizedArray",
     "Buffer",
     "Box",
+    "List",
     "i8",
     "u8",
     "i16",

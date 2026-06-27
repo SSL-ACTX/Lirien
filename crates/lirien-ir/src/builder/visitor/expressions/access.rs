@@ -157,6 +157,10 @@ impl CFGBuilder {
                                 push_inst!(self, InstructionKind::BufferLoad(dest, arr, idx));
                                 self.func.set_type(dest, *inner);
                             }
+                            Type::List(inner) => {
+                                push_inst!(self, InstructionKind::ListLoad(dest, arr, idx));
+                                self.func.set_type(dest, *inner);
+                            }
                             Type::Array(inner, _) => {
                                 push_inst!(self, InstructionKind::ArrayLoad(dest, arr, idx));
                                 self.func.set_type(dest, *inner);

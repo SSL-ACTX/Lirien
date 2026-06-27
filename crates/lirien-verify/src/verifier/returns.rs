@@ -42,6 +42,7 @@ fn types_compatible(a: &Type, r: &Type) -> bool {
             a_size == r_size && types_compatible(a_inner, r_inner)
         }
         (Type::Buffer(a_inner), Type::Buffer(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::List(a_inner), Type::List(r_inner)) => types_compatible(a_inner, r_inner),
         _ => a == r,
     }
 }

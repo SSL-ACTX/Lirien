@@ -76,6 +76,8 @@ pub enum Type {
     NullablePointer(Box<Type>),
     /// Optional type, logically containing a tag and a payload.
     Optional(Box<Type>),
+    /// Growable dynamic list with element type.
+    List(Box<Type>),
     /// Function pointer type containing argument types, return type, and description.
     FnPointer(Vec<Type>, Box<Type>, Option<String>),
     /// Closure type containing closure name, captured variables, return type, and description.
@@ -181,6 +183,7 @@ impl Type {
     pub fn is_pointer_like(&self) -> bool {
         match self {
             Type::Buffer(_)
+            | Type::List(_)
             | Type::Array(_, _)
             | Type::Pointer(_)
             | Type::NullablePointer(_)
@@ -248,6 +251,7 @@ impl Type {
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
             Type::Array(_, None) => 8, // Pointer to array
             Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
+            Type::List(_) => 8,        // Pointer to list header struct
             Type::Struct(name) | Type::TypedDict(name) | Type::NamedTuple(name) => {
                 if let Some(fields) = struct_layouts.get(name) {
                     let mut offset = 0;
