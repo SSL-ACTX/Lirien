@@ -54,6 +54,7 @@ pub trait SolverBackend {
     fn int_from_i64(&mut self, val: i64) -> Self::Int;
     fn int_add(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Int;
     fn int_sub(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Int;
+    fn int_mul(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Int;
     fn int_eq(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Bool;
     fn int_ge(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Bool;
     fn int_lt(&mut self, a: &Self::Int, b: &Self::Int) -> Self::Bool;

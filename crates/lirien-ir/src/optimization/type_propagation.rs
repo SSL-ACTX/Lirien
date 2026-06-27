@@ -444,7 +444,7 @@ pub fn propagate_types(func: &mut Function) {
                             }
                         }
                     }
-                    InstructionKind::ArraySlice(d, arr, _) => {
+                    InstructionKind::ArraySlice(d, arr, _, _) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
                             new_types.insert(*d, func.get_type(*arr));

@@ -252,6 +252,10 @@ pub fn translate<
             }
 
             let mut z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            // Apply stride: if this array is a strided slice, physical_idx = offset + logical_idx * stride
+            if let Some(stride) = ctx.array_strides.get(arr).cloned() {
+                z3_idx_int = ctx.backend.int_mul(&z3_idx_int, &stride);
+            }
             if let Some(offset) = ctx.array_offsets.get(arr) {
                 z3_idx_int = ctx.backend.int_add(&z3_idx_int, offset);
             }
@@ -279,6 +283,9 @@ pub fn translate<
             }
 
             let mut z3_idx_int = ctx.backend.bv_to_int(&z3_idx, true);
+            if let Some(stride) = ctx.array_strides.get(arr).cloned() {
+                z3_idx_int = ctx.backend.int_mul(&z3_idx_int, &stride);
+            }
             if let Some(offset) = ctx.array_offsets.get(arr) {
                 z3_idx_int = ctx.backend.int_add(&z3_idx_int, offset);
             }
@@ -300,7 +307,7 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             }
         }
-        InstructionKind::ArraySlice(dest, arr, start_idx) => {
+        InstructionKind::ArraySlice(dest, arr, start_idx, step) => {
             let z3_arr = ctx
                 .z3_arrays
                 .get(arr)
@@ -324,7 +331,9 @@ pub fn translate<
                 )?;
             }
 
-            // Propagate the same array object but with an updated offset
+            // Propagate the same array object but with an updated base offset.
+            // The stride is tracked separately; logical index `i` maps to physical
+            // index `base_offset + start_idx + i * step` at load/store time.
             ctx.z3_arrays.insert(*dest, z3_arr);
 
             let mut new_offset = ctx.backend.bv_to_int(&z3_idx, true);
@@ -332,6 +341,37 @@ pub fn translate<
                 new_offset = ctx.backend.int_add(&new_offset, base_offset);
             }
             ctx.array_offsets.insert(*dest, new_offset);
+
+            // Track the step so ArrayLoad can multiply indices by it.
+            if let Some(z3_step) = ctx.z3_bvs.get(step).cloned() {
+                let step_int = ctx.backend.bv_to_int(&z3_step, true);
+
+                // For reverse (negative-step) slices: prove that the last element's
+                // physical index stays >= 0.  Physical last = start + (n-1) * step >= 0.
+                // We encode this as: start_idx_int + (slice_size - 1) * step_int >= 0.
+                if let Type::Array(_, Some(n)) = ctx.func.get_type(*dest) {
+                    if n > 0 {
+                        let start_int = ctx.backend.bv_to_int(&z3_idx, true);
+                        let n_minus_1 = ctx.backend.int_from_i64((n as i64) - 1);
+                        let step_offset = ctx.backend.int_mul(&n_minus_1, &step_int);
+                        let last_phys = ctx.backend.int_add(&start_int, &step_offset);
+                        let zero_int = ctx.backend.int_from_i64(0);
+                        // Violation: last physical index < 0 (walks before array start)
+                        let violation = ctx.backend.int_lt(&last_phys, &zero_int);
+                        ctx.check_safety(
+                            path_cond,
+                            &violation,
+                            format!(
+                                "Reverse slice at v{} may access before start of array",
+                                dest.0
+                            ),
+                            inst.location,
+                        )?;
+                    }
+                }
+
+                ctx.array_strides.insert(*dest, step_int);
+            }
         }
         InstructionKind::TensorLoad(dest, tensor, indices) => {
             let z3_tensor_data = ctx.z3_arrays.get(tensor).cloned().unwrap();

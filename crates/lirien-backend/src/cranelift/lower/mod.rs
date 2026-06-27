@@ -148,7 +148,7 @@ fn lower_instruction_internal<M: Module>(
 
         | InstructionKind::ArrayLoad(_, _, _)
         | InstructionKind::ArrayStore(_, _, _, _, _)
-        | InstructionKind::ArraySlice(_, _, _)
+        | InstructionKind::ArraySlice(_, _, _, _)
         | InstructionKind::BufferLoad(_, _, _)
 
         | InstructionKind::BufferStore(_, _, _, _, _)

@@ -242,14 +242,27 @@ impl CFGBuilder {
             return Err(builder_error!(General, "Slice end index required for Buffers"));
         };
 
-        // TODO: Handle step
-        if slice.step.is_some() {
-            return Err(builder_error!(General, "Slice step not yet supported"));
+        let step = if let Some(s) = &slice.step {
+            let step_val = self.visit_expr(*s.clone())?;
+            self.auto_load(step_val)
+        } else {
+            let v = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(v, 1));
+            self.func.set_type(v, Type::I64);
+            v
+        };
+
+        let mut step_const = 1i64;
+        if let Some(val) = self.get_constant_int(step) {
+            if val == 0 {
+                return Err(builder_error!(General, "Slice step cannot be zero"));
+            }
+            step_const = val;
         }
 
-        push_inst!(self, InstructionKind::ArraySlice(dest, arr, lower));
+        push_inst!(self, InstructionKind::ArraySlice(dest, arr, lower, step));
 
-        // Infer new size if possible
+        // Infer new size if both bounds are compile-time constants.
         let mut new_size = None;
         let mut lower_val = None;
         let mut upper_val = None;
@@ -268,9 +281,17 @@ impl CFGBuilder {
         }
 
         if let (Some(l), Some(u)) = (lower_val, upper_val) {
-            if u >= l {
-                new_size = Some((u - l) as usize);
-            }
+            new_size = if step_const > 0 && u > l {
+                // Forward slice: ceil((u - l) / step)
+                Some(((u - l + step_const - 1) / step_const) as usize)
+            } else if step_const < 0 && l > u {
+                // Reverse slice: ceil((l - u) / |step|)
+                let abs_step = -step_const;
+                Some(((l - u + abs_step - 1) / abs_step) as usize)
+            } else {
+                // Empty (step direction contradicts bounds ordering)
+                Some(0)
+            };
         }
 
         self.func.set_type(dest, Type::Array(inner_ty, new_size));

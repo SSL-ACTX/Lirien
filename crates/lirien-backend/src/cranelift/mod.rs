@@ -33,6 +33,8 @@ pub struct CodegenContext<'a, M: Module> {
     pub buffer_lengths: HashMap<SsaValue, Value>,
     /// Maps tensor references to their Cranelift integer dimension variables.
     pub tensor_dims: HashMap<SsaValue, Vec<Value>>,
+    /// Maps sliced array SSA values to their step Cranelift value (for strided indexing).
+    pub array_strides: HashMap<SsaValue, Value>,
     /// True if the function returns a multi-register or memory-flushed tuple aggregate.
     pub is_tuple_return: bool,
     /// Pointer to the pre-allocated struct return value buffer (sret).
@@ -367,6 +369,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             unpacked_values,
             buffer_lengths,
             tensor_dims: HashMap::new(),
+            array_strides: HashMap::new(),
             is_tuple_return: is_ptr_return,
             sret_ptr: None,
         };

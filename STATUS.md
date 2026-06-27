@@ -31,17 +31,18 @@ Lirien is an experimental research compiler. It is under active development and 
 - `typing.overload` multiple dispatch — per-signature machine-code specialization
 - `typing.Literal` loop unrolling — compile-time integer constants with exact Z3 induction values
 - `TypedDict` zero-cost struct layout — string key access compiled to byte offsets
+- Non-pointer value-type optionals (`T | None` / `Optional[T]`) using inline tagged layout (has_value tag + value)
 
 ### Memory & Data Structures
 - `@struct` / `@value` — flat, C-ABI-compatible layouts with inlined nested structs
 - `@adt` — tagged unions with O(1) Cranelift `switch`-based variant dispatch
 - `Box[T]` — heap-allocated pointer type
 - `Optional[Box[T]]` / `Box[T] | None` — null-pointer optimization (raw 64-bit pointer, `None` = `0x0`)
-- Flow-sensitive smart casts — automatic type narrowing after `is None` / `is not None` guards
+- Flow-sensitive smart casts — automatic type narrowing after `is None` / `is not None` guards for both pointer and value-type optionals
 - `Tuple` / `NamedTuple` — recursively register-flattened; SRet convention for aggregates > 16 bytes
 - `SizedArray[T, N]` — statically-sized arrays with Z3-verified index bounds
-- `Buffer[T]` / `Buffer[...]` — Python buffer protocol interop with zero-copy slicing and direct iteration
-- `Tensor[T, *Shape]` — rank-polymorphic tensors with type-level shape tracking
+- `Buffer[T]` / `Buffer[...]` — Python buffer protocol interop with zero-copy slicing (including strided slicing `arr[start:end:step]`) and direct iteration
+- `Tensor[T, *Shape]` — rank-polymorphic tensors with type-level shape tracking and verified 2D matrix multiplication (`@` operator)
 - `Result[T, E]` — generic result type with `Ok` / `Err` variants
 
 ### Verification
@@ -52,12 +53,14 @@ Lirien is an experimental research compiler. It is under active development and 
 - Match guards (`case Pattern if condition:`) — guards encoded as SMT constraints
 - Inductive reasoning for recursive functions
 - Interval analysis — skips Z3 solver calls for trivially provable constraints
+- Automated loop invariant synthesis — abstract interpretation to automatically derive loop invariants and entry-edge implication constraints
 
 ### Code Generation
 - Cranelift JIT backend — native machine code in executable memory
 - C-ABI trampoline via PyO3 — verified functions replace the Python callable directly
 - SIMD types — `f32x4`, `f64x2`, `i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `i64x2`
 - GIL-free `parallel_for` on raw memory buffers
+- IR-level kernel fusion — folds chains of element-wise tensor arithmetic operations to avoid intermediate allocations
 
 ### Developer Tooling
 - `@jit` decorator — Cranelift compilation without Z3 verification
@@ -74,11 +77,7 @@ Lirien is an experimental research compiler. It is under active development and 
 
 | Item | Notes |
 | :--- | :--- |
-| **Non-Pointer Optionals (`T \| None`)** | Inline tagged value-type Optionals (like Rust's `Option<T>`) for primitives and structs. |
 | **Verified Growable List (`List[T]`)** | Zero-overhead, heap-allocated dynamic list with Z3 bounds checking and allocation safety. |
-| **Strided Array Slices (`arr[start:end:step]`)** | Support step/stride parameter in slice indexing, complete with Z3 bounds checks and Cranelift lowers. |
-| **Verified Matrix Multiplication (`@` operator)** | Shape-checked 2D matrix multiplication with compile-time dimension matching via Z3 and JIT lowering. |
-| Automated loop invariant synthesis | Abstract interpretation to derive invariants without user annotations |
 
 ---
 

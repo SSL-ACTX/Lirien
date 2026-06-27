@@ -625,7 +625,7 @@ graph TD
 | **Diagnostics** | Source-mapped error locations, per-subsystem `tracing()` context manager |
 | **Decorator variants** | `@verify` (Z3 + JIT), `@jit` (JIT only, no Z3) |
 | **Refinement DSL** | `V` symbolic placeholder; `Refined[T, V > 0]` point-free predicate syntax |
-| **Optional safety** | `Box[T] \| None` / `Optional[Box[T]]` with flow-sensitive smart casts |
+| **Optional safety** | Pointer optionals (`Box[T] \| None`) and non-pointer value-type optionals (`T \| None`) with flow-sensitive smart casts |
 | **Auto-derived methods** | `__repr__` and `__eq__` on `@struct`, `@value`, and `@adt` types |
 
 ---
@@ -671,7 +671,8 @@ To maintain sound verification, Lirien restricts the subset of Python it accepts
 
 | Item | Status |
 | :--- | :--- |
-| Automated loop invariant synthesis (abstract interpretation) | Planned |
+| Automated loop invariant synthesis (abstract interpretation) | WIP |
+| Verified Growable List (`List[T]`) | Planned |
 
 ---
 

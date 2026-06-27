@@ -123,6 +123,8 @@ pub struct TranslationContext<'a, B: SolverBackend> {
     pub z3_tensor_dims: HashMap<Value, Vec<B::Int>>,
     /// Maps IR buffer references to their starting memory offsets.
     pub array_offsets: HashMap<Value, B::Int>,
+    /// Maps sliced IR arrays to their step/stride Int expression.
+    pub array_strides: HashMap<Value, B::Int>,
     /// Maps IR tuple aggregates to their constituent flattened values.
     pub tuple_mappings: HashMap<Value, Vec<Value>>,
     /// Block reachability execution conditions.
@@ -201,6 +203,7 @@ pub fn verify_with_context<
         z3_arrays: HashMap::new(),
         z3_tensor_dims: HashMap::new(),
         array_offsets: HashMap::new(),
+        array_strides: HashMap::new(),
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),

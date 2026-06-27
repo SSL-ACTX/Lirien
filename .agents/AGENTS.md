@@ -95,3 +95,14 @@ When adding a new capability to the DSL:
 
 ### 5.3 VERBOSE PYTHON DEBUGGING
 *   **Proactive Instrumentation:** When modifying or debugging Python-side logic (FFI, decorators, signatures), you MUST include temporary `print` statements to trace data flow, type resolutions, and internal state. Never operate "blind" on the Python side. These logs provide the visibility needed to catch subtle mapping errors before they reach the Rust layer.
+
+## 6. GIT COMMIT STANDARDS
+
+### 6.1 CONVENTIONAL COMMITS FORMAT
+*   **Format:** Git commit messages MUST follow the conventional commit format: `<type>(<scope>): <description>` (or `<type>: <description>` if scope is absent).
+*   **Case Sensitivity:** The description must be in all lowercase.
+*   **Examples:**
+    *   `feat(type-system): implement non-pointer value-type optionals (T | None)`
+    *   `feat(compiler): implement JIT kernel fusion for element-wise tensor operations`
+    *   `docs(rust): add comprehensive Rustdoc documentation across all workspace crates`
+

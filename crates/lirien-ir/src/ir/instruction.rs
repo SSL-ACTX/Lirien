@@ -527,10 +527,10 @@ macro_rules! lirien_instructions {
                 side_effects: true,
                 category: Memory
             },
-            ArraySlice(dest: Value, arr: Value, start_idx: Value) {
-                display: "{} = slice {}[{}:]",
+            ArraySlice(dest: Value, arr: Value, start_idx: Value, step: Value) {
+                display: "{} = slice {}[{}: step {}]",
                 def: Some(*dest),
-                uses: [*arr, *start_idx],
+                uses: [*arr, *start_idx, *step],
                 side_effects: false,
                 category: Memory
             },

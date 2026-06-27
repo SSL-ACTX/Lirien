@@ -433,7 +433,16 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 SsaType::Array(inner, _) => inner.size(&ctx.ssa_func.struct_layouts),
                 _ => 8,
             };
-            let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
+
+            // Apply stride if the source is a strided slice
+            let stride = ctx.array_strides.get(arr).copied();
+            let scaled_idx = if let Some(step_val) = stride {
+                ctx.builder.ins().imul(idx_val, step_val)
+            } else {
+                idx_val
+            };
+
+            let offset = ctx.builder.ins().imul_imm(scaled_idx, elem_size as i64);
             let addr = ctx.builder.ins().iadd(arr_ptr, offset);
 
             if dest_ty.is_composite() {
@@ -451,15 +460,24 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                 SsaType::Array(inner, _) => inner.size(&ctx.ssa_func.struct_layouts),
                 _ => 8,
             };
-            let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
+
+            let stride = ctx.array_strides.get(arr).copied();
+            let scaled_idx = if let Some(step_val) = stride {
+                ctx.builder.ins().imul(idx_val, step_val)
+            } else {
+                idx_val
+            };
+
+            let offset = ctx.builder.ins().imul_imm(scaled_idx, elem_size as i64);
             let addr = ctx.builder.ins().iadd(arr_ptr, offset);
 
             super::store_to_memory(ctx, *val, addr, 0);
             ctx.values.insert(*dest, arr_ptr);
         }
-        InstructionKind::ArraySlice(dest, arr, start_idx) => {
+        InstructionKind::ArraySlice(dest, arr, start_idx, step) => {
             let arr_ptr = get_val(&ctx.values, arr);
             let idx_val = get_val(&ctx.values, start_idx);
+            let step_val = get_val(&ctx.values, step);
             let elem_size = match &ctx.ssa_func.get_type(*arr) {
                 SsaType::Array(inner, _) | SsaType::Buffer(inner) => {
                     inner.size(&ctx.ssa_func.struct_layouts)
@@ -469,6 +487,14 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let offset = ctx.builder.ins().imul_imm(idx_val, elem_size as i64);
             let addr = ctx.builder.ins().iadd(arr_ptr, offset);
             ctx.values.insert(*dest, addr);
+            // Propagate stride from parent if it existed, then multiply by this slice's step
+            let parent_stride = ctx.array_strides.get(arr).copied();
+            let effective_stride = if let Some(ps) = parent_stride {
+                ctx.builder.ins().imul(ps, step_val)
+            } else {
+                step_val
+            };
+            ctx.array_strides.insert(*dest, effective_stride);
         }
         InstructionKind::StructCreate(dest, struct_name, args) => {
             let dest_ty = ctx.ssa_func.get_type(*dest);

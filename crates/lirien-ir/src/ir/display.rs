@@ -442,10 +442,10 @@ impl fmt::Display for Instruction {
                 "  {} = store {}[{}] <- {} (as {}){}{}",
                 d, arr, idx, val, ty, loc_str, constraints_str
             ),
-            InstructionKind::ArraySlice(d, arr, start_idx) => write!(
+            InstructionKind::ArraySlice(d, arr, start_idx, step) => write!(
                 f,
-                "  {} = slice {}[{}:]{}{}",
-                d, arr, start_idx, loc_str, constraints_str
+                "  {} = slice {}[{}: step {}]{}{}",
+                d, arr, start_idx, step, loc_str, constraints_str
             ),
             InstructionKind::BufferLoad(d, buf, idx) => write!(
                 f,
