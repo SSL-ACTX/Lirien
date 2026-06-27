@@ -109,7 +109,9 @@ pub(crate) fn parse_int_expr(
             if parts.len() != 4 {
                 return Err("ite (if-then-else) expects 3 arguments".to_string());
             }
-            let cond = super::booleans::parse_bool_expr(parts[1], v_int, None, None, v_arr, v_bv, resolver)?;
+            let cond = super::booleans::parse_bool_expr(
+                parts[1], v_int, None, None, v_arr, v_bv, resolver,
+            )?;
             let then = parse_int_expr(parts[2], v_int, v_arr, v_bv, resolver)?;
             let orelse = parse_int_expr(parts[3], v_int, v_arr, v_bv, resolver)?;
             Ok(cond.ite(&then, &orelse))

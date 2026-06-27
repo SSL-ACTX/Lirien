@@ -1,11 +1,11 @@
-use crate::builder::metadata::{extract_refinement, parse_type, expr_to_string};
+use crate::builder::error::BuilderResult;
+use crate::builder::metadata::{expr_to_string, extract_refinement, parse_type};
 use crate::builder::CFGBuilder;
-use crate::ir::{BlockId, InstructionKind, Type, Value, LoopInvariant};
+use crate::ir::{BlockId, InstructionKind, LoopInvariant, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
 use std::collections::{HashMap, HashSet};
-use crate::builder::error::BuilderResult;
-use crate::{push_inst, builder_error};
 
 impl CFGBuilder {
     pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> BuilderResult<()> {
@@ -13,21 +13,44 @@ impl CFGBuilder {
         self.func.arg_count = s.args.args.len();
 
         if let Some(returns) = &s.returns {
-            let ret_ty = parse_type(returns, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
+            let ret_ty = parse_type(
+                returns,
+                &self.type_aliases,
+                &self.named_tuple_names,
+                &self.typed_dict_names,
+                &self.enum_names,
+            )?;
             self.func.return_type = ret_ty;
-            self.func.ret_refinement =
-                extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
+            self.func.ret_refinement = extract_refinement(
+                returns,
+                &self.type_aliases,
+                &self.func.struct_layouts,
+                &self.named_tuple_names,
+                &self.typed_dict_names,
+                &self.enum_names,
+            )?;
         }
 
         let mut param_map = HashMap::new();
         for arg in s.args.args {
             let val = self.func.next_value();
             if let Some(annotation) = &arg.def.annotation {
-                let ty = parse_type(annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
+                let ty = parse_type(
+                    annotation,
+                    &self.type_aliases,
+                    &self.named_tuple_names,
+                    &self.typed_dict_names,
+                    &self.enum_names,
+                )?;
                 self.func.set_type(val, ty);
-                if let Some(refinement) =
-                    extract_refinement(annotation, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?
-                {
+                if let Some(refinement) = extract_refinement(
+                    annotation,
+                    &self.type_aliases,
+                    &self.func.struct_layouts,
+                    &self.named_tuple_names,
+                    &self.typed_dict_names,
+                    &self.enum_names,
+                )? {
                     self.func.set_refinement(val, refinement);
                 }
             }
@@ -42,7 +65,12 @@ impl CFGBuilder {
                     let lambda_expr = &c.args[0];
                     let mut renamed_expr = lambda_expr.clone();
                     rename_parameters(&mut renamed_expr, &param_map, None);
-                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                    if let Ok(pred_str) = expr_to_string(
+                        &renamed_expr,
+                        None,
+                        &Type::Unknown,
+                        &self.func.struct_layouts,
+                    ) {
                         self.func.preconditions.push(pred_str);
                     }
                 } else if is_ensures_decorator(&c.func) && !c.args.is_empty() {
@@ -58,7 +86,12 @@ impl CFGBuilder {
                         None
                     };
                     rename_parameters(&mut renamed_expr, &param_map, ret_var_name.as_deref());
-                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                    if let Ok(pred_str) = expr_to_string(
+                        &renamed_expr,
+                        None,
+                        &Type::Unknown,
+                        &self.func.struct_layouts,
+                    ) {
                         self.func.postconditions.push(pred_str);
                     }
                 }
@@ -75,7 +108,12 @@ impl CFGBuilder {
             if let ast::Stmt::Assert(a) = stmt {
                 let mut renamed_expr = *a.test.clone();
                 rename_parameters(&mut renamed_expr, &param_map, None);
-                if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                if let Ok(pred_str) = expr_to_string(
+                    &renamed_expr,
+                    None,
+                    &Type::Unknown,
+                    &self.func.struct_layouts,
+                ) {
                     self.func.preconditions.push(pred_str);
                 }
                 body_iter.next();
@@ -118,7 +156,10 @@ impl CFGBuilder {
         match stmt {
             ast::Stmt::Assign(s) => {
                 if s.targets.len() != 1 {
-                    return Err(builder_error!(UnsupportedStatement, "Only single targets supported"));
+                    return Err(builder_error!(
+                        UnsupportedStatement,
+                        "Only single targets supported"
+                    ));
                 }
                 let target = &s.targets[0];
                 let value = self.visit_expr(*s.value)?;
@@ -141,15 +182,20 @@ impl CFGBuilder {
                     let mut value = self.visit_expr(*value_expr)?;
                     value = self.auto_load(value);
 
-                    if let Ok(ann_ty) = parse_type(&s.annotation, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names) {
+                    if let Ok(ann_ty) = parse_type(
+                        &s.annotation,
+                        &self.type_aliases,
+                        &self.named_tuple_names,
+                        &self.typed_dict_names,
+                        &self.enum_names,
+                    ) {
                         let val_ty = self.func.get_type(value);
                         if ann_ty.is_float() && val_ty.is_int() {
                             let converted = self.func.next_value();
-                            push_inst!(self, InstructionKind::IToF(
-                                converted,
-                                value,
-                                ann_ty.clone(),
-                            ));
+                            push_inst!(
+                                self,
+                                InstructionKind::IToF(converted, value, ann_ty.clone(),)
+                            );
                             self.func.set_type(converted, ann_ty);
                             value = converted;
                         }
@@ -232,7 +278,10 @@ impl CFGBuilder {
                         self.func.set_type(new_val, *inner.clone());
                         let align = inner.align(&self.func.struct_layouts);
                         let payload_offset = (1 + align - 1) & !(align - 1);
-                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
+                        push_inst!(
+                            self,
+                            InstructionKind::StructLoad(new_val, old_val, payload_offset)
+                        );
                         self.write_variable(var_name.clone(), true_block, new_val);
                     }
                 }
@@ -260,7 +309,10 @@ impl CFGBuilder {
                         self.func.set_type(new_val, *inner.clone());
                         let align = inner.align(&self.func.struct_layouts);
                         let payload_offset = (1 + align - 1) & !(align - 1);
-                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
+                        push_inst!(
+                            self,
+                            InstructionKind::StructLoad(new_val, old_val, payload_offset)
+                        );
                         self.write_variable(var_name.clone(), false_block, new_val);
                     }
                 }
@@ -322,7 +374,10 @@ impl CFGBuilder {
                         self.func.set_type(new_val, *inner.clone());
                         let align = inner.align(&self.func.struct_layouts);
                         let payload_offset = (1 + align - 1) & !(align - 1);
-                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
+                        push_inst!(
+                            self,
+                            InstructionKind::StructLoad(new_val, old_val, payload_offset)
+                        );
                         self.write_variable(var_name.clone(), body_block, new_val);
                     }
                 }
@@ -363,7 +418,10 @@ impl CFGBuilder {
                         self.func.set_type(new_val, *inner.clone());
                         let align = inner.align(&self.func.struct_layouts);
                         let payload_offset = (1 + align - 1) & !(align - 1);
-                        push_inst!(self, InstructionKind::StructLoad(new_val, old_val, payload_offset));
+                        push_inst!(
+                            self,
+                            InstructionKind::StructLoad(new_val, old_val, payload_offset)
+                        );
                         self.write_variable(var_name.clone(), exit_block, new_val);
                     }
                 }
@@ -378,90 +436,113 @@ impl CFGBuilder {
                 let mut is_enumerate = false;
                 let mut enum_buf_expr = None;
 
-                let (start_val, end_val, step_val, is_direct_iter) = if let ast::Expr::Call(call) =
-                    iter_expr.clone()
-                {
-                    if let ast::Expr::Name(n) = *call.func {
-                        if n.id.as_str() == "range" {
-                            let (start, end, step) = match call.args.len() {
-                                1 => (None, self.visit_expr(call.args[0].clone())?, None),
-                                2 => (
-                                    Some(self.visit_expr(call.args[0].clone())?),
-                                    self.visit_expr(call.args[1].clone())?,
-                                    None,
-                                ),
-                                3 => (
-                                    Some(self.visit_expr(call.args[0].clone())?),
-                                    self.visit_expr(call.args[1].clone())?,
-                                    Some(self.visit_expr(call.args[2].clone())?),
-                                ),
-                                _ => return Err(builder_error!(UnsupportedStatement, "Unsupported range() signature")),
-                            };
+                let (start_val, end_val, step_val, is_direct_iter) =
+                    if let ast::Expr::Call(call) = iter_expr.clone() {
+                        if let ast::Expr::Name(n) = *call.func {
+                            if n.id.as_str() == "range" {
+                                let (start, end, step) = match call.args.len() {
+                                    1 => (None, self.visit_expr(call.args[0].clone())?, None),
+                                    2 => (
+                                        Some(self.visit_expr(call.args[0].clone())?),
+                                        self.visit_expr(call.args[1].clone())?,
+                                        None,
+                                    ),
+                                    3 => (
+                                        Some(self.visit_expr(call.args[0].clone())?),
+                                        self.visit_expr(call.args[1].clone())?,
+                                        Some(self.visit_expr(call.args[2].clone())?),
+                                    ),
+                                    _ => {
+                                        return Err(builder_error!(
+                                            UnsupportedStatement,
+                                            "Unsupported range() signature"
+                                        ))
+                                    }
+                                };
 
-                            let start_v = if let Some(v) = start {
-                                v
-                            } else {
+                                let start_v = if let Some(v) = start {
+                                    v
+                                } else {
+                                    let zero = self.func.next_value();
+                                    push_inst!(self, InstructionKind::ConstInt(zero, 0));
+                                    zero
+                                };
+                                let step_v = if let Some(v) = step {
+                                    v
+                                } else {
+                                    let one = self.func.next_value();
+                                    push_inst!(self, InstructionKind::ConstInt(one, 1));
+                                    one
+                                };
+                                (start_v, end, step_v, false)
+                            } else if n.id.as_str() == "enumerate" && call.args.len() == 1 {
+                                is_enumerate = true;
+                                enum_buf_expr = Some(call.args[0].clone());
+                                let buf_val = self.visit_expr(call.args[0].clone())?;
+                                let buf_ty = self.func.get_type(buf_val);
                                 let zero = self.func.next_value();
                                 push_inst!(self, InstructionKind::ConstInt(zero, 0));
-                                zero
-                            };
-                            let step_v = if let Some(v) = step {
-                                v
-                            } else {
                                 let one = self.func.next_value();
                                 push_inst!(self, InstructionKind::ConstInt(one, 1));
-                                one
-                            };
-                            (start_v, end, step_v, false)
-                        } else if n.id.as_str() == "enumerate" && call.args.len() == 1 {
-                            is_enumerate = true;
-                            enum_buf_expr = Some(call.args[0].clone());
-                            let buf_val = self.visit_expr(call.args[0].clone())?;
-                            let buf_ty = self.func.get_type(buf_val);
-                            let zero = self.func.next_value();
-                            push_inst!(self, InstructionKind::ConstInt(zero, 0));
-                            let one = self.func.next_value();
-                            push_inst!(self, InstructionKind::ConstInt(one, 1));
-                            let len = self.func.next_value();
-                            if let Type::Buffer(_) = buf_ty {
-                                push_inst!(self, InstructionKind::BufferLen(len, buf_val));
-                            } else if let Type::Array(_, Some(size)) = buf_ty {
-                                push_inst!(self, InstructionKind::ConstInt(len, size as i64));
+                                let len = self.func.next_value();
+                                if let Type::Buffer(_) = buf_ty {
+                                    push_inst!(self, InstructionKind::BufferLen(len, buf_val));
+                                } else if let Type::Array(_, Some(size)) = buf_ty {
+                                    push_inst!(self, InstructionKind::ConstInt(len, size as i64));
+                                } else {
+                                    return Err(builder_error!(
+                                        General,
+                                        "Cannot iterate over unknown size array"
+                                    ));
+                                }
+                                self.func.set_type(len, Type::I64);
+                                (zero, len, one, true)
                             } else {
-                                return Err(builder_error!(General, "Cannot iterate over unknown size array"));
+                                return Err(builder_error!(
+                                    UnsupportedStatement,
+                                    "Unsupported function in for loop: {}",
+                                    n.id
+                                ));
                             }
-                            self.func.set_type(len, Type::I64);
-                            (zero, len, one, true)
                         } else {
-                            return Err(builder_error!(UnsupportedStatement, "Unsupported function in for loop: {}", n.id));
+                            return Err(builder_error!(
+                                UnsupportedStatement,
+                                "Only range() or direct iteration supported"
+                            ));
                         }
                     } else {
-                        return Err(builder_error!(UnsupportedStatement, "Only range() or direct iteration supported"));
-                    }
-                } else {
-                    // Potential direct iteration: for x in buf
-                    let buf_val = self.visit_expr(iter_expr.clone())?;
-                    let buf_ty = self.func.get_type(buf_val);
-                    match buf_ty {
-                        Type::Buffer(_) | Type::Array(_, _) => {
-                            let zero = self.func.next_value();
-                            push_inst!(self, InstructionKind::ConstInt(zero, 0));
-                            let one = self.func.next_value();
-                            push_inst!(self, InstructionKind::ConstInt(one, 1));
-                            let len = self.func.next_value();
-                            if let Type::Buffer(_) = buf_ty {
-                                push_inst!(self, InstructionKind::BufferLen(len, buf_val));
-                            } else if let Type::Array(_, Some(size)) = buf_ty {
-                                push_inst!(self, InstructionKind::ConstInt(len, size as i64));
-                            } else {
-                                return Err(builder_error!(General, "Cannot iterate over unknown size array"));
+                        // Potential direct iteration: for x in buf
+                        let buf_val = self.visit_expr(iter_expr.clone())?;
+                        let buf_ty = self.func.get_type(buf_val);
+                        match buf_ty {
+                            Type::Buffer(_) | Type::Array(_, _) => {
+                                let zero = self.func.next_value();
+                                push_inst!(self, InstructionKind::ConstInt(zero, 0));
+                                let one = self.func.next_value();
+                                push_inst!(self, InstructionKind::ConstInt(one, 1));
+                                let len = self.func.next_value();
+                                if let Type::Buffer(_) = buf_ty {
+                                    push_inst!(self, InstructionKind::BufferLen(len, buf_val));
+                                } else if let Type::Array(_, Some(size)) = buf_ty {
+                                    push_inst!(self, InstructionKind::ConstInt(len, size as i64));
+                                } else {
+                                    return Err(builder_error!(
+                                        General,
+                                        "Cannot iterate over unknown size array"
+                                    ));
+                                }
+                                self.func.set_type(len, Type::I64);
+                                (zero, len, one, true)
                             }
-                            self.func.set_type(len, Type::I64);
-                            (zero, len, one, true)
+                            _ => {
+                                return Err(builder_error!(
+                                    General,
+                                    "Cannot iterate over type {:?}",
+                                    buf_ty
+                                ))
+                            }
                         }
-                        _ => return Err(builder_error!(General, "Cannot iterate over type {:?}", buf_ty)),
-                    }
-                };
+                    };
 
                 // UNROLLING LOGIC
                 let start_const = self.get_constant_int(start_val);
@@ -499,7 +580,10 @@ impl CFGBuilder {
                             } else if let ast::Expr::Name(n) = target.clone() {
                                 n.id.to_string()
                             } else {
-                                return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
+                                return Err(builder_error!(
+                                    UnsupportedStatement,
+                                    "Unsupported loop target"
+                                ));
                             };
 
                             // UNROLL!
@@ -529,21 +613,27 @@ impl CFGBuilder {
                                     .push((next_iteration_block, final_exit_block));
 
                                 let curr_idx = self.func.next_value();
-                                push_inst!(self, InstructionKind::ConstInt(
-                                    curr_idx,
-                                    current_idx_const,
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::ConstInt(curr_idx, current_idx_const,)
+                                );
                                 self.func.set_type(curr_idx, Type::I64);
                                 // Inject refinement for Z3 to know the exact loop index
-                                push_inst!(self, InstructionKind::Nop()).add_constraint(
-                                    format!("(= {} {})", curr_idx, current_idx_const),
-                                );
+                                push_inst!(self, InstructionKind::Nop()).add_constraint(format!(
+                                    "(= {} {})",
+                                    curr_idx, current_idx_const
+                                ));
 
                                 self.write_variable(idx_name.clone(), self.current_block, curr_idx);
 
                                 if is_direct_iter {
                                     let buf_expr = if is_enumerate {
-                                        enum_buf_expr.clone().ok_or_else(|| builder_error!(General, "Missing enum buffer expression"))?
+                                        enum_buf_expr.clone().ok_or_else(|| {
+                                            builder_error!(
+                                                General,
+                                                "Missing enum buffer expression"
+                                            )
+                                        })?
                                     } else {
                                         iter_expr.clone()
                                     };
@@ -552,15 +642,21 @@ impl CFGBuilder {
                                     let element = self.func.next_value();
                                     match buf_ty {
                                         Type::Buffer(inner) => {
-                                            push_inst!(self, InstructionKind::BufferLoad(
-                                                element, buf_val, curr_idx,
-                                            ));
+                                            push_inst!(
+                                                self,
+                                                InstructionKind::BufferLoad(
+                                                    element, buf_val, curr_idx,
+                                                )
+                                            );
                                             self.func.set_type(element, *inner);
                                         }
                                         Type::Array(inner, _) => {
-                                            push_inst!(self, InstructionKind::ArrayLoad(
-                                                element, buf_val, curr_idx,
-                                            ));
+                                            push_inst!(
+                                                self,
+                                                InstructionKind::ArrayLoad(
+                                                    element, buf_val, curr_idx,
+                                                )
+                                            );
                                             self.func.set_type(element, *inner);
                                         }
                                         _ => unreachable!(),
@@ -569,7 +665,10 @@ impl CFGBuilder {
                                     if is_enumerate {
                                         if let ast::Expr::Tuple(t) = target.clone() {
                                             if t.elts.len() != 2 {
-                                                return Err(builder_error!(General, "enumerate() requires a tuple of 2 elements"));
+                                                return Err(builder_error!(
+                                                    General,
+                                                    "enumerate() requires a tuple of 2 elements"
+                                                ));
                                             }
                                             self.handle_assignment_target(&t.elts[0], curr_idx)?;
                                             self.handle_assignment_target(&t.elts[1], element)?;
@@ -594,9 +693,7 @@ impl CFGBuilder {
 
                                 // If not terminated (no break/return/continue), jump to next iteration
                                 if !self.is_terminated(self.current_block) {
-                                    push_inst!(self, InstructionKind::Jump(
-                                        next_iteration_block,
-                                    ));
+                                    push_inst!(self, InstructionKind::Jump(next_iteration_block,));
                                     self.link_blocks(self.current_block, next_iteration_block);
                                 }
 
@@ -629,7 +726,10 @@ impl CFGBuilder {
                 } else if let ast::Expr::Name(n) = target.clone() {
                     n.id.to_string()
                 } else {
-                    return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
+                    return Err(builder_error!(
+                        UnsupportedStatement,
+                        "Unsupported loop target"
+                    ));
                 };
 
                 self.write_variable(idx_name.clone(), self.current_block, start_val);
@@ -678,7 +778,9 @@ impl CFGBuilder {
                 if is_direct_iter {
                     // For direct iter, load the value into the target variable
                     let buf_expr = if is_enumerate {
-                        enum_buf_expr.ok_or_else(|| builder_error!(General, "Missing enum buffer expression"))?
+                        enum_buf_expr.ok_or_else(|| {
+                            builder_error!(General, "Missing enum buffer expression")
+                        })?
                     } else {
                         iter_expr.clone()
                     };
@@ -687,15 +789,17 @@ impl CFGBuilder {
                     let element = self.func.next_value();
                     match buf_ty {
                         Type::Buffer(inner) => {
-                            push_inst!(self, InstructionKind::BufferLoad(
-                                element, buf_val, curr_idx,
-                            ));
+                            push_inst!(
+                                self,
+                                InstructionKind::BufferLoad(element, buf_val, curr_idx,)
+                            );
                             self.func.set_type(element, *inner);
                         }
                         Type::Array(inner, _) => {
-                            push_inst!(self, InstructionKind::ArrayLoad(
-                                element, buf_val, curr_idx,
-                            ));
+                            push_inst!(
+                                self,
+                                InstructionKind::ArrayLoad(element, buf_val, curr_idx,)
+                            );
                             self.func.set_type(element, *inner);
                         }
                         _ => unreachable!(),
@@ -704,17 +808,26 @@ impl CFGBuilder {
                     if is_enumerate {
                         if let ast::Expr::Tuple(t) = target {
                             if t.elts.len() != 2 {
-                                return Err(builder_error!(General, "enumerate() requires a tuple of 2 elements"));
+                                return Err(builder_error!(
+                                    General,
+                                    "enumerate() requires a tuple of 2 elements"
+                                ));
                             }
                             self.handle_assignment_target(&t.elts[0], curr_idx)?;
                             self.handle_assignment_target(&t.elts[1], element)?;
                         } else {
-                            return Err(builder_error!(UnsupportedStatement, "enumerate() requires a tuple target"));
+                            return Err(builder_error!(
+                                UnsupportedStatement,
+                                "enumerate() requires a tuple target"
+                            ));
                         }
                     } else if let ast::Expr::Name(n) = target {
                         self.write_variable(n.id.to_string(), self.current_block, element);
                     } else {
-                        return Err(builder_error!(UnsupportedStatement, "Unsupported loop target"));
+                        return Err(builder_error!(
+                            UnsupportedStatement,
+                            "Unsupported loop target"
+                        ));
                     }
                 }
 
@@ -758,7 +871,11 @@ impl CFGBuilder {
                 let enum_name = match subject_ty {
                     Type::Enum(name) => name,
                     _ => {
-                        return Err(builder_error!(UnsupportedStatement, "match statement currently only supported for Enums, found {:?}", subject_ty));
+                        return Err(builder_error!(
+                            UnsupportedStatement,
+                            "match statement currently only supported for Enums, found {:?}",
+                            subject_ty
+                        ));
                     }
                 };
 
@@ -769,12 +886,14 @@ impl CFGBuilder {
                 push_inst!(self, InstructionKind::EnumGetTag(tag_val, subject_val));
                 self.func.set_type(tag_val, Type::U8);
 
-                let variants = self
-                    .func
-                    .enum_layouts
-                    .get(&enum_name)
-                    .cloned()
-                    .ok_or_else(|| builder_error!(General, "Unknown enum layout for '{}'", enum_name))?;
+                let variants =
+                    self.func
+                        .enum_layouts
+                        .get(&enum_name)
+                        .cloned()
+                        .ok_or_else(|| {
+                            builder_error!(General, "Unknown enum layout for '{}'", enum_name)
+                        })?;
 
                 // Group cases by tag
                 let mut tag_to_cases: HashMap<usize, Vec<ast::MatchCase>> = HashMap::new();
@@ -798,7 +917,10 @@ impl CFGBuilder {
                                     let attr = match &*p.cls {
                                         ast::Expr::Attribute(a) => a,
                                         _ => {
-                                            return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern"));
+                                            return Err(builder_error!(
+                                                UnsupportedStatement,
+                                                "Expected Enum.Variant pattern"
+                                            ));
                                         }
                                     };
                                     Some(attr.attr.to_string())
@@ -807,7 +929,10 @@ impl CFGBuilder {
                                     let attr = match &*p.value {
                                         ast::Expr::Attribute(a) => a,
                                         _ => {
-                                            return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern"));
+                                            return Err(builder_error!(
+                                                UnsupportedStatement,
+                                                "Expected Enum.Variant pattern"
+                                            ));
                                         }
                                     };
                                     Some(attr.attr.to_string())
@@ -821,7 +946,12 @@ impl CFGBuilder {
                                 if let Some(tag_idx) = tag_idx {
                                     tag_to_cases.entry(tag_idx).or_default().push(case);
                                 } else {
-                                    return Err(builder_error!(General, "Unknown variant '{}' for enum '{}'", variant_name, enum_name));
+                                    return Err(builder_error!(
+                                        General,
+                                        "Unknown variant '{}' for enum '{}'",
+                                        variant_name,
+                                        enum_name
+                                    ));
                                 }
                             } else {
                                 // This is a non-variant pattern (e.g. MatchAs with a name/guard).
@@ -866,11 +996,10 @@ impl CFGBuilder {
 
                         if !pattern_args.is_empty() {
                             let payload = self.func.next_value();
-                            push_inst!(self, InstructionKind::EnumExtract(
-                                payload,
-                                subject_val,
-                                tag_idx,
-                            ));
+                            push_inst!(
+                                self,
+                                InstructionKind::EnumExtract(payload, subject_val, tag_idx,)
+                            );
                             let variant_ty = variants[tag_idx].1.clone();
                             self.func.set_type(payload, variant_ty.clone());
 
@@ -884,9 +1013,10 @@ impl CFGBuilder {
                                 if let Type::Tuple(ref types) = variant_ty {
                                     for (j, p_arg) in pattern_args.iter().enumerate() {
                                         let elt = self.func.next_value();
-                                        push_inst!(self, InstructionKind::TupleExtract(
-                                            elt, payload, j,
-                                        ));
+                                        push_inst!(
+                                            self,
+                                            InstructionKind::TupleExtract(elt, payload, j,)
+                                        );
                                         self.func.set_type(elt, types[j].clone());
                                         self.handle_nested_pattern(
                                             p_arg,
@@ -901,11 +1031,10 @@ impl CFGBuilder {
                         // 1.2. Guard check
                         if let Some(guard_expr) = &case.guard {
                             let cond = self.visit_expr(*guard_expr.clone())?;
-                            push_inst!(self, InstructionKind::Branch(
-                                cond,
-                                body_block,
-                                next_in_chain,
-                            ));
+                            push_inst!(
+                                self,
+                                InstructionKind::Branch(cond, body_block, next_in_chain,)
+                            );
                             self.link_blocks(current_chain_block, body_block);
                             self.link_blocks(current_chain_block, next_in_chain);
                         } else {
@@ -957,12 +1086,15 @@ impl CFGBuilder {
 
                 // Finalize start block
                 self.start_block(start_block);
-                push_inst!(self, InstructionKind::Match(
-                    tag_val,
-                    cases_map,
-                    default_block,
-                    global_default_case.is_none(),
-                ));
+                push_inst!(
+                    self,
+                    InstructionKind::Match(
+                        tag_val,
+                        cases_map,
+                        default_block,
+                        global_default_case.is_none(),
+                    )
+                );
 
                 self.start_block(exit_block);
                 self.seal_block(exit_block)?;
@@ -1007,7 +1139,11 @@ impl CFGBuilder {
                 Ok(())
             }
             ast::Stmt::FunctionDef(s) => self.visit_nested_function_def(s),
-            _ => Err(builder_error!(UnsupportedStatement, "Statement type {:?} not yet supported", stmt)),
+            _ => Err(builder_error!(
+                UnsupportedStatement,
+                "Statement type {:?} not yet supported",
+                stmt
+            )),
         }
     }
 
@@ -1088,17 +1224,12 @@ impl CFGBuilder {
                 offset = (offset + align - 1) & !(align - 1);
 
                 let dest = inner_builder.func.next_value();
-                push_inst!(inner_builder, InstructionKind::StructLoad(
-                    dest,
-                    Value(0),
-                    offset,
-                ));
-                inner_builder.func.set_type(dest, ty.clone());
-                inner_builder.write_variable(
-                    name.0.clone(),
-                    inner_builder.current_block,
-                    dest,
+                push_inst!(
+                    inner_builder,
+                    InstructionKind::StructLoad(dest, Value(0), offset,)
                 );
+                inner_builder.func.set_type(dest, ty.clone());
+                inner_builder.write_variable(name.0.clone(), inner_builder.current_block, dest);
 
                 offset += ty.size(&self.func.struct_layouts);
             }
@@ -1140,18 +1271,22 @@ impl CFGBuilder {
         // 3. Create Closure Instruction
         let dest = self.func.next_value();
         let capture_vals: Vec<Value> = captures.iter().map(|(_, v)| *v).collect();
-        push_inst!(self, InstructionKind::Lambda(
-            dest,
-            func_name.clone(),
-            capture_vals,
-        ));
+        push_inst!(
+            self,
+            InstructionKind::Lambda(dest, func_name.clone(), capture_vals,)
+        );
 
         let arg_types: Vec<Type> = (1..1 + s.args.args.len())
             .map(|i| inner_func.get_type(Value(i)))
             .collect();
         self.func.set_type(
             dest,
-            Type::Closure(func_name.clone(), arg_types, Box::new(inner_func.return_type), Some(s.name.to_string())),
+            Type::Closure(
+                func_name.clone(),
+                arg_types,
+                Box::new(inner_func.return_type),
+                Some(s.name.to_string()),
+            ),
         );
 
         self.write_variable(s.name.to_string(), self.current_block, dest);
@@ -1177,7 +1312,10 @@ impl CFGBuilder {
         match pattern {
             ast::Pattern::MatchAs(p) => {
                 if p.pattern.is_some() {
-                    return Err(builder_error!(UnsupportedStatement, "Nested patterns in MatchAs not yet supported"));
+                    return Err(builder_error!(
+                        UnsupportedStatement,
+                        "Nested patterns in MatchAs not yet supported"
+                    ));
                 }
                 if let Some(name) = &p.name {
                     self.write_variable(name.to_string(), block, val);
@@ -1189,14 +1327,18 @@ impl CFGBuilder {
                 let ty = self.func.get_type(val);
                 match ty {
                     Type::Struct(ref name) | Type::NamedTuple(ref name) => {
-                        let fields = self
-                            .func
-                            .struct_layouts
-                            .get(name)
-                            .cloned()
-                            .ok_or_else(|| builder_error!(General, "Unknown struct layout for '{}'", name))?;
+                        let fields =
+                            self.func.struct_layouts.get(name).cloned().ok_or_else(|| {
+                                builder_error!(General, "Unknown struct layout for '{}'", name)
+                            })?;
                         if p.patterns.len() > fields.len() {
-                            return Err(builder_error!(General, "Struct '{}' has {} fields, but pattern has {}", name, fields.len(), p.patterns.len()));
+                            return Err(builder_error!(
+                                General,
+                                "Struct '{}' has {} fields, but pattern has {}",
+                                name,
+                                fields.len(),
+                                p.patterns.len()
+                            ));
                         }
                         let mut current_offset = 0;
                         for (i, sub_pattern) in p.patterns.iter().enumerate() {
@@ -1206,17 +1348,15 @@ impl CFGBuilder {
 
                             let field_val = self.func.next_value();
                             if field_ty.is_composite() {
-                                push_inst!(self, InstructionKind::StructOffset(
-                                    field_val,
-                                    val,
-                                    current_offset,
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::StructOffset(field_val, val, current_offset,)
+                                );
                             } else {
-                                push_inst!(self, InstructionKind::StructLoad(
-                                    field_val,
-                                    val,
-                                    current_offset,
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::StructLoad(field_val, val, current_offset,)
+                                );
                             }
                             self.func.set_type(field_val, field_ty.clone());
                             self.handle_nested_pattern(sub_pattern, field_val, block)?;
@@ -1228,19 +1368,31 @@ impl CFGBuilder {
                     Type::Enum(ref name) => {
                         let variant_name = match &*p.cls {
                             ast::Expr::Attribute(a) => a.attr.to_string(),
-                            _ => return Err(builder_error!(UnsupportedStatement, "Expected Enum.Variant pattern")),
+                            _ => {
+                                return Err(builder_error!(
+                                    UnsupportedStatement,
+                                    "Expected Enum.Variant pattern"
+                                ))
+                            }
                         };
                         let variants = self
                             .func
                             .enum_layouts
                             .get(name)
                             .cloned() // Clone to avoid borrowing self.func
-                            .ok_or_else(|| builder_error!(General, "Unknown enum layout for '{}'", name))?;
+                            .ok_or_else(|| {
+                                builder_error!(General, "Unknown enum layout for '{}'", name)
+                            })?;
                         let tag_idx = variants
                             .iter()
                             .position(|(n, _)| *n == variant_name)
                             .ok_or_else(|| {
-                                builder_error!(General, "Unknown variant '{}' for enum '{}'", variant_name, name)
+                                builder_error!(
+                                    General,
+                                    "Unknown variant '{}' for enum '{}'",
+                                    variant_name,
+                                    name
+                                )
                             })?;
 
                         let payload = self.func.next_value();
@@ -1253,13 +1405,20 @@ impl CFGBuilder {
                         } else if !p.patterns.is_empty() {
                             if let Type::Tuple(ref types) = variant_ty {
                                 if types.len() != p.patterns.len() {
-                                    return Err(builder_error!(General, "Variant '{}' has {} fields, but pattern has {}", variant_name, types.len(), p.patterns.len()));
+                                    return Err(builder_error!(
+                                        General,
+                                        "Variant '{}' has {} fields, but pattern has {}",
+                                        variant_name,
+                                        types.len(),
+                                        p.patterns.len()
+                                    ));
                                 }
                                 for (i, sub_p) in p.patterns.iter().enumerate() {
                                     let elt = self.func.next_value();
-                                    push_inst!(self, InstructionKind::TupleExtract(
-                                        elt, payload, i,
-                                    ));
+                                    push_inst!(
+                                        self,
+                                        InstructionKind::TupleExtract(elt, payload, i,)
+                                    );
                                     self.func.set_type(elt, types[i].clone());
                                     self.handle_nested_pattern(sub_p, elt, block)?;
                                 }
@@ -1272,10 +1431,15 @@ impl CFGBuilder {
                     _ => Err(builder_error!(General, "Cannot destructure type {:?}", ty)),
                 }
             }
-            ast::Pattern::MatchValue(_) => {
-                Err(builder_error!(UnsupportedStatement, "Literal matching not yet supported in nested patterns"))
-            }
-            _ => Err(builder_error!(UnsupportedStatement, "Unsupported nested pattern type: {:?}", pattern)),
+            ast::Pattern::MatchValue(_) => Err(builder_error!(
+                UnsupportedStatement,
+                "Literal matching not yet supported in nested patterns"
+            )),
+            _ => Err(builder_error!(
+                UnsupportedStatement,
+                "Unsupported nested pattern type: {:?}",
+                pattern
+            )),
         }
     }
 
@@ -1411,7 +1575,11 @@ fn collect_referenced_names(expr: &ast::Expr, names: &mut HashSet<String>) {
     }
 }
 
-fn rename_parameters(expr: &mut ast::Expr, param_map: &HashMap<String, Value>, return_var_name: Option<&str>) {
+fn rename_parameters(
+    expr: &mut ast::Expr,
+    param_map: &HashMap<String, Value>,
+    return_var_name: Option<&str>,
+) {
     match expr {
         ast::Expr::Name(n) => {
             if let Some(ret_name) = return_var_name {
@@ -1489,24 +1657,29 @@ fn extract_loop_invariants(
 ) -> BuilderResult<Vec<String>> {
     let mut invariants = Vec::new();
     let mut param_map = HashMap::new();
-    
+
     for stmt in body {
         if let ast::Stmt::Assert(a) = stmt {
             let lambda_expr = &a.test;
             let mut ref_names = HashSet::new();
             collect_referenced_names(lambda_expr, &mut ref_names);
-            
+
             for name in &ref_names {
                 if builder.variable_defs.contains_key(name) {
                     let val = builder.read_variable(name.clone(), header_block)?;
                     param_map.insert(name.clone(), val);
                 }
             }
-            
+
             let mut renamed_expr = *lambda_expr.clone();
             rename_parameters(&mut renamed_expr, &param_map, None);
-            
-            if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &builder.func.struct_layouts) {
+
+            if let Ok(pred_str) = expr_to_string(
+                &renamed_expr,
+                None,
+                &Type::Unknown,
+                &builder.func.struct_layouts,
+            ) {
                 invariants.push(pred_str);
             }
         } else if is_invariant_call(stmt) {
@@ -1516,18 +1689,23 @@ fn extract_loop_invariants(
                         let lambda_expr = &c.args[0];
                         let mut ref_names = HashSet::new();
                         collect_referenced_names(lambda_expr, &mut ref_names);
-                        
+
                         for name in &ref_names {
                             if builder.variable_defs.contains_key(name) {
                                 let val = builder.read_variable(name.clone(), header_block)?;
                                 param_map.insert(name.clone(), val);
                             }
                         }
-                        
+
                         let mut renamed_expr = lambda_expr.clone();
                         rename_parameters(&mut renamed_expr, &param_map, None);
-                        
-                        if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &builder.func.struct_layouts) {
+
+                        if let Ok(pred_str) = expr_to_string(
+                            &renamed_expr,
+                            None,
+                            &Type::Unknown,
+                            &builder.func.struct_layouts,
+                        ) {
                             invariants.push(pred_str);
                         }
                     }
@@ -1549,7 +1727,7 @@ fn extract_postconditions(
     for i in 0..body.len() {
         if i + 1 < body.len() {
             if let ast::Stmt::Assert(a) = &body[i] {
-                if let ast::Stmt::Return(r) = &body[i+1] {
+                if let ast::Stmt::Return(r) = &body[i + 1] {
                     let mut renamed_expr = *a.test.clone();
                     let ret_var_name = if let Some(ret_val) = &r.value {
                         if let ast::Expr::Name(n) = &**ret_val {
@@ -1561,7 +1739,9 @@ fn extract_postconditions(
                         None
                     };
                     rename_parameters(&mut renamed_expr, param_map, ret_var_name.as_deref());
-                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, struct_layouts) {
+                    if let Ok(pred_str) =
+                        expr_to_string(&renamed_expr, None, &Type::Unknown, struct_layouts)
+                    {
                         postconditions.push(pred_str);
                     }
                 }
@@ -1589,7 +1769,7 @@ fn visit_block(builder: &mut CFGBuilder, block: &[ast::Stmt]) -> BuilderResult<(
         let stmt = &block[i];
         if i + 1 < block.len() {
             if let ast::Stmt::Assert(_) = stmt {
-                if let ast::Stmt::Return(_) = &block[i+1] {
+                if let ast::Stmt::Return(_) = &block[i + 1] {
                     continue;
                 }
             }

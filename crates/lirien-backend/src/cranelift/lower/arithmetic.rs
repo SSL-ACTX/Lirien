@@ -3,7 +3,10 @@ use cranelift::prelude::*;
 use cranelift_module::Module;
 use lirien_ir::ir::{InstructionKind, Type};
 
-pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), LoweringError> {
+pub fn lower<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    kind: &InstructionKind,
+) -> Result<(), LoweringError> {
     macro_rules! bin_op {
         ($dest:expr, $lhs:expr, $rhs:expr, $op:ident) => {{
             let l = get_val(&ctx.values, $lhs);
@@ -147,39 +150,38 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::Ne(dest, lhs, rhs) => {
             lower_cmp(ctx, dest, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual)
         }
-        InstructionKind::SLt(dest, lhs, rhs) => {
-            lower_cmp(ctx, dest, lhs, rhs, IntCC::SignedLessThan, FloatCC::LessThan)
-        }
-        InstructionKind::SLe(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::SignedLessThanOrEqual,
-                FloatCC::LessThanOrEqual,
-            )
-        }
-        InstructionKind::SGt(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::SignedGreaterThan,
-                FloatCC::GreaterThan,
-            )
-        }
-        InstructionKind::SGe(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::SignedGreaterThanOrEqual,
-                FloatCC::GreaterThanOrEqual,
-            )
-        }
+        InstructionKind::SLt(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::SignedLessThan,
+            FloatCC::LessThan,
+        ),
+        InstructionKind::SLe(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::SignedLessThanOrEqual,
+            FloatCC::LessThanOrEqual,
+        ),
+        InstructionKind::SGt(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::SignedGreaterThan,
+            FloatCC::GreaterThan,
+        ),
+        InstructionKind::SGe(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::SignedGreaterThanOrEqual,
+            FloatCC::GreaterThanOrEqual,
+        ),
         InstructionKind::FLt(dest, lhs, rhs) => {
             lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::LessThan)
         }
@@ -189,42 +191,41 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
         InstructionKind::FGt(dest, lhs, rhs) => {
             lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::GreaterThan)
         }
-        InstructionKind::FGe(dest, lhs, rhs) => {
-            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::GreaterThanOrEqual)
-        }
+        InstructionKind::FGe(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::Equal,
+            FloatCC::GreaterThanOrEqual,
+        ),
         InstructionKind::ULt(dest, lhs, rhs) => {
             lower_cmp(ctx, dest, lhs, rhs, IntCC::UnsignedLessThan, FloatCC::Equal)
         }
-        InstructionKind::ULe(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::UnsignedLessThanOrEqual,
-                FloatCC::Equal,
-            )
-        }
-        InstructionKind::UGt(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::UnsignedGreaterThan,
-                FloatCC::Equal,
-            )
-        }
-        InstructionKind::UGe(dest, lhs, rhs) => {
-            lower_cmp(
-                ctx,
-                dest,
-                lhs,
-                rhs,
-                IntCC::UnsignedGreaterThanOrEqual,
-                FloatCC::Equal,
-            )
-        }
+        InstructionKind::ULe(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::UnsignedLessThanOrEqual,
+            FloatCC::Equal,
+        ),
+        InstructionKind::UGt(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::UnsignedGreaterThan,
+            FloatCC::Equal,
+        ),
+        InstructionKind::UGe(dest, lhs, rhs) => lower_cmp(
+            ctx,
+            dest,
+            lhs,
+            rhs,
+            IntCC::UnsignedGreaterThanOrEqual,
+            FloatCC::Equal,
+        ),
         InstructionKind::IToF(dest, src, ty) => {
             let s = get_val(&ctx.values, src);
             let target_ty = super::translate_type(ty);
@@ -248,7 +249,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             };
             ctx.values.insert(*dest, res);
         }
-        _ => return Err(LoweringError::InstructionNotSupported(format!("{:?}", kind), None)),
+        _ => {
+            return Err(LoweringError::InstructionNotSupported(
+                format!("{:?}", kind),
+                None,
+            ))
+        }
     }
     Ok(())
 }

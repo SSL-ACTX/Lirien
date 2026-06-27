@@ -81,7 +81,9 @@ pub(crate) fn parse_float_expr(
             if parts.len() != 4 {
                 return Err("ite (if-then-else) expects 3 arguments".to_string());
             }
-            let cond = super::booleans::parse_bool_expr(parts[1], None, None, v_float, v_arr, None, resolver)?;
+            let cond = super::booleans::parse_bool_expr(
+                parts[1], None, None, v_float, v_arr, None, resolver,
+            )?;
             let then = parse_float_expr(parts[2], v_float, v_arr, resolver)?;
             let orelse = parse_float_expr(parts[3], v_float, v_arr, resolver)?;
             Ok(cond.ite(&then, &orelse))

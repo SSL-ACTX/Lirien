@@ -366,7 +366,7 @@ def _discover_types(
         closure_vars = inspect.getclosurevars(func)
         scope.update(closure_vars.nonlocals)
         scope.update(closure_vars.globals)
-    except:
+    except Exception:
         pass
 
     if type_mapping:

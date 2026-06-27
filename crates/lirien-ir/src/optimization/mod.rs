@@ -38,4 +38,3 @@ pub fn optimize(func: &mut Function) {
     // Embed Static Analysis Results as Liquid Types
     inference::embed_intervals(func);
 }
-

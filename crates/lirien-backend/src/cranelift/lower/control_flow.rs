@@ -108,12 +108,15 @@ pub fn lower<M: Module>(
             }
         }
         InstructionKind::Return(val) => {
-            if matches!(ctx.ssa_func.return_type, SsaType::NamedTuple(_) | SsaType::Tuple(_)) {
+            if matches!(
+                ctx.ssa_func.return_type,
+                SsaType::NamedTuple(_) | SsaType::Tuple(_)
+            ) {
                 let mut cl_vals = Vec::new();
                 if let Some(v) = val {
                     cl_vals.extend(get_all_cl_values(ctx, v));
                 }
-                
+
                 if let Some(sret_ptr) = ctx.sret_ptr {
                     let mut current_offset = 0;
                     let mut val_idx = 0;
@@ -180,7 +183,12 @@ pub fn lower<M: Module>(
                 ctx.builder.ins().return_(&cl_vals);
             }
         }
-        _ => return Err(LoweringError::InstructionNotSupported(format!("{:?}", kind), None)),
+        _ => {
+            return Err(LoweringError::InstructionNotSupported(
+                format!("{:?}", kind),
+                None,
+            ))
+        }
     }
     Ok(())
 }

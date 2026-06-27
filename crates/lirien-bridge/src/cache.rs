@@ -24,7 +24,6 @@ pub struct CachedPayload {
     pub dependencies: HashMap<String, SerializedSignature>,
 }
 
-
 /// An in-process cached entry for a fully compiled function.
 /// Keyed by the IR hash (same hash used for the disk cache).
 #[derive(Clone, Debug)]
@@ -104,8 +103,6 @@ pub fn native_cache_invalidate(hash: u64) {
     cache.remove(&hash);
 }
 
-
-
 fn get_cache_dir() -> PathBuf {
     if let Ok(val) = env::var("LIRIEN_CACHE_DIR") {
         PathBuf::from(val)
@@ -166,7 +163,6 @@ fn lock_exclusive(_file: &fs::File) -> std::io::Result<()> {
 fn unlock(_file: &fs::File) -> std::io::Result<()> {
     Ok(())
 }
-
 
 pub fn compute_hash(
     source: &str,

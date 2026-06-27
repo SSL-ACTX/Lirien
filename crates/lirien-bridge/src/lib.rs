@@ -20,7 +20,6 @@ fn lirien_bridge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-
 /// Returns target CPU properties such as architecture, ISA name, and supported SIMD features.
 #[pyfunction]
 fn get_cpu_info() -> PyResult<std::collections::HashMap<String, String>> {
@@ -86,4 +85,3 @@ fn configure_tracing(config: std::collections::HashMap<String, String>) -> PyRes
         .map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)?;
     Ok(())
 }
-

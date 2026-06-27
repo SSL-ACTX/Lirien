@@ -25,9 +25,16 @@ pub fn translate<
                 let z3_offset = ctx.backend.int_from_i64(offset as i64);
 
                 if let Some(z3_val) = ctx.z3_bvs.get(elt).cloned() {
-                    current_state = ctx.backend.array_store_bv(&current_state, &z3_offset, &z3_val);
+                    current_state = ctx
+                        .backend
+                        .array_store_bv(&current_state, &z3_offset, &z3_val);
                 } else if let Some(z3_val) = ctx.z3_floats.get(elt).cloned() {
-                    current_state = ctx.backend.array_store_float(&current_state, &z3_offset, &z3_val, matches!(elt_ty, Type::F32));
+                    current_state = ctx.backend.array_store_float(
+                        &current_state,
+                        &z3_offset,
+                        &z3_val,
+                        matches!(elt_ty, Type::F32),
+                    );
                 } else if let Some(z3_val) = ctx.z3_arrays.get(elt).cloned() {
                     let __inner = ctx.backend.array_eq(&current_state, &z3_val);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
@@ -60,7 +67,11 @@ pub fn translate<
                                 let __tmp2 = ctx.backend.bool_implies(path_cond, &__inner);
                                 ctx.backend.assert(&__tmp2);
                             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
-                                let res = ctx.backend.array_select_float(&z3_src, &z3_offset, matches!(f_ty, Type::F32));
+                                let res = ctx.backend.array_select_float(
+                                    &z3_src,
+                                    &z3_offset,
+                                    matches!(f_ty, Type::F32),
+                                );
                                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                                 let __tmp2 = ctx.backend.bool_implies(path_cond, &__inner);
                                 ctx.backend.assert(&__tmp2);

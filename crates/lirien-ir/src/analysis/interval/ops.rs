@@ -1,5 +1,5 @@
-use crate::ir::Type;
 use super::types::{Bound, Interval};
+use crate::ir::Type;
 
 impl Interval {
     pub fn join(&self, other: &Self) -> Self {

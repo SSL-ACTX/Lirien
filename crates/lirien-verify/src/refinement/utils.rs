@@ -24,39 +24,32 @@ pub fn unify_floats(a: &Float, b: &Float) -> (Float, Float) {
             // Promote b to sort of a
             let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(context)
                 .expect("Rounding mode failed");
-            let promoted = z3_sys::Z3_mk_fpa_to_fp_float(
-                context,
-                rm,
-                b.get_z3_ast(),
-                sort_a.get_z3_sort(),
-            );
-            (a.clone(), Float::wrap(ctx, promoted.expect("Promotion failed")))
+            let promoted =
+                z3_sys::Z3_mk_fpa_to_fp_float(context, rm, b.get_z3_ast(), sort_a.get_z3_sort());
+            (
+                a.clone(),
+                Float::wrap(ctx, promoted.expect("Promotion failed")),
+            )
         } else {
             // Promote a to sort of b
             let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(context)
                 .expect("Rounding mode failed");
-            let promoted = z3_sys::Z3_mk_fpa_to_fp_float(
-                context,
-                rm,
-                a.get_z3_ast(),
-                sort_b.get_z3_sort(),
-            );
-            (Float::wrap(ctx, promoted.expect("Promotion failed")), b.clone())
+            let promoted =
+                z3_sys::Z3_mk_fpa_to_fp_float(context, rm, a.get_z3_ast(), sort_b.get_z3_sort());
+            (
+                Float::wrap(ctx, promoted.expect("Promotion failed")),
+                b.clone(),
+            )
         }
     }
 }
-
 
 /// Constructs a float equality SMT expression (`lhs == rhs`), unifying their precision types first.
 pub fn float_eq(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
     unsafe {
-        let ast = z3_sys::Z3_mk_eq(
-            ctx.get_z3_context(),
-            lhs.get_z3_ast(),
-            rhs.get_z3_ast(),
-        );
+        let ast = z3_sys::Z3_mk_eq(ctx.get_z3_context(), lhs.get_z3_ast(), rhs.get_z3_ast());
         Bool::wrap(ctx, ast.expect("Z3_mk_eq failed"))
     }
 }
@@ -66,11 +59,7 @@ pub fn float_lt(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
     unsafe {
-        let ast = z3_sys::Z3_mk_fpa_lt(
-            ctx.get_z3_context(),
-            lhs.get_z3_ast(),
-            rhs.get_z3_ast(),
-        );
+        let ast = z3_sys::Z3_mk_fpa_lt(ctx.get_z3_context(), lhs.get_z3_ast(), rhs.get_z3_ast());
         Bool::wrap(ctx, ast.expect("Z3_mk_fpa_lt failed"))
     }
 }
@@ -80,11 +69,7 @@ pub fn float_le(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
     unsafe {
-        let ast = z3_sys::Z3_mk_fpa_leq(
-            ctx.get_z3_context(),
-            lhs.get_z3_ast(),
-            rhs.get_z3_ast(),
-        );
+        let ast = z3_sys::Z3_mk_fpa_leq(ctx.get_z3_context(), lhs.get_z3_ast(), rhs.get_z3_ast());
         Bool::wrap(ctx, ast.expect("Z3_mk_fpa_leq failed"))
     }
 }
@@ -94,11 +79,7 @@ pub fn float_gt(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
     unsafe {
-        let ast = z3_sys::Z3_mk_fpa_gt(
-            ctx.get_z3_context(),
-            lhs.get_z3_ast(),
-            rhs.get_z3_ast(),
-        );
+        let ast = z3_sys::Z3_mk_fpa_gt(ctx.get_z3_context(), lhs.get_z3_ast(), rhs.get_z3_ast());
         Bool::wrap(ctx, ast.expect("Z3_mk_fpa_gt failed"))
     }
 }
@@ -108,11 +89,7 @@ pub fn float_ge(a: &Float, b: &Float) -> Bool {
     let (lhs, rhs) = unify_floats(a, b);
     let ctx = lhs.get_ctx();
     unsafe {
-        let ast = z3_sys::Z3_mk_fpa_geq(
-            ctx.get_z3_context(),
-            lhs.get_z3_ast(),
-            rhs.get_z3_ast(),
-        );
+        let ast = z3_sys::Z3_mk_fpa_geq(ctx.get_z3_context(), lhs.get_z3_ast(), rhs.get_z3_ast());
         Bool::wrap(ctx, ast.expect("Z3_mk_fpa_geq failed"))
     }
 }
@@ -154,4 +131,3 @@ pub fn split_sexpr_parts(s: &str) -> Vec<&str> {
     }
     parts
 }
-

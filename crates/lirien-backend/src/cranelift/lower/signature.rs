@@ -1,12 +1,9 @@
+use super::translate_type;
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lirien_ir::ir::Function as SsaFunction;
-use super::translate_type;
 
-pub fn get_flattened_types(
-    ssa_func: &SsaFunction,
-    ty: &lirien_ir::ir::Type,
-) -> Vec<types::Type> {
+pub fn get_flattened_types(ssa_func: &SsaFunction, ty: &lirien_ir::ir::Type) -> Vec<types::Type> {
     match ty {
         lirien_ir::ir::Type::NamedTuple(ref name) => {
             let fields = ssa_func.struct_layouts.get(name).unwrap();
@@ -53,14 +50,28 @@ pub fn get_field_info(
         lirien_ir::ir::Type::NamedTuple(ref name) => {
             let fields = ssa_func.struct_layouts.get(name).unwrap();
             for (_, f_ty) in fields {
-                if let Some(res) = get_field_info(ssa_func, f_ty, target_offset, expected_count, current_offset, val_idx) {
+                if let Some(res) = get_field_info(
+                    ssa_func,
+                    f_ty,
+                    target_offset,
+                    expected_count,
+                    current_offset,
+                    val_idx,
+                ) {
                     return Some(res);
                 }
             }
         }
         lirien_ir::ir::Type::Tuple(ref types) => {
             for t in types {
-                if let Some(res) = get_field_info(ssa_func, t, target_offset, expected_count, current_offset, val_idx) {
+                if let Some(res) = get_field_info(
+                    ssa_func,
+                    t,
+                    target_offset,
+                    expected_count,
+                    current_offset,
+                    val_idx,
+                ) {
                     return Some(res);
                 }
             }
@@ -93,7 +104,10 @@ pub fn build_cranelift_signature(
     let mut is_register_composite_ret = false;
 
     // 1. Handle Return Type
-    if matches!(ret_ty, lirien_ir::ir::Type::NamedTuple(_) | lirien_ir::ir::Type::Tuple(_)) {
+    if matches!(
+        ret_ty,
+        lirien_ir::ir::Type::NamedTuple(_) | lirien_ir::ir::Type::Tuple(_)
+    ) {
         let cl_types = get_flattened_types(ssa_func, ret_ty);
         if cl_types.len() <= 2 {
             for cl_ty in cl_types {
@@ -104,7 +118,12 @@ pub fn build_cranelift_signature(
             sig.params.push(AbiParam::new(types::I64)); // SRet pointer
             is_sret = true;
         }
-    } else if ret_ty.is_simd() || matches!(ret_ty, lirien_ir::ir::Type::Optional(_) | lirien_ir::ir::Type::Struct(_)) {
+    } else if ret_ty.is_simd()
+        || matches!(
+            ret_ty,
+            lirien_ir::ir::Type::Optional(_) | lirien_ir::ir::Type::Struct(_)
+        )
+    {
         sig.params.push(AbiParam::new(types::I64)); // SRet pointer
         is_sret = true;
     } else if *ret_ty != lirien_ir::ir::Type::Unknown {

@@ -2,9 +2,6 @@ import inspect
 import ctypes
 from typing import (
     Any,
-    Dict,
-    List,
-    Tuple,
     Callable,
     get_origin,
     get_args,
@@ -93,8 +90,8 @@ def _is_value_optional(ann):
 
 
 def _get_flattened_ctypes_types(
-    ty: Any, type_mapping: Dict[str, str] = None
-) -> List[Any]:
+    ty: Any, type_mapping: dict[str, str] = None
+) -> list[Any]:
     """Recursively discover all basic ctypes types for a given Lirien type."""
     from .types import i64
     from typing import Tuple as typing_Tuple, get_origin
@@ -118,7 +115,7 @@ def _get_flattened_ctypes_types(
     return [_get_ctypes_type(ty_str)]
 
 
-def _flatten_values(obj: Any) -> List[Any]:
+def _flatten_values(obj: Any) -> list[Any]:
     """Recursively flatten all values in a Tuple or NamedTuple tree."""
     res = []
     if is_named_tuple(type(obj)) or isinstance(obj, (list, tuple)):
@@ -132,7 +129,7 @@ def _flatten_values(obj: Any) -> List[Any]:
     return res
 
 
-def _unflatten_values(ty: Any, flattened_values: List[Any]) -> Any:
+def _unflatten_values(ty: Any, flattened_values: list[Any]) -> Any:
     """Recursively reconstruct a Tuple or NamedTuple from flattened values."""
     from .types import i64
     from typing import Tuple as typing_Tuple, get_origin, get_args
@@ -164,8 +161,8 @@ def _unflatten_values(ty: Any, flattened_values: List[Any]) -> Any:
 
 
 def _map_ctypes_arguments(
-    sig: inspect.Signature, class_name: str = None, type_mapping: Dict[str, str] = None
-) -> Tuple[List[Any], List[Any]]:
+    sig: inspect.Signature, class_name: str = None, type_mapping: dict[str, str] = None
+) -> tuple[list[Any], list[Any]]:
     """Map Python function parameters to ctypes types and tracking info."""
     c_args = []
     arg_map = []  # List of (type, c_idx, [metadata])
@@ -442,10 +439,10 @@ def _map_ctypes_arguments(
 
 def _handle_pointer_return(
     ret_ann: Any,
-    c_args: List[Any],
-    arg_map: List[Any],
-    type_mapping: Dict[str, str] = None,
-) -> Tuple[bool, Any, List[Any], List[Any], List[Any]]:
+    c_args: list[Any],
+    arg_map: list[Any],
+    type_mapping: dict[str, str] = None,
+) -> tuple[bool, Any, list[Any], list[Any], list[Any]]:
     ret_ann_str = _get_type_name(ret_ann, type_mapping).lower()
     raw_ann_str = str(ret_ann).lower()
     is_val_opt, inner_type = _is_value_optional(ret_ann)
@@ -559,10 +556,10 @@ def _handle_pointer_return(
 
 def _create_jit_wrapper(
     code_ptr: int,
-    arg_types: List[Any],
+    arg_types: list[Any],
     ret_type: Any,
     is_closure: bool = False,
-    type_mapping: Dict[str, str] = None,
+    type_mapping: dict[str, str] = None,
     name: str = None,
 ):
     """Create a high-performance wrapper for a JIT-compiled function or closure."""
@@ -625,13 +622,6 @@ def _create_jit_wrapper(
             arg_map.append(("value", len(c_args) - 1))
 
     # Create temporary signature for _handle_pointer_return
-    params = [
-        inspect.Parameter(
-            f"p{i}", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ty
-        )
-        for i, ty in enumerate(arg_types)
-    ]
-    dummy_sig = inspect.Signature(params, return_annotation=ret_type)
 
     is_ptr_return, TupleReturn, c_args, arg_map, tuple_types = _handle_pointer_return(
         ret_type, c_args, arg_map, type_mapping
@@ -742,12 +732,12 @@ def _create_jit_wrapper(
 
 
 def _prepare_runtime_args(
-    args: Tuple,
-    arg_map: List[Any],
-    c_args: List[Any],
+    args: tuple,
+    arg_map: list[Any],
+    c_args: list[Any],
     is_ptr_return: bool,
     TupleReturn: Any,
-) -> Tuple[List[Any], Any, List[Any], List[Any]]:
+) -> tuple[list[Any], Any, list[Any], list[Any]]:
     """Map Python arguments to ctypes arguments, tracking anchors for lifetime and sync-backs."""
     processed_args = []
     anchors = []
@@ -889,7 +879,7 @@ def _prepare_runtime_args(
 
 
 def _check_runtime_refinements(
-    sig: inspect.Signature, args: Tuple, mapping: Dict[str, Any] = None
+    sig: inspect.Signature, args: tuple, mapping: dict[str, Any] = None
 ):
     """Validate runtime refinements for arguments."""
     for i, param in enumerate(sig.parameters.values()):
@@ -919,9 +909,9 @@ def _check_runtime_refinements(
 def _wrap_return_value(
     res: Any,
     ret_ann: Any,
-    type_mapping: Dict[str, str] = None,
+    type_mapping: dict[str, str] = None,
     sig: inspect.Signature = None,
-    args: Tuple = None,
+    args: tuple = None,
 ) -> Any:
     """Wrap the JIT return value if it represents a higher-order function or Tensor."""
     from .types import FnPointer, Closure, i64, Tensor
@@ -1054,7 +1044,7 @@ def _wrap_return_value(
     return res
 
 
-def _get_ctypes_return_type(ret_ann: Any, type_mapping: Dict[str, str] = None) -> Any:
+def _get_ctypes_return_type(ret_ann: Any, type_mapping: dict[str, str] = None) -> Any:
     """Determine the ctypes return type from the annotation."""
     # Unwrap Refined / Annotated refinement type if necessary
     base_ty, _ = _get_refinement_parts(ret_ann)
@@ -1168,13 +1158,13 @@ def _extract_runtime_asserts(func: Callable, sig: inspect.Signature):
 def _create_wrapper(
     func: Callable,
     code_ptr: int,
-    c_args: List[Any],
-    arg_map: List[Any],
+    c_args: list[Any],
+    arg_map: list[Any],
     sig: inspect.Signature,
     is_ptr_return: bool,
     TupleReturn: Any,
-    tuple_types: List[Any],
-    type_mapping: Dict[str, str] = None,
+    tuple_types: list[Any],
+    type_mapping: dict[str, str] = None,
 ):
     """Generate the final Python wrapper that handles runtime checks and interop."""
     assert_preconds, assert_postconds = _extract_runtime_asserts(func, sig)

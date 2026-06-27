@@ -35,7 +35,7 @@ pub enum Type {
     F64,
     /// Boolean type.
     Bool,
-    
+
     // SIMD 128-bit vectors
     /// 4x 32-bit floats SIMD vector.
     F32X4,
@@ -222,7 +222,12 @@ impl Type {
     /// Returns `true` if this is a composite/aggregate type (e.g. struct, tuple, or fixed-size aggregate).
     pub fn is_composite(&self) -> bool {
         match self {
-            Type::Struct(_) | Type::TypedDict(_) | Type::NamedTuple(_) | Type::Tuple(_) | Type::Enum(_) | Type::Optional(_) => true,
+            Type::Struct(_)
+            | Type::TypedDict(_)
+            | Type::NamedTuple(_)
+            | Type::Tuple(_)
+            | Type::Enum(_)
+            | Type::Optional(_) => true,
             Type::Array(inner, Some(_)) => {
                 // If the inner type is not a primitive, we treat fixed arrays as composite for offsets
                 !inner.is_int() && !inner.is_float()
@@ -379,7 +384,9 @@ impl Type {
                 }
                 max_align
             }
-            Type::Refined(inner, _) | Type::Literal(inner, _) | Type::Optional(inner) => inner.align(struct_layouts),
+            Type::Refined(inner, _) | Type::Literal(inner, _) | Type::Optional(inner) => {
+                inner.align(struct_layouts)
+            }
             _ => 8,
         }
     }
@@ -447,7 +454,6 @@ pub struct SourceLocation {
     /// Offset inside the source file.
     pub offset: usize,
 }
-
 
 #[cfg(test)]
 mod tests {

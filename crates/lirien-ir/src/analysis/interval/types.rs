@@ -23,7 +23,6 @@ impl Bound {
         matches!(self, Bound::Finite(_))
     }
 
-
     pub fn min(&self, other: Self) -> Self {
         match (*self, other) {
             (Bound::NegInf, _) | (_, Bound::NegInf) => Bound::NegInf,
@@ -116,4 +115,3 @@ pub struct IntervalAnalysisResults {
     /// Block-specific range narrowings (e.g. inside conditional branches).
     pub block_narrowing: HashMap<(Value, crate::ir::BlockId), Interval>,
 }
-

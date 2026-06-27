@@ -101,7 +101,14 @@ impl CFGBuilder {
             let mut field_types = Vec::new();
             for (f_name, f_ty_str) in fields {
                 let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
-                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names, &typed_dict_names, &enum_names).unwrap_or(Type::Unknown)
+                    metadata::parse_type(
+                        &expr,
+                        &type_aliases,
+                        &named_tuple_names,
+                        &typed_dict_names,
+                        &enum_names,
+                    )
+                    .unwrap_or(Type::Unknown)
                 } else {
                     match f_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -139,7 +146,14 @@ impl CFGBuilder {
             let mut field_types = Vec::new();
             for (f_name, f_ty_str) in fields {
                 let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
-                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names, &typed_dict_names, &enum_names).unwrap_or(Type::Unknown)
+                    metadata::parse_type(
+                        &expr,
+                        &type_aliases,
+                        &named_tuple_names,
+                        &typed_dict_names,
+                        &enum_names,
+                    )
+                    .unwrap_or(Type::Unknown)
                 } else {
                     match f_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -177,7 +191,14 @@ impl CFGBuilder {
             let mut field_types = Vec::new();
             for (f_name, f_ty_str) in fields {
                 let ty = if let Ok(expr) = ast::Expr::parse(&f_ty_str, "<field>") {
-                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names, &typed_dict_names, &enum_names).unwrap_or(Type::Unknown)
+                    metadata::parse_type(
+                        &expr,
+                        &type_aliases,
+                        &named_tuple_names,
+                        &typed_dict_names,
+                        &enum_names,
+                    )
+                    .unwrap_or(Type::Unknown)
                 } else {
                     match f_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -218,7 +239,14 @@ impl CFGBuilder {
                 let ty = if v_ty_str == "None" {
                     Type::Unknown
                 } else if let Ok(expr) = ast::Expr::parse(&v_ty_str, "<variant>") {
-                    metadata::parse_type(&expr, &type_aliases, &named_tuple_names, &typed_dict_names, &enum_names).unwrap_or(Type::Unknown)
+                    metadata::parse_type(
+                        &expr,
+                        &type_aliases,
+                        &named_tuple_names,
+                        &typed_dict_names,
+                        &enum_names,
+                    )
+                    .unwrap_or(Type::Unknown)
                 } else {
                     match v_ty_str.as_str() {
                         "i8" => Type::I8,
@@ -270,7 +298,6 @@ impl CFGBuilder {
             loop_stack: Vec::new(),
             lambdas: Vec::new(),
         };
-
 
         let entry = builder.create_block();
         builder.current_block = entry;

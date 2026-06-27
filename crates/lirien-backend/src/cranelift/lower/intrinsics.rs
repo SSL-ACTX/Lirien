@@ -15,13 +15,8 @@ pub fn lower<M: Module>(
     }
     let ret_ty = ctx.ssa_func.get_type(dest);
 
-    let (cl_sig, is_sret, is_register_composite_ret) = super::build_cranelift_signature(
-        ctx.ssa_func,
-        &arg_types,
-        &ret_ty,
-        false,
-        ctx.module,
-    );
+    let (cl_sig, is_sret, is_register_composite_ret) =
+        super::build_cranelift_signature(ctx.ssa_func, &arg_types, &ret_ty, false, ctx.module);
 
     let callee = ctx
         .module
@@ -48,7 +43,10 @@ pub fn lower<M: Module>(
     let call = ctx.builder.ins().call(local_callee, &arg_vals);
 
     if is_sret {
-        let addr = ctx.builder.ins().stack_addr(types::I64, sret_slot.unwrap(), 0);
+        let addr = ctx
+            .builder
+            .ins()
+            .stack_addr(types::I64, sret_slot.unwrap(), 0);
         ctx.values.insert(dest, addr);
     } else if is_register_composite_ret {
         let res_vals = ctx.builder.inst_results(call).to_vec();

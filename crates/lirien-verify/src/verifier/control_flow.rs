@@ -104,9 +104,9 @@ pub fn translate<
             }
         }
         InstructionKind::Phi(dest, incoming) => {
-            let is_loop_header = incoming.iter().any(|(pred, _)| {
-                is_reachable(ctx, current_block_id, *pred)
-            });
+            let is_loop_header = incoming
+                .iter()
+                .any(|(pred, _)| is_reachable(ctx, current_block_id, *pred));
 
             if is_loop_header {
                 // This is a loop header!
@@ -204,11 +204,23 @@ pub fn translate<
                 }
 
                 // Let's find other Phi nodes in this block to detect equality relations.
-                let block = ctx.func.blocks.iter().find(|b| b.id == current_block_id).unwrap();
+                let block = ctx
+                    .func
+                    .blocks
+                    .iter()
+                    .find(|b| b.id == current_block_id)
+                    .unwrap();
                 for other_inst in &block.instructions {
                     if let InstructionKind::Phi(other_dest, other_incoming) = &other_inst.kind {
                         if other_dest.0 < dest.0
-                            && detect_equality(ctx, current_block_id, *dest, incoming, *other_dest, other_incoming)
+                            && detect_equality(
+                                ctx,
+                                current_block_id,
+                                *dest,
+                                incoming,
+                                *other_dest,
+                                other_incoming,
+                            )
                         {
                             // We proved dest == other_dest is an invariant!
                             if let (Some(z3_dest), Some(z3_other)) = (
@@ -439,7 +451,8 @@ fn detect_equality<
             if *val_a == *val_b {
                 continue;
             }
-            if let (Some(c_a), Some(c_b)) = (get_const_int(ctx, *val_a), get_const_int(ctx, *val_b)) {
+            if let (Some(c_a), Some(c_b)) = (get_const_int(ctx, *val_a), get_const_int(ctx, *val_b))
+            {
                 if c_a == c_b {
                     continue;
                 }
@@ -463,12 +476,23 @@ fn detect_equality<
 
             if let (Some(inst_a), Some(inst_b)) = (def_a, def_b) {
                 match (&inst_a, &inst_b) {
-                    (InstructionKind::Add(_d_a, l_a, r_a), InstructionKind::Add(_d_b, l_b, r_b)) => {
-                        let (_var_a, step_a) = if *l_a == dest_a { (*l_a, *r_a) } else if *r_a == dest_a { (*r_a, *l_a) } else {
+                    (
+                        InstructionKind::Add(_d_a, l_a, r_a),
+                        InstructionKind::Add(_d_b, l_b, r_b),
+                    ) => {
+                        let (_var_a, step_a) = if *l_a == dest_a {
+                            (*l_a, *r_a)
+                        } else if *r_a == dest_a {
+                            (*r_a, *l_a)
+                        } else {
                             tracing::debug!(target: "lirien::verify", "  Add l_a/r_a mismatch for dest_a v{}", dest_a.0);
                             return false;
                         };
-                        let (_var_b, step_b) = if *l_b == dest_b { (*l_b, *r_b) } else if *r_b == dest_b { (*r_b, *l_b) } else {
+                        let (_var_b, step_b) = if *l_b == dest_b {
+                            (*l_b, *r_b)
+                        } else if *r_b == dest_b {
+                            (*r_b, *l_b)
+                        } else {
                             tracing::debug!(target: "lirien::verify", "  Add l_b/r_b mismatch for dest_b v{}", dest_b.0);
                             return false;
                         };
@@ -476,19 +500,26 @@ fn detect_equality<
                         if step_a == step_b {
                             continue;
                         }
-                        if let (Some(s_a), Some(s_b)) = (get_const_int(ctx, step_a), get_const_int(ctx, step_b)) {
+                        if let (Some(s_a), Some(s_b)) =
+                            (get_const_int(ctx, step_a), get_const_int(ctx, step_b))
+                        {
                             if s_a == s_b {
                                 continue;
                             }
                         }
                         tracing::debug!(target: "lirien::verify", "  Add step mismatch: step_a v{} vs step_b v{}", step_a.0, step_b.0);
                     }
-                    (InstructionKind::Sub(_d_a, l_a, r_a), InstructionKind::Sub(_d_b, l_b, r_b)) => {
+                    (
+                        InstructionKind::Sub(_d_a, l_a, r_a),
+                        InstructionKind::Sub(_d_b, l_b, r_b),
+                    ) => {
                         if *l_a == dest_a && *l_b == dest_b {
                             if *r_a == *r_b {
                                 continue;
                             }
-                            if let (Some(s_a), Some(s_b)) = (get_const_int(ctx, *r_a), get_const_int(ctx, *r_b)) {
+                            if let (Some(s_a), Some(s_b)) =
+                                (get_const_int(ctx, *r_a), get_const_int(ctx, *r_b))
+                            {
                                 if s_a == s_b {
                                     continue;
                                 }

@@ -69,4 +69,3 @@ macro_rules! builder_error {
         $crate::builder::error::BuilderError::$variant(format!($($arg)*), None)
     };
 }
-

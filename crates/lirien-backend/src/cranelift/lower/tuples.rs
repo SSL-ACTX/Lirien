@@ -43,11 +43,11 @@ pub fn lower<M: Module>(
                     for elt_ty in elt_types.iter().take(*idx) {
                         start_idx += super::get_flattened_types(ctx.ssa_func, elt_ty).len();
                     }
-                    
+
                     let dest_ty = &elt_types[*idx];
                     let count = super::get_flattened_types(ctx.ssa_func, dest_ty).len();
                     let slice = cl_vals[start_idx..start_idx + count].to_vec();
-                    
+
                     if dest_ty.is_composite() {
                         ctx.unpacked_values.insert(*dest, slice);
                     } else {
@@ -75,7 +75,10 @@ pub fn lower<M: Module>(
                     ctx.values.insert(*dest, res);
                 } else {
                     let cl_ty = super::translate_type(dest_ty);
-                    let res = ctx.builder.ins().load(cl_ty, MemFlags::new(), tuple_addr, offset as i32);
+                    let res =
+                        ctx.builder
+                            .ins()
+                            .load(cl_ty, MemFlags::new(), tuple_addr, offset as i32);
                     ctx.values.insert(*dest, res);
                 }
             }

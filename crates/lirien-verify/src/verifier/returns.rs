@@ -12,8 +12,12 @@ fn types_compatible(a: &Type, r: &Type) -> bool {
 
     match (a, r) {
         (Type::Pointer(a_inner), Type::Pointer(r_inner)) => types_compatible(a_inner, r_inner),
-        (Type::Pointer(a_inner), Type::NullablePointer(r_inner)) => types_compatible(a_inner, r_inner),
-        (Type::NullablePointer(a_inner), Type::NullablePointer(r_inner)) => types_compatible(a_inner, r_inner),
+        (Type::Pointer(a_inner), Type::NullablePointer(r_inner)) => {
+            types_compatible(a_inner, r_inner)
+        }
+        (Type::NullablePointer(a_inner), Type::NullablePointer(r_inner)) => {
+            types_compatible(a_inner, r_inner)
+        }
         (Type::Optional(a_inner), Type::Optional(r_inner)) => types_compatible(a_inner, r_inner),
         (Type::Closure(_, a_args, a_ret, _), Type::Closure(_, r_args, r_ret, _)) => {
             if a_args.len() != r_args.len() {
@@ -65,18 +69,34 @@ pub fn verify_return_refinements<
             if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
                 let actual_ty = t_ctx.func.get_type(*ret_val);
                 if !types_compatible(&actual_ty, &ret_ty) {
-                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                    return Err(format!("Type mismatch in return: expected {:?}, got {:?}{}", ret_ty, actual_ty, loc_info));
+                    let loc_info = inst
+                        .location
+                        .map(|l| format!(" at {}", l))
+                        .unwrap_or_default();
+                    return Err(format!(
+                        "Type mismatch in return: expected {:?}, got {:?}{}",
+                        ret_ty, actual_ty, loc_info
+                    ));
                 }
-                
+
                 // Shape verification
-                if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) = (&actual_ty, &ret_ty) {
+                if let (Type::Tensor(_, src_dims), Type::Tensor(_, target_dims)) =
+                    (&actual_ty, &ret_ty)
+                {
                     let has_ellipsis = target_dims.iter().any(|d| d == "...");
                     if !has_ellipsis && src_dims.len() != target_dims.len() {
-                        let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
-                        return Err(format!("Tensor rank mismatch in return: expected {} dims, got {}{}", target_dims.len(), src_dims.len(), loc_info));
+                        let loc_info = inst
+                            .location
+                            .map(|l| format!(" at {}", l))
+                            .unwrap_or_default();
+                        return Err(format!(
+                            "Tensor rank mismatch in return: expected {} dims, got {}{}",
+                            target_dims.len(),
+                            src_dims.len(),
+                            loc_info
+                        ));
                     }
-                    
+
                     if let Some(src_z3_dims) = t_ctx.z3_tensor_dims.get(ret_val).cloned() {
                         if has_ellipsis {
                             let ellipsis_pos = target_dims.iter().position(|d| d == "...").unwrap();
@@ -84,7 +104,10 @@ pub fn verify_return_refinements<
                             let num_fixed_after = target_dims.len() - ellipsis_pos - 1;
 
                             if src_dims.len() < num_fixed_before + num_fixed_after {
-                                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                let loc_info = inst
+                                    .location
+                                    .map(|l| format!(" at {}", l))
+                                    .unwrap_or_default();
                                 return Err(format!("Tensor rank too small for polymorphic target: expected at least {} dims, got {}{}", num_fixed_before + num_fixed_after, src_dims.len(), loc_info));
                             }
 
@@ -98,7 +121,10 @@ pub fn verify_return_refinements<
                                 let not_eq = t_ctx.backend.bool_not(&eq);
                                 t_ctx.backend.assert(&not_eq);
                                 if t_ctx.backend.check()? {
-                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
                                     return Err(format!("Tensor shape mismatch in return (prefix): dimension '{}' (idx {}) does not match{}", target_dim_name, i, loc_info));
                                 }
                                 t_ctx.backend.pop(1);
@@ -112,11 +138,15 @@ pub fn verify_return_refinements<
                                 let target_z3_dim = t_ctx.get_dim_var(target_dim_name);
                                 t_ctx.backend.push();
                                 t_ctx.backend.assert(&path_cond);
-                                let eq = t_ctx.backend.int_eq(&src_z3_dims[src_idx], &target_z3_dim);
+                                let eq =
+                                    t_ctx.backend.int_eq(&src_z3_dims[src_idx], &target_z3_dim);
                                 let not_eq = t_ctx.backend.bool_not(&eq);
                                 t_ctx.backend.assert(&not_eq);
                                 if t_ctx.backend.check()? {
-                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
                                     return Err(format!("Tensor shape mismatch in return (suffix): dimension '{}' (idx {}) does not match{}", target_dim_name, src_idx, loc_info));
                                 }
                                 t_ctx.backend.pop(1);
@@ -126,12 +156,16 @@ pub fn verify_return_refinements<
                                 let target_z3_dim = t_ctx.get_dim_var(target_dim_name);
                                 t_ctx.backend.push();
                                 t_ctx.backend.assert(&path_cond);
-                                let eq = t_ctx.backend.int_eq(&src_z3_dims[dim_idx], &target_z3_dim);
+                                let eq =
+                                    t_ctx.backend.int_eq(&src_z3_dims[dim_idx], &target_z3_dim);
                                 let not_eq = t_ctx.backend.bool_not(&eq);
                                 t_ctx.backend.assert(&not_eq);
-                                
+
                                 if t_ctx.backend.check()? {
-                                    let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                    let loc_info = inst
+                                        .location
+                                        .map(|l| format!(" at {}", l))
+                                        .unwrap_or_default();
                                     return Err(format!("Tensor shape mismatch in return: dimension '{}' (idx {}) does not match{}", target_dim_name, dim_idx, loc_info));
                                 }
                                 t_ctx.backend.pop(1);
@@ -186,11 +220,20 @@ pub fn verify_return_refinements<
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
-                        crate::refinement::parse_refinement_with_resolver(postcond, &bv_int, Some(z3_bv), &resolver)
+                        crate::refinement::parse_refinement_with_resolver(
+                            postcond,
+                            &bv_int,
+                            Some(z3_bv),
+                            &resolver,
+                        )
                     } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
-                        crate::refinement::parse_refinement_with_resolver(postcond, z3_int, None, &resolver)
+                        crate::refinement::parse_refinement_with_resolver(
+                            postcond, z3_int, None, &resolver,
+                        )
                     } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
-                        crate::refinement::parse_float_refinement_with_resolver(postcond, z3_float, &resolver)
+                        crate::refinement::parse_float_refinement_with_resolver(
+                            postcond, z3_float, &resolver,
+                        )
                     } else {
                         continue;
                     };
@@ -237,9 +280,12 @@ pub fn infer_return_refinement<
     for block in &t_ctx.func.blocks {
         for inst in &block.instructions {
             if let InstructionKind::Return(Some(ret_val)) = &inst.kind {
-                let interval = t_ctx.analysis.block_narrowing.get(&(*ret_val, block.id))
+                let interval = t_ctx
+                    .analysis
+                    .block_narrowing
+                    .get(&(*ret_val, block.id))
                     .or_else(|| t_ctx.analysis.intervals.get(ret_val));
-                
+
                 if let Some(interval) = interval {
                     combined_interval = match combined_interval {
                         Some(j) => Some(j.join(interval)),

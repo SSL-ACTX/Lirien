@@ -71,4 +71,3 @@ pub trait SsaManager {
     /// Returns `true` if the specified block ends with a terminator instruction.
     fn is_terminated(&self, block_id: BlockId) -> bool;
 }
-

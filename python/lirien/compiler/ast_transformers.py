@@ -23,23 +23,25 @@ class TypeSubstitutor(ast.NodeTransformer):
     def visit_BinOp(self, node):
         node = self.generic_visit(node)
         if isinstance(node.left, ast.Constant) and isinstance(node.right, ast.Constant):
-            l, r = node.left.value, node.right.value
-            if isinstance(l, (int, float)) and isinstance(r, (int, float)):
+            left_val, right_val = node.left.value, node.right.value
+            if isinstance(left_val, (int, float)) and isinstance(
+                right_val, (int, float)
+            ):
                 res = None
                 if isinstance(node.op, ast.Add):
-                    res = l + r
+                    res = left_val + right_val
                 elif isinstance(node.op, ast.Sub):
-                    res = l - r
+                    res = left_val - right_val
                 elif isinstance(node.op, ast.Mult):
-                    res = l * r
+                    res = left_val * right_val
                 elif isinstance(node.op, ast.FloorDiv):
-                    res = l // r
+                    res = left_val // right_val
                 elif isinstance(node.op, ast.Div):
-                    res = l / r
+                    res = left_val / right_val
                 elif isinstance(node.op, ast.Mod):
-                    res = l % r
+                    res = left_val % right_val
                 elif isinstance(node.op, ast.Pow):
-                    res = l**r
+                    res = left_val**right_val
 
                 if res is not None:
                     return ast.Constant(value=res)

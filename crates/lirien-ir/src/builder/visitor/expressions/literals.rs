@@ -1,7 +1,7 @@
 use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::{push_inst, builder_error};
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 
 impl CFGBuilder {
@@ -9,7 +9,10 @@ impl CFGBuilder {
         let val = self.func.next_value();
         match c.value {
             ast::Constant::Int(i) => {
-                let int_val = i.to_string().parse::<i64>().map_err(|_| builder_error!(General, "Int too large"))?;
+                let int_val = i
+                    .to_string()
+                    .parse::<i64>()
+                    .map_err(|_| builder_error!(General, "Int too large"))?;
                 push_inst!(self, InstructionKind::ConstInt(val, int_val));
                 self.func.set_type(val, Type::I64);
             }
@@ -32,9 +35,14 @@ impl CFGBuilder {
                 push_inst!(self, InstructionKind::Nop());
                 self.func.set_type(val, Type::Unknown);
             }
-            _ => return Err(builder_error!(General, "Unsupported constant type: {:?}", c.value)),
-
+            _ => {
+                return Err(builder_error!(
+                    General,
+                    "Unsupported constant type: {:?}",
+                    c.value
+                ))
             }
+        }
 
         Ok(val)
     }

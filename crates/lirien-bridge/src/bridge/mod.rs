@@ -27,7 +27,6 @@ use tracing::{debug, info};
 #[pyo3(signature = (source, func_name, struct_layouts, enum_layouts, type_aliases, named_tuple_layouts=HashMap::new(), typed_dict_layouts=HashMap::new(), timeout_ms=5000, verify=true))]
 #[allow(clippy::too_many_arguments)]
 pub fn verify_and_compile(
-
     source: String,
     func_name: String,
     struct_layouts: HashMap<String, Vec<(String, String)>>,

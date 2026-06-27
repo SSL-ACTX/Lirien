@@ -85,4 +85,3 @@ pub fn configure_tracing(config: HashMap<String, String>) -> Result<(), String> 
     }
     set_log_level(&directives.join(","))
 }
-

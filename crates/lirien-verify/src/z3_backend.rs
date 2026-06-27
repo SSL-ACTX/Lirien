@@ -22,7 +22,6 @@ impl<'ctx> Z3Backend<'ctx> {
         Self { ctx, solver }
     }
 
-
     fn unify_floats(&mut self, a: &Float, b: &Float) -> (Float, Float) {
         let sort_a = a.get_sort();
         let sort_b = b.get_sort();
@@ -45,7 +44,10 @@ impl<'ctx> Z3Backend<'ctx> {
                     b.get_z3_ast(),
                     sort_a.get_z3_sort(),
                 );
-                (a.clone(), Float::wrap(self.ctx, promoted.expect("Promotion failed")))
+                (
+                    a.clone(),
+                    Float::wrap(self.ctx, promoted.expect("Promotion failed")),
+                )
             } else {
                 // Promote a to sort of b
                 let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(context)
@@ -56,7 +58,10 @@ impl<'ctx> Z3Backend<'ctx> {
                     a.get_z3_ast(),
                     sort_b.get_z3_sort(),
                 );
-                (Float::wrap(self.ctx, promoted.expect("Promotion failed")), b.clone())
+                (
+                    Float::wrap(self.ctx, promoted.expect("Promotion failed")),
+                    b.clone(),
+                )
             }
         }
     }
@@ -81,7 +86,10 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
             }
             SatResult::Unsat => Ok(false),
             SatResult::Unknown => {
-                let reason = self.solver.get_reason_unknown().unwrap_or_else(|| "unknown".to_string());
+                let reason = self
+                    .solver
+                    .get_reason_unknown()
+                    .unwrap_or_else(|| "unknown".to_string());
                 Err(format!("Z3 returned Unknown: {}", reason))
             }
         }
@@ -141,7 +149,12 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         cond.ite(then, orelse)
     }
 
-    fn float_ite(&mut self, cond: &Self::Bool, then: &Self::Float, orelse: &Self::Float) -> Self::Float {
+    fn float_ite(
+        &mut self,
+        cond: &Self::Bool,
+        then: &Self::Float,
+        orelse: &Self::Float,
+    ) -> Self::Float {
         let (t, o) = self.unify_floats(then, orelse);
         unsafe {
             let ast = z3_sys::Z3_mk_ite(
@@ -190,7 +203,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         unsafe {
             BV::wrap(
                 self.ctx,
-                z3_sys::Z3_mk_int2bv(self.ctx.get_z3_context(), bit_width, a.get_z3_ast()).expect("Z3_mk_int2bv failed"),
+                z3_sys::Z3_mk_int2bv(self.ctx.get_z3_context(), bit_width, a.get_z3_ast())
+                    .expect("Z3_mk_int2bv failed"),
             )
         }
     }
@@ -342,7 +356,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     fn float_add(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Float {
         let (lhs, rhs) = self.unify_floats(a, b);
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let ast = z3_sys::Z3_mk_fpa_add(
                 self.ctx.get_z3_context(),
                 rm,
@@ -356,7 +371,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     fn float_sub(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Float {
         let (lhs, rhs) = self.unify_floats(a, b);
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let ast = z3_sys::Z3_mk_fpa_sub(
                 self.ctx.get_z3_context(),
                 rm,
@@ -370,7 +386,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     fn float_mul(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Float {
         let (lhs, rhs) = self.unify_floats(a, b);
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let ast = z3_sys::Z3_mk_fpa_mul(
                 self.ctx.get_z3_context(),
                 rm,
@@ -384,7 +401,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     fn float_div(&mut self, a: &Self::Float, b: &Self::Float) -> Self::Float {
         let (lhs, rhs) = self.unify_floats(a, b);
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let ast = z3_sys::Z3_mk_fpa_div(
                 self.ctx.get_z3_context(),
                 rm,
@@ -445,21 +463,12 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
 
     fn float_to_bv(&mut self, a: &Self::Float, is_signed: bool, bit_width: u32) -> Self::BV {
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let conv = if is_signed {
-                z3_sys::Z3_mk_fpa_to_sbv(
-                    self.ctx.get_z3_context(),
-                    rm,
-                    a.get_z3_ast(),
-                    bit_width,
-                )
+                z3_sys::Z3_mk_fpa_to_sbv(self.ctx.get_z3_context(), rm, a.get_z3_ast(), bit_width)
             } else {
-                z3_sys::Z3_mk_fpa_to_ubv(
-                    self.ctx.get_z3_context(),
-                    rm,
-                    a.get_z3_ast(),
-                    bit_width,
-                )
+                z3_sys::Z3_mk_fpa_to_ubv(self.ctx.get_z3_context(), rm, a.get_z3_ast(), bit_width)
             };
             BV::wrap(self.ctx, conv.expect("Z3_mk_fpa_to_bv failed"))
         }
@@ -472,7 +481,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
             z3::Sort::double()
         };
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let conv = z3_sys::Z3_mk_fpa_to_fp_float(
                 self.ctx.get_z3_context(),
                 rm,
@@ -490,7 +500,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
             z3::Sort::double()
         };
         unsafe {
-            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context()).expect("Rounding mode failed");
+            let rm = z3_sys::Z3_mk_fpa_round_nearest_ties_to_even(self.ctx.get_z3_context())
+                .expect("Rounding mode failed");
             let conv = if is_signed {
                 z3_sys::Z3_mk_fpa_to_fp_signed(
                     self.ctx.get_z3_context(),
@@ -551,18 +562,24 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
         a.select(index).as_bv().expect("array_select_bv failed")
     }
 
-    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int, is_f32: bool) -> Self::Float {
+    fn array_select_float(
+        &mut self,
+        a: &Self::Array,
+        index: &Self::Int,
+        is_f32: bool,
+    ) -> Self::Float {
         let res = a.select(index);
         let sort = res.get_sort();
-        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), sort.get_z3_sort()) };
-        
+        let kind =
+            unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), sort.get_z3_sort()) };
+
         if kind == z3_sys::SortKind::FloatingPoint {
             res.as_float().expect("array_select_float: expected float")
         } else if kind == z3_sys::SortKind::Bv {
             let bv = res.as_bv().expect("array_select_float failed: expected bv");
             let bv_size = bv.get_size();
             let target_size = if is_f32 { 32 } else { 64 };
-            
+
             if bv_size == target_size {
                 self.bv_bitcast_to_float(&bv, is_f32)
             } else if bv_size > target_size {
@@ -591,10 +608,17 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     ) -> Self::Array {
         let array_sort = a.get_sort();
         let array_range_sort = array_sort.array_range().unwrap();
-        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
-        
+        let kind = unsafe {
+            z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort())
+        };
+
         if kind == z3_sys::SortKind::Bv {
-            let bv_size = unsafe { z3_sys::Z3_get_bv_sort_size(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+            let bv_size = unsafe {
+                z3_sys::Z3_get_bv_sort_size(
+                    self.ctx.get_z3_context(),
+                    array_range_sort.get_z3_sort(),
+                )
+            };
             let val_size = val.get_size();
             if bv_size == val_size {
                 a.store(index, val)
@@ -606,8 +630,8 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
                 a.store(index, &extended)
             }
         } else {
-             // Fallback
-             a.store(index, val)
+            // Fallback
+            a.store(index, val)
         }
     }
 
@@ -620,22 +644,29 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     ) -> Self::Array {
         let array_sort = a.get_sort();
         let array_range_sort = array_sort.array_range().unwrap();
-        let kind = unsafe { z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
-        
+        let kind = unsafe {
+            z3_sys::Z3_get_sort_kind(self.ctx.get_z3_context(), array_range_sort.get_z3_sort())
+        };
+
         if kind == z3_sys::SortKind::FloatingPoint {
             a.store(index, val)
         } else if kind == z3_sys::SortKind::Bv {
-            let bv_size = unsafe { z3_sys::Z3_get_bv_sort_size(self.ctx.get_z3_context(), array_range_sort.get_z3_sort()) };
+            let bv_size = unsafe {
+                z3_sys::Z3_get_bv_sort_size(
+                    self.ctx.get_z3_context(),
+                    array_range_sort.get_z3_sort(),
+                )
+            };
             let mut bv_val = self.float_bitcast_to_bv(val);
             let target_size = if is_f32 { 32 } else { 64 };
-            
+
             // Adjust bv_val if float bit width doesn't match target bv width
             if bv_size != target_size {
-                 if target_size > bv_size {
-                     bv_val = self.bv_extract(&bv_val, bv_size - 1, 0);
-                 } else {
-                     bv_val = self.bv_zext(&bv_val, bv_size - target_size);
-                 }
+                if target_size > bv_size {
+                    bv_val = self.bv_extract(&bv_val, bv_size - 1, 0);
+                } else {
+                    bv_val = self.bv_zext(&bv_val, bv_size - target_size);
+                }
             }
             a.store(index, &bv_val)
         } else {

@@ -5,8 +5,8 @@ pub mod literals;
 
 use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::{push_inst, builder_error};
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
 
@@ -27,7 +27,11 @@ impl CFGBuilder {
             ast::Expr::Tuple(t) => self.visit_tuple(t),
             ast::Expr::Call(s) => self.visit_call(s),
             ast::Expr::Lambda(s) => self.visit_lambda(s),
-            _ => Err(builder_error!(General, "Expression type {:?} not yet supported", expr)),
+            _ => Err(builder_error!(
+                General,
+                "Expression type {:?} not yet supported",
+                expr
+            )),
         }
     }
 
@@ -82,23 +86,20 @@ impl CFGBuilder {
             if scalar_ty != target_elt_ty {
                 let converted = self.func.next_value();
                 if target_elt_ty.is_float() && is_scalar_int && !is_scalar_float {
-                    push_inst!(self, InstructionKind::IToF(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::IToF(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else if !target_elt_ty.is_float() && is_scalar_float && !is_scalar_int {
-                    push_inst!(self, InstructionKind::FToI(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::FToI(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else if target_elt_ty.is_float() && is_scalar_float {
-                    push_inst!(self, InstructionKind::FConv(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::FConv(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else {
                     push_inst!(self, InstructionKind::Assign(converted, scalar_val));
                 }
@@ -151,23 +152,20 @@ impl CFGBuilder {
             if scalar_ty != target_elt_ty {
                 let converted = self.func.next_value();
                 if target_elt_ty.is_float() && is_scalar_int && !is_scalar_float {
-                    push_inst!(self, InstructionKind::IToF(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::IToF(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else if !target_elt_ty.is_float() && is_scalar_float && !is_scalar_int {
-                    push_inst!(self, InstructionKind::FToI(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::FToI(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else if target_elt_ty.is_float() && is_scalar_float {
-                    push_inst!(self, InstructionKind::FConv(
-                        converted,
-                        scalar_val,
-                        target_elt_ty.clone(),
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::FConv(converted, scalar_val, target_elt_ty.clone(),)
+                    );
                 } else {
                     push_inst!(self, InstructionKind::Assign(converted, scalar_val));
                 }
@@ -198,17 +196,27 @@ impl CFGBuilder {
                 l_ty = r_ty.clone();
             } else if l_ty.is_float() && r_ty.is_float() && l_ty != r_ty {
                 // Promote f32 to f64
-                let dest_ty = if matches!(l_ty, Type::F64) || matches!(r_ty, Type::F64) { Type::F64 } else { Type::F32 };
+                let dest_ty = if matches!(l_ty, Type::F64) || matches!(r_ty, Type::F64) {
+                    Type::F64
+                } else {
+                    Type::F32
+                };
                 if l_ty != dest_ty {
                     let converted = self.func.next_value();
-                    push_inst!(self, InstructionKind::FConv(converted, lhs, dest_ty.clone()));
+                    push_inst!(
+                        self,
+                        InstructionKind::FConv(converted, lhs, dest_ty.clone())
+                    );
                     self.func.set_type(converted, dest_ty.clone());
                     lhs = converted;
                     l_ty = dest_ty.clone();
                 }
                 if r_ty != dest_ty {
                     let converted = self.func.next_value();
-                    push_inst!(self, InstructionKind::FConv(converted, rhs, dest_ty.clone()));
+                    push_inst!(
+                        self,
+                        InstructionKind::FConv(converted, rhs, dest_ty.clone())
+                    );
                     self.func.set_type(converted, dest_ty.clone());
                     rhs = converted;
                     r_ty = dest_ty.clone();
@@ -221,7 +229,10 @@ impl CFGBuilder {
         if let (Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (l_ty.clone(), r_ty.clone()) {
             if op != ast::Operator::MatMult {
                 if t1 != t2 {
-                    return Err(builder_error!(General, "Tensor arithmetic requires same base types"));
+                    return Err(builder_error!(
+                        General,
+                        "Tensor arithmetic requires same base types"
+                    ));
                 }
                 if dims1 != dims2 {
                     if let Some(res_dims) = self.get_broadcast_shape(&dims1, &dims2) {
@@ -249,15 +260,12 @@ impl CFGBuilder {
                             }
 
                             let new_lhs = self.func.next_value();
-                            push_inst!(self, InstructionKind::TensorBroadcast(
-                                new_lhs,
-                                lhs,
-                                target_dim_values,
-                            ));
-                            self.func.set_type(
-                                new_lhs,
-                                Type::Tensor(t1.clone(), res_dims.clone()),
+                            push_inst!(
+                                self,
+                                InstructionKind::TensorBroadcast(new_lhs, lhs, target_dim_values,)
                             );
+                            self.func
+                                .set_type(new_lhs, Type::Tensor(t1.clone(), res_dims.clone()));
                             lhs = new_lhs;
                         }
 
@@ -285,15 +293,12 @@ impl CFGBuilder {
                             }
 
                             let new_rhs = self.func.next_value();
-                            push_inst!(self, InstructionKind::TensorBroadcast(
-                                new_rhs,
-                                rhs,
-                                target_dim_values,
-                            ));
-                            self.func.set_type(
-                                new_rhs,
-                                Type::Tensor(t2.clone(), res_dims.clone()),
+                            push_inst!(
+                                self,
+                                InstructionKind::TensorBroadcast(new_rhs, rhs, target_dim_values,)
                             );
+                            self.func
+                                .set_type(new_rhs, Type::Tensor(t2.clone(), res_dims.clone()));
                             rhs = new_rhs;
                         }
                         l_ty = Type::Tensor(t1, res_dims);
@@ -301,7 +306,8 @@ impl CFGBuilder {
                         return Err(builder_error!(
                             General,
                             "Tensor shape mismatch in element-wise operation: {:?} vs {:?}",
-                            dims1, dims2
+                            dims1,
+                            dims2
                         ));
                     }
                 }
@@ -311,7 +317,13 @@ impl CFGBuilder {
                     ast::Operator::Sub => InstructionKind::TensorSub(dest, lhs, rhs),
                     ast::Operator::Mult => InstructionKind::TensorMul(dest, lhs, rhs),
                     ast::Operator::Div => InstructionKind::TensorDiv(dest, lhs, rhs),
-                    _ => return Err(builder_error!(General, "Operator {:?} not supported for Tensors", op)),
+                    _ => {
+                        return Err(builder_error!(
+                            General,
+                            "Operator {:?} not supported for Tensors",
+                            op
+                        ))
+                    }
                 };
                 self.func.set_type(dest, l_ty.clone());
                 return Ok(kind);
@@ -326,7 +338,13 @@ impl CFGBuilder {
                     ast::Operator::Sub => InstructionKind::TensorScalarSub(dest, lhs, rhs),
                     ast::Operator::Mult => InstructionKind::TensorScalarMul(dest, lhs, rhs),
                     ast::Operator::Div => InstructionKind::TensorScalarDiv(dest, lhs, rhs),
-                    _ => return Err(builder_error!(General, "Operator {:?} not supported for Tensor-Scalar", op)),
+                    _ => {
+                        return Err(builder_error!(
+                            General,
+                            "Operator {:?} not supported for Tensor-Scalar",
+                            op
+                        ))
+                    }
                 };
                 self.func.set_type(dest, l_ty.clone());
                 return Ok(kind);
@@ -338,7 +356,13 @@ impl CFGBuilder {
                 let kind = match op {
                     ast::Operator::Add => InstructionKind::TensorScalarAdd(dest, rhs, lhs),
                     ast::Operator::Mult => InstructionKind::TensorScalarMul(dest, rhs, lhs),
-                    _ => return Err(builder_error!(General, "Operator {:?} not supported for Scalar-Tensor", op)),
+                    _ => {
+                        return Err(builder_error!(
+                            General,
+                            "Operator {:?} not supported for Scalar-Tensor",
+                            op
+                        ))
+                    }
                 };
                 self.func.set_type(dest, r_ty.clone());
                 return Ok(kind);
@@ -376,15 +400,29 @@ impl CFGBuilder {
             ast::Operator::BitXor => InstructionKind::Xor(dest, lhs, rhs),
             ast::Operator::LShift => InstructionKind::Shl(dest, lhs, rhs),
             ast::Operator::RShift => InstructionKind::AShr(dest, lhs, rhs),
-            _ => return Err(builder_error!(General, "Operator {:?} not yet supported", op)),
+            _ => {
+                return Err(builder_error!(
+                    General,
+                    "Operator {:?} not yet supported",
+                    op
+                ))
+            }
         };
 
-        if let (ast::Operator::MatMult, Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) = (op, &l_ty, &r_ty) {
+        if let (ast::Operator::MatMult, Type::Tensor(t1, dims1), Type::Tensor(t2, dims2)) =
+            (op, &l_ty, &r_ty)
+        {
             if t1 != t2 {
-                return Err(builder_error!(General, "Matrix multiplication requires tensors of the same base type"));
+                return Err(builder_error!(
+                    General,
+                    "Matrix multiplication requires tensors of the same base type"
+                ));
             }
             if dims1.len() != 2 || dims2.len() != 2 {
-                return Err(builder_error!(General, "Matrix multiplication currently requires exactly 2D tensors"));
+                return Err(builder_error!(
+                    General,
+                    "Matrix multiplication currently requires exactly 2D tensors"
+                ));
             }
             // Resulting shape: [M, K] from [M, N] @ [N, K]
             let new_dims = vec![dims1[0].clone(), dims2[1].clone()];

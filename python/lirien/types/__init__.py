@@ -33,6 +33,8 @@ __all__ = [
     "Buffer",
     "Box",
     "Result",
+    "Ok",
+    "Err",
     "FnPointer",
     "Callable",
     "Closure",

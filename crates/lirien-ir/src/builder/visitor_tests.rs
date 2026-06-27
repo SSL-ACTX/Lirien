@@ -69,8 +69,14 @@ mod tests {
             ],
         );
 
-        let mut builder =
-            CFGBuilder::new("test".to_string(), layouts, HashMap::new(), HashMap::new(), HashMap::new(), HashMap::new());
+        let mut builder = CFGBuilder::new(
+            "test".to_string(),
+            layouts,
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
 
         let obj = builder.func.next_value();
         builder

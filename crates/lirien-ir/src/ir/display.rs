@@ -3,12 +3,11 @@
 //! This module implements [`std::fmt::Display`] for IR objects like
 //! [`Type`], [`Value`], [`BlockId`], [`Instruction`], and others.
 
-use super::instruction::{Instruction, InstructionKind, FusedExpr};
+use super::instruction::{FusedExpr, Instruction, InstructionKind};
 use super::types::{AccessPath, BlockId, PathElement, SourceLocation, Type, Value};
 use std::fmt;
 
 impl fmt::Display for Type {
-
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Type::I8 => write!(f, "i8"),
@@ -59,7 +58,14 @@ impl fmt::Display for Type {
             Type::Closure(name, args, ret, target) => {
                 let inner: Vec<String> = args.iter().map(|t| t.to_string()).collect();
                 if let Some(t) = target {
-                    write!(f, "Closure {}<{}>({}) -> {}", name, t, inner.join(", "), ret)
+                    write!(
+                        f,
+                        "Closure {}<{}>({}) -> {}",
+                        name,
+                        t,
+                        inner.join(", "),
+                        ret
+                    )
                 } else {
                     write!(f, "Closure {}({}) -> {}", name, inner.join(", "), ret)
                 }
@@ -168,16 +174,12 @@ impl fmt::Display for Instruction {
                 "  {} = urem {}, {}{}{}",
                 d, l, r, loc_str, constraints_str
             ),
-            InstructionKind::Abs(d, s) => write!(
-                f,
-                "  {} = abs {}{}{}",
-                d, s, loc_str, constraints_str
-            ),
-            InstructionKind::Neg(d, s) => write!(
-                f,
-                "  {} = neg {}{}{}",
-                d, s, loc_str, constraints_str
-            ),
+            InstructionKind::Abs(d, s) => {
+                write!(f, "  {} = abs {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::Neg(d, s) => {
+                write!(f, "  {} = neg {}{}{}", d, s, loc_str, constraints_str)
+            }
             InstructionKind::Min(d, l, r) => write!(
                 f,
                 "  {} = min {}, {}{}{}",
@@ -526,21 +528,15 @@ impl fmt::Display for Instruction {
                 "  {} = tsdiv {}, {}{}{}",
                 d, t, s, loc_str, constraints_str
             ),
-            InstructionKind::TensorSum(d, t) => write!(
-                f,
-                "  {} = tsum {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
-            InstructionKind::TensorMax(d, t) => write!(
-                f,
-                "  {} = tmax {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
-            InstructionKind::TensorMin(d, t) => write!(
-                f,
-                "  {} = tmin {}{}{}",
-                d, t, loc_str, constraints_str
-            ),
+            InstructionKind::TensorSum(d, t) => {
+                write!(f, "  {} = tsum {}{}{}", d, t, loc_str, constraints_str)
+            }
+            InstructionKind::TensorMax(d, t) => {
+                write!(f, "  {} = tmax {}{}{}", d, t, loc_str, constraints_str)
+            }
+            InstructionKind::TensorMin(d, t) => {
+                write!(f, "  {} = tmin {}{}{}", d, t, loc_str, constraints_str)
+            }
             InstructionKind::TensorFused(d, inputs, expr) => {
                 let inputs_str: Vec<String> = inputs.iter().map(|v| v.to_string()).collect();
                 write!(
@@ -664,19 +660,39 @@ impl fmt::Display for Instruction {
                 d, t, i, loc_str, constraints_str
             ),
             InstructionKind::ListCreate(d, t) => {
-                write!(f, "  {} = list_create (as {}){}{}", d, t, loc_str, constraints_str)
+                write!(
+                    f,
+                    "  {} = list_create (as {}){}{}",
+                    d, t, loc_str, constraints_str
+                )
             }
             InstructionKind::ListAppend(d, list, val) => {
-                write!(f, "  {} = list_append {}, {}{}{}", d, list, val, loc_str, constraints_str)
+                write!(
+                    f,
+                    "  {} = list_append {}, {}{}{}",
+                    d, list, val, loc_str, constraints_str
+                )
             }
             InstructionKind::ListLen(d, list) => {
-                write!(f, "  {} = list_len {}{}{}", d, list, loc_str, constraints_str)
+                write!(
+                    f,
+                    "  {} = list_len {}{}{}",
+                    d, list, loc_str, constraints_str
+                )
             }
             InstructionKind::ListLoad(d, list, idx) => {
-                write!(f, "  {} = list_load {}[{}]{}{}", d, list, idx, loc_str, constraints_str)
+                write!(
+                    f,
+                    "  {} = list_load {}[{}]{}{}",
+                    d, list, idx, loc_str, constraints_str
+                )
             }
             InstructionKind::ListStore(d, list, idx, val) => {
-                write!(f, "  {} = list_store {}[{}] <- {}{}{}", d, list, idx, val, loc_str, constraints_str)
+                write!(
+                    f,
+                    "  {} = list_store {}[{}] <- {}{}{}",
+                    d, list, idx, val, loc_str, constraints_str
+                )
             }
             InstructionKind::Alloc(d, t) => {
                 write!(f, "  {} = alloc {}{}{}", d, t, loc_str, constraints_str)

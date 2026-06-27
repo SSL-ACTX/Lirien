@@ -1,8 +1,8 @@
+use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
-use crate::builder::error::BuilderResult;
-use crate::{push_inst, builder_error};
 
 impl CFGBuilder {
     pub(super) fn handle_assignment_target(
@@ -35,15 +35,18 @@ impl CFGBuilder {
                         }
 
                         if indices.len() != dims.len() {
-                            return Err(builder_error!(General, "Tensor indexing rank mismatch: expected {} indices, got {}",
+                            return Err(builder_error!(
+                                General,
+                                "Tensor indexing rank mismatch: expected {} indices, got {}",
                                 dims.len(),
                                 indices.len()
                             ));
                         }
 
-                        push_inst!(self, InstructionKind::TensorStore(
-                            dest_arr, arr, indices, value,
-                        ));
+                        push_inst!(
+                            self,
+                            InstructionKind::TensorStore(dest_arr, arr, indices, value,)
+                        );
                         self.func.set_type(dest_arr, Type::Tensor(inner, dims));
                     }
                     Type::TypedDict(ref dict_name) => {
@@ -56,24 +59,36 @@ impl CFGBuilder {
                         }
 
                         if let Some(key) = key_val {
-                            let field_offset = self.get_field_offset(dict_name, &key).ok_or_else(|| {
-                                builder_error!(AttributeNotFound, dict_name.clone(), key.clone())
-                            })?;
+                            let field_offset =
+                                self.get_field_offset(dict_name, &key).ok_or_else(|| {
+                                    builder_error!(
+                                        AttributeNotFound,
+                                        dict_name.clone(),
+                                        key.clone()
+                                    )
+                                })?;
 
                             let fields = self.func.struct_layouts.get(dict_name).unwrap();
-                            let field_ty = fields
-                                .iter()
-                                .find(|(f, _)| f == &key)
-                                .unwrap()
-                                .1
-                                .clone();
+                            let field_ty =
+                                fields.iter().find(|(f, _)| f == &key).unwrap().1.clone();
 
-                            push_inst!(self, InstructionKind::StructSet(
-                                dest_arr, arr, field_offset, value, field_ty,
-                            ));
-                            self.func.set_type(dest_arr, Type::TypedDict(dict_name.clone()));
+                            push_inst!(
+                                self,
+                                InstructionKind::StructSet(
+                                    dest_arr,
+                                    arr,
+                                    field_offset,
+                                    value,
+                                    field_ty,
+                                )
+                            );
+                            self.func
+                                .set_type(dest_arr, Type::TypedDict(dict_name.clone()));
                         } else {
-                            return Err(builder_error!(General, "TypedDict key must be a constant string"));
+                            return Err(builder_error!(
+                                General,
+                                "TypedDict key must be a constant string"
+                            ));
                         }
                     }
                     _ => {
@@ -81,42 +96,49 @@ impl CFGBuilder {
                         idx = self.auto_load(idx);
                         match arr_ty {
                             Type::Buffer(inner) => {
-                                push_inst!(self, InstructionKind::BufferStore(
-                                    dest_arr,
-                                    arr,
-                                    idx,
-                                    value,
-                                    *inner.clone(),
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::BufferStore(
+                                        dest_arr,
+                                        arr,
+                                        idx,
+                                        value,
+                                        *inner.clone(),
+                                    )
+                                );
                                 self.func.set_type(dest_arr, Type::Buffer(inner));
                             }
                             Type::List(inner) => {
-                                push_inst!(self, InstructionKind::ListStore(
-                                    dest_arr,
-                                    arr,
-                                    idx,
-                                    value,
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::ListStore(dest_arr, arr, idx, value,)
+                                );
                                 self.func.set_type(dest_arr, Type::List(inner));
                             }
                             Type::Array(inner, size) => {
-                                push_inst!(self, InstructionKind::ArrayStore(
-                                    dest_arr,
-                                    arr,
-                                    idx,
-                                    value,
-                                    *inner.clone(),
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::ArrayStore(
+                                        dest_arr,
+                                        arr,
+                                        idx,
+                                        value,
+                                        *inner.clone(),
+                                    )
+                                );
                                 self.func.set_type(dest_arr, Type::Array(inner, size));
                             }
                             _ => {
-                                push_inst!(self, InstructionKind::ArrayStore(
-                                    dest_arr,
-                                    arr,
-                                    idx,
-                                    value,
-                                    Type::Unknown,
-                                ));
+                                push_inst!(
+                                    self,
+                                    InstructionKind::ArrayStore(
+                                        dest_arr,
+                                        arr,
+                                        idx,
+                                        value,
+                                        Type::Unknown,
+                                    )
+                                );
                             }
                         }
                     }
@@ -148,7 +170,13 @@ impl CFGBuilder {
                     let (offset, leaf_ty) = if let Type::Struct(struct_name) = &base_ty {
                         let field_offset = self
                             .get_field_offset(struct_name, attr.attr.as_str())
-                            .ok_or_else(|| builder_error!(AttributeNotFound, struct_name.clone(), attr.attr.to_string()))?;
+                            .ok_or_else(|| {
+                            builder_error!(
+                                AttributeNotFound,
+                                struct_name.clone(),
+                                attr.attr.to_string()
+                            )
+                        })?;
                         let fields = self.func.struct_layouts.get(struct_name).unwrap();
                         let ty = fields
                             .iter()
@@ -162,9 +190,10 @@ impl CFGBuilder {
                     };
 
                     let dest_obj = self.func.next_value();
-                    push_inst!(self, InstructionKind::StructSet(
-                        dest_obj, base_val, offset, value, leaf_ty,
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::StructSet(dest_obj, base_val, offset, value, leaf_ty,)
+                    );
                     self.func.set_type(dest_obj, base_ty.clone());
 
                     // Now we need to store `dest_obj` back into whatever `attr.value` was.
@@ -179,9 +208,10 @@ impl CFGBuilder {
                 let root_ty = self.func.get_type(root_val);
 
                 let dest_obj = self.func.next_value();
-                push_inst!(self, InstructionKind::StructSet(
-                    dest_obj, root_val, offset, value, leaf_ty,
-                ));
+                push_inst!(
+                    self,
+                    InstructionKind::StructSet(dest_obj, root_val, offset, value, leaf_ty,)
+                );
                 self.func.set_type(dest_obj, root_ty);
 
                 self.write_variable(root_name, self.current_block, dest_obj);
@@ -190,7 +220,8 @@ impl CFGBuilder {
                 let tuple_ty = self.func.get_type(value);
                 if let Type::Tuple(elt_types) = tuple_ty {
                     if t.elts.len() != elt_types.len() {
-                        return Err(builder_error!(General,
+                        return Err(builder_error!(
+                            General,
                             "Cannot unpack tuple of size {} into {} targets",
                             elt_types.len(),
                             t.elts.len()
@@ -206,7 +237,13 @@ impl CFGBuilder {
                     return Err(builder_error!(General, "Cannot unpack non-tuple type"));
                 }
             }
-            _ => return Err(builder_error!(UnsupportedStatement, "Unsupported assignment target: {:?}", target)),
+            _ => {
+                return Err(builder_error!(
+                    UnsupportedStatement,
+                    "Unsupported assignment target: {:?}",
+                    target
+                ))
+            }
         }
         Ok(())
     }
@@ -246,7 +283,11 @@ impl CFGBuilder {
                     let field_offset = self
                         .get_field_offset(struct_name, attr.attr.as_str())
                         .ok_or_else(|| {
-                            builder_error!(AttributeNotFound, struct_name.clone(), attr.attr.to_string())
+                            builder_error!(
+                                AttributeNotFound,
+                                struct_name.clone(),
+                                attr.attr.to_string()
+                            )
                         })?;
 
                     let fields = self.func.struct_layouts.get(struct_name).unwrap();
@@ -259,13 +300,16 @@ impl CFGBuilder {
 
                     Ok((root_name, base_offset + field_offset, field_ty))
                 } else {
-                    Err(builder_error!(General,
+                    Err(builder_error!(
+                        General,
                         "Cannot resolve attribute '{}' on non-struct type {:?}",
-                        attr.attr, parent_ty
+                        attr.attr,
+                        parent_ty
                     ))
                 }
             }
-            _ => Err(builder_error!(General,
+            _ => Err(builder_error!(
+                General,
                 "Invalid attribute path: must start with a variable name, found {:?}",
                 expr
             )),

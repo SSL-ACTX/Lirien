@@ -361,7 +361,7 @@ class MonomorphizedFunction:
         try:
             cv = inspect.getclosurevars(self.func)
             scope.update(cv.nonlocals)
-        except:
+        except Exception:
             pass
 
         tree = EllipsisExpander(new_mapping, scope, self).visit(tree)
@@ -408,7 +408,7 @@ class MonomorphizedFunction:
                 closure_vars = inspect.getclosurevars(self.func)
                 scope.update(closure_vars.nonlocals)
                 scope.update(closure_vars.globals)
-            except:
+            except Exception:
                 pass
 
             # Also add types from mapping
@@ -624,7 +624,7 @@ class OverloadedFunction:
                 closure_vars = inspect.getclosurevars(self.func)
                 scope.update(closure_vars.nonlocals)
                 scope.update(closure_vars.globals)
-            except:
+            except Exception:
                 pass
 
             for name in list(struct_layouts.keys()):
@@ -671,24 +671,6 @@ class OverloadedFunction:
             TupleReturn,
             tuple_types,
         )
-
-
-def _has_callable(ann):
-    """Check if a type annotation contains Callable, Closure, or FnPointer."""
-    if ann is None:
-        return False
-    from .types import FnPointer, Closure
-
-    if (
-        isinstance(ann, (FnPointer, Closure))
-        or "callable" in str(ann).lower()
-        or "closure" in str(ann).lower()
-        or "fnpointer" in str(ann).lower()
-    ):
-        return True
-    if hasattr(ann, "__args__"):
-        return any(_has_callable(arg) for arg in ann.__args__)
-    return False
 
 
 def verify(
@@ -792,7 +774,7 @@ def verify(
                 closure_vars = inspect.getclosurevars(func)
                 scope.update(closure_vars.nonlocals)
                 scope.update(closure_vars.globals)
-            except:
+            except Exception:
                 pass
 
             for name in list(struct_layouts.keys()):

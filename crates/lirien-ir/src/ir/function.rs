@@ -4,7 +4,7 @@
 //! representing the compiler's Control Flow Graph (CFG) in Static Single Assignment (SSA) form.
 
 use super::instruction::Instruction;
-use super::types::{BlockId, Type, Value, SourceLocation};
+use super::types::{BlockId, SourceLocation, Type, Value};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -136,4 +136,3 @@ impl Function {
         println!("}}");
     }
 }
-

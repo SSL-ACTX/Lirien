@@ -10,22 +10,22 @@ This document outlines the core architectural constraints, design patterns, and 
 
 ### 1.2 Strict SSA (Static Single Assignment)
 The Intermediate Representation (IR) enforces strict SSA form.
-*   **Values are immutable.** Once a `Value` is assigned via `get_def`, it can never be reassigned.
-*   Control flow joins must be handled explicitly via `Phi` nodes.
-*   Do not mutate variables in the IR; instead, create a new `Value` and update the block's `variable_defs` mapping.
+*   **Values Are Immutable:** Once a `Value` is assigned via `get_def`, it can never be reassigned.
+*   **Explicit Joins:** Control flow joins must be handled explicitly via `Phi` nodes.
+*   **No Variable Mutation:** Do not mutate variables in the IR; instead, create a new `Value` and update the block's `variable_defs` mapping.
 
 ### 1.3 Absolute Memory Layouts (No Pointer Aliasing)
 Lirien structs are compiled to flat, C-compatible memory layouts.
-*   **Use Byte Offsets:** Nested structures are **inline**. The IR must calculate the absolute byte offset from the root object (`StructOffset` or `StructLoad`) rather than chaining pointer dereferences.
-*   **Never clobber pointers:** A `StructSet` modifies the value at an offset; it does *not* overwrite the root object's pointer address.
+*   **Use Byte Offsets:** Nested structures are inline. The IR must calculate the absolute byte offset from the root object (`StructOffset` or `StructLoad`) rather than chaining pointer dereferences.
+*   **Never Clobber Pointers:** A `StructSet` modifies the value at an offset; it does not overwrite the root object's pointer address.
 
-### 1.4 Zero-Cost Static Dispatch (`Protocol`)
-*   **Specialization over Virtualization:** Lirien uses `typing.Protocol` for static dispatch. The monomorphization engine must clone and specialize functions for every unique struct type passed to a Protocol parameter.
+### 1.4 Zero-Cost Static Dispatch (Protocol)
+*   **Specialization Over Virtualization:** Lirien uses `typing.Protocol` for static dispatch. The monomorphization engine must clone and specialize functions for every unique struct type passed to a Protocol parameter.
 *   **Static Call Mapping:** The IR builder must resolve Protocol method calls to direct `Call` instructions using the mangled name `ClassName_methodName`.
 
-### 1.5 Null-Pointer Optimization (`Box[T] | None`)
+### 1.5 Null-Pointer Optimization (Box[T] | None)
 *   **Zero-Overhead Optionals:** `Optional[Box[T]]` and `Box[T] | None` must be represented as raw 64-bit pointers where `None` is `0x0`.
-*   **Mandatory Verification:** The Z3 verifier MUST prove non-nullity before any `PointerLoad` or `PointerStore` instruction. The IR builder must automatically insert these checks for `.val` or field access.
+*   **Mandatory Verification:** The Z3 verifier must prove non-nullity before any `PointerLoad` or `PointerStore` instruction. The IR builder must automatically insert these checks for `.val` or field access.
 
 ### 1.6 Recursive Register-Allocated Tuples
 *   **Flattening:** Both `NamedTuple` and standard `Tuple` must be recursively flattened into individual primitive values for function parameters and return values.
@@ -36,45 +36,45 @@ Lirien structs are compiled to flat, C-compatible memory layouts.
 
 ### 2.1 Zero-Boilerplate Experience
 The Python-side DSL must feel like native Python, hiding all low-level C-ABI details.
-*   **No explicit `ctypes` in user code:** Users should never have to manually call `ctypes.pointer` or `ctypes.addressof`.
+*   **No Explicit ctypes in User Code:** Users should never have to manually call `ctypes.pointer` or `ctypes.addressof`.
 *   **Native Types:** Always use Lirien-native types (`i64`, `u8`, `f32`, `bool`) in annotations. Do not expose `ctypes.c_int64` to the user.
 *   **Automatic Unwrapping:** The `@verify` decorator must automatically resolve Lirien objects to their underlying memory buffers before calling the JIT function.
 
 ### 2.2 Struct Generation
-*   The `@struct` decorator dynamically generates a `ctypes.Structure` class behind the scenes.
-*   Nested structs are inlined by placing the child's `__lirien_ctypes__` directly into the parent's `_fields_` list.
+*   **Dynamic Structure Generation:** The `@struct` decorator dynamically generates a `ctypes.Structure` class behind the scenes.
+*   **Inlined Nested Structs:** Nested structs are inlined by placing the child's `__lirien_ctypes__` directly into the parent's `_fields_` list.
 
 ## 3. Rust Codebase Rules
 
 ### 3.1 Verification Workflow
-*   **Rust First:** Always run `cargo check` **before** running `maturin develop`. Never attempt to build the Python module if the Rust core is in an inconsistent or failing state.
-*   **Maturin Reflection:** AFTER changes to the Rust core are verified, you MUST run `maturin develop` to reflect these changes in the Python environment. It won't magically reflect. Gemini AI is dumb as hell so it has to be taught like a damn kid—never forget this step.
+*   **Rust First:** Always run `cargo check` before running `maturin develop`. Never attempt to build the Python module if the Rust core is in an inconsistent or failing state.
+*   **Maturin Reflection:** After changes to the Rust core are verified, you must run `maturin develop` to reflect these changes in the Python environment.
 *   **Tool Usage:** Using Python scripts, `sed`, or `cat` to edit or update files is strictly banned. Use native tool functions like `replace` or `write_file` directly.
 
 ### 3.2 Centralized Diagnostics
-*   Do not use `println!` or `eprintln!`.
-*   Use the `tracing` crate for all logging (e.g., `info!(target: "lirien::jit", ...)`).
-*   All IR instructions must carry a `SourceLocation` to map errors back to the Python source line.
+*   **No Standard Print Statements:** Do not use `println!` or `eprintln!`.
+*   **Tracing Logger:** Use the `tracing` crate for all logging (e.g., `info!(target: "lirien::jit", ...)`).
+*   **Source Location Mapping:** All IR instructions must carry a `SourceLocation` to map errors back to the Python source line.
 
 ### 3.3 Adding New Instructions
 When adding a new capability to the DSL:
-1.  Update `Type` and `InstructionKind` in `src/ssa/ir.rs`.
-2.  Update the AST `visitor.rs` to generate the new IR.
-3.  Update the `CFGBuilder` layout engine if the size/alignment changes.
-4.  Update the Z3 formal model in `src/verification/z3/` (arithmetic, memory, or control_flow).
-5.  Update the Cranelift lowering in `src/backend/cranelift/lower/`.
-6.  Update `src/ssa/optimization/dce.rs` and `type_propagation.rs` to ensure the instruction is handled.
-7.  Write a Python integration test verifying the full pipeline.
+1. Update `Type` and `InstructionKind` in `src/ssa/ir.rs`.
+2. Update the AST `visitor.rs` to generate the new IR.
+3. Update the `CFGBuilder` layout engine if the size/alignment changes.
+4. Update the Z3 formal model in `src/verification/z3/` (arithmetic, memory, or control_flow).
+5. Update the Cranelift lowering in `src/backend/cranelift/lower/`.
+6. Update `src/ssa/optimization/dce.rs` and `type_propagation.rs` to ensure the instruction is handled.
+7. Write a Python integration test verifying the full pipeline.
 
-### 3.4 Z3 0.20 API Usage (NO CONTEXT BULLSHIT)
-*   **NO EXPLICIT CONTEXT:** The project uses `z3-rs` v0.20.0, which is configured for ergonomics using `thread_local` contexts. You MUST NOT pass `&Context` to AST constructors (e.g., `BV::from_i64`, `Bool::new_const`). It uses `Context::thread_local()` internally.
-*   **STOP TRYING TO ADD CTX:** If you see a compiler error, it is NOT because you missing a context argument. It is because you are using the wrong method or a deprecated one. Do not ever re-introduce `ctx` arguments to the logic layers. This rule is absolute and permanent.
+### 3.4 Z3 0.20 API Usage (No Explicit Context)
+*   **No Explicit Context:** The project uses `z3-rs` v0.20.0, which is configured for ergonomics using `thread_local` contexts. You must not pass `&Context` to AST constructors (e.g., `BV::from_i64`, `Bool::new_const`). It uses `Context::thread_local()` internally.
+*   **No Context Reintroduction:** Do not ever re-introduce `ctx` arguments to the logic layers. This rule is absolute and permanent.
 
 ### 3.5 Development Discipline
-*   **ZERO WARNINGS:** The project maintains a strict zero-warning policy. ALL compiler warnings and Clippy lints MUST be resolved before committing. Use `cargo clippy -- -D warnings` to verify.
-*   **FULL TEST SUITE:** Never assume a refactor is correct by running a single subfolder of tests. You MUST run the entire suite using `PYTHONPATH=./python python3 -m unittest discover tests/python`.
-*   **NO SHORTCUTS:** Validation is not "it compiled". Validation is "all 100+ integration tests passed".
-
+*   **Zero Warnings (Rust):** The project maintains a strict zero-warning policy. All compiler warnings and Clippy lints must be resolved before committing. Use `cargo clippy -- -D warnings` to verify.
+*   **Zero Warnings (Python):** The project maintains a strict zero-warning policy for Python library code. You must run `ruff check` to verify all style and lint rules are met before committing.
+*   **Full Test Suite:** Never assume a refactor is correct by running a single subfolder of tests. You must run the entire suite using `PYTHONPATH=./python python3 -m unittest discover tests/python`.
+*   **No Shortcuts:** Validation is not "it compiled". Validation is "all 200+ integration tests passed".
 
 ## 4. Testing Standards
 
@@ -83,25 +83,25 @@ When adding a new capability to the DSL:
 *   **Execution:** Run tests using `PYTHONPATH=./python python -m unittest discover tests/python`.
 *   **Structure:** Each test file must be runnable directly (e.g., `if __name__ == "__main__": unittest.main()`).
 
-## 5. AI Agent Execution Mandates (STRICT & NON-NEGOTIABLE)
+## 5. AI Agent Execution Mandates (Strict & Non-Negotiable)
 
-### 5.1 OBEY THE USER EXACTLY
-*   **The User's Diagnosis is Absolute Law:** If the user tells you a bug is in the `git diff`, or points you to a specific file or cause, you drop your generic debugging bullshit and investigate exactly what they told you IMMEDIATELY. The user's diagnosis is the highest signal.
-*   **Do NOT Stall or Loop:** Do NOT fall back on generic heuristics, infinite test running scripts, or over-analyzing irrelevant files to "buy time". If your automated approach fails or infinite-loops, and the user gives you a direct hint, immediately pivot and follow their explicit path.
+### 5.1 Obey the User Exactly
+*   **Absolute Law:** If the user tells you a bug is in the `git diff`, or points you to a specific file or cause, investigate exactly what they told you immediately. The user's diagnosis is the highest signal.
+*   **Do Not Stall or Loop:** Do not fall back on generic heuristics, infinite test running scripts, or over-analyzing irrelevant files to "buy time". If your automated approach fails or infinite-loops, and the user gives you a direct hint, immediately pivot and follow their explicit path.
 
-### 5.2 READ BEFORE ACTING
-*   **Consult This File FIRST:** You must read and abide by the rules in this `GEMINI.md` file before attempting to execute tasks. Do not assume standard generic workflows (like running raw `cargo build` or `maturin develop` without verifying the project's exact required sequence).
+### 5.2 Read Before Acting
+*   **Consult Rules First:** You must read and abide by the rules in this `GEMINI.md` file before attempting to execute tasks. Do not assume standard generic workflows without verifying the project's exact required sequence.
 *   **Acknowledge Flaws:** If you fail to follow these rules, recognize that it is a critical flaw and fundamentally dangerous to the codebase. Do not bullshit the user or feign blindness.
 
-### 5.3 VERBOSE PYTHON DEBUGGING
-*   **Proactive Instrumentation:** When modifying or debugging Python-side logic (FFI, decorators, signatures), you MUST include temporary `print` statements to trace data flow, type resolutions, and internal state. Never operate "blind" on the Python side. These logs provide the visibility needed to catch subtle mapping errors before they reach the Rust layer.
+### 5.3 Verbose Python Debugging
+*   **Proactive Instrumentation:** When modifying or debugging Python-side logic (FFI, decorators, signatures), you must include temporary `print` statements to trace data flow, type resolutions, and internal state. Never operate blind on the Python side.
 
-## 6. GIT COMMIT STANDARDS
+## 6. Git Commit Standards
 
-### 6.1 CONVENTIONAL COMMITS FORMAT
-*   **Format:** Git commit messages MUST follow the conventional commit format: `<type>(<scope>): <description>` (or `<type>: <description>` if scope is absent).
+### 6.1 Conventional Commits Format
+*   **Format:** Git commit messages must follow the conventional commit format: `<type>(<scope>): <description>` (or `<type>: <description>` if scope is absent).
 *   **Case Sensitivity:** The description must be in all lowercase.
-*   **Structure:** Commit messages MUST consist of a subject line, followed by a blank line, and a body with bullet points starting with `-` detailing the specific modifications.
+*   **Structure:** Commit messages must consist of a subject line, followed by a blank line, and a body with bullet points starting with `-` detailing the specific modifications.
 *   **Examples:**
     *   ```
         feat(type-system): implement non-pointer value-type optionals (T | None)
@@ -119,4 +119,3 @@ When adding a new capability to the DSL:
         - Added Z3 dimension verification for TensorFused in lirien-verify
         - Implemented Cranelift code generation for TensorFused in lirien-backend
         ```
-

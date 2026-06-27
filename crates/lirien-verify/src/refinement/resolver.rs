@@ -22,7 +22,6 @@ pub struct Resolver<'a> {
 impl<'a> Resolver<'a> {
     /// Resolves a boolean variable or constant from its name.
     pub fn resolve_bool(&self, name: &str) -> Option<Bool> {
-
         if name == "true" {
             return Some(Bool::from_bool(true));
         }

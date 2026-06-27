@@ -1,7 +1,7 @@
+use super::CodegenContext;
 use cranelift::prelude::*;
 use cranelift_module::Module;
 use lirien_ir::ir::Value as SsaValue;
-use super::CodegenContext;
 
 pub fn get_val(values: &std::collections::HashMap<SsaValue, Value>, val: &SsaValue) -> Value {
     *values

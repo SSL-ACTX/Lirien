@@ -1,6 +1,6 @@
+use super::types::{Bound, Interval};
 use crate::ir::{BlockId, InstructionKind, Value};
 use std::collections::HashMap;
-use super::types::{Bound, Interval};
 
 pub enum Comparison {
     Lt,

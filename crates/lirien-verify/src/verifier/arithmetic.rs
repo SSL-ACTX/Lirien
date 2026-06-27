@@ -151,7 +151,9 @@ pub fn translate<
                 let __inner = ctx.backend.bv_eq(z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
-            } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+            } else if let (Some(z3_dest), Some(z3_s)) =
+                (ctx.z3_floats.get(dest), ctx.z3_floats.get(src))
+            {
                 let ty = ctx.func.get_type(*src);
                 let zero = if ty.is_float32() {
                     ctx.backend.float_from_f32(0.0)
@@ -174,7 +176,9 @@ pub fn translate<
                 let __inner = ctx.backend.bv_eq(z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
-            } else if let (Some(z3_dest), Some(z3_s)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(src)) {
+            } else if let (Some(z3_dest), Some(z3_s)) =
+                (ctx.z3_floats.get(dest), ctx.z3_floats.get(src))
+            {
                 let ty = ctx.func.get_type(*src);
                 let zero = if ty.is_float32() {
                     ctx.backend.float_from_f32(0.0)
@@ -190,7 +194,11 @@ pub fn translate<
             }
         }
         InstructionKind::Min(dest, lhs, rhs) => {
-            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
                 let is_lt = if ctx.func.get_type(*lhs).is_signed() {
                     ctx.backend.bv_slt(z3_l, z3_r)
                 } else {
@@ -200,7 +208,11 @@ pub fn translate<
                 let __inner = ctx.backend.bv_eq(z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
-            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(lhs), ctx.z3_floats.get(rhs)) {
+            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_floats.get(dest),
+                ctx.z3_floats.get(lhs),
+                ctx.z3_floats.get(rhs),
+            ) {
                 let is_lt = ctx.backend.float_lt(z3_l, z3_r);
                 let res = ctx.backend.float_ite(&is_lt, z3_l, z3_r);
                 let __inner = ctx.backend.float_eq(z3_dest, &res);
@@ -209,7 +221,11 @@ pub fn translate<
             }
         }
         InstructionKind::Max(dest, lhs, rhs) => {
-            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
                 let is_gt = if ctx.func.get_type(*lhs).is_signed() {
                     ctx.backend.bv_sgt(z3_l, z3_r)
                 } else {
@@ -219,7 +235,11 @@ pub fn translate<
                 let __inner = ctx.backend.bv_eq(z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
-            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_floats.get(dest), ctx.z3_floats.get(lhs), ctx.z3_floats.get(rhs)) {
+            } else if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_floats.get(dest),
+                ctx.z3_floats.get(lhs),
+                ctx.z3_floats.get(rhs),
+            ) {
                 let is_gt = ctx.backend.float_gt(z3_l, z3_r);
                 let res = ctx.backend.float_ite(&is_gt, z3_l, z3_r);
                 let __inner = ctx.backend.float_eq(z3_dest, &res);
@@ -228,7 +248,11 @@ pub fn translate<
             }
         }
         InstructionKind::Avg(dest, lhs, rhs) => {
-            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (ctx.z3_bvs.get(dest), ctx.z3_bvs.get(lhs), ctx.z3_bvs.get(rhs)) {
+            if let (Some(z3_dest), Some(z3_l), Some(z3_r)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
                 let bit_width = z3_l.get_size();
                 let one = ctx.backend.bv_from_i64(1, bit_width);
                 let two = ctx.backend.bv_from_i64(2, bit_width);
@@ -241,12 +265,16 @@ pub fn translate<
             }
         }
         InstructionKind::MatMult(_dest, lhs, rhs) => {
-            let dims_opt = if let (Some(l_dims), Some(r_dims)) = (
-                ctx.z3_tensor_dims.get(lhs),
-                ctx.z3_tensor_dims.get(rhs),
-            ) {
+            let dims_opt = if let (Some(l_dims), Some(r_dims)) =
+                (ctx.z3_tensor_dims.get(lhs), ctx.z3_tensor_dims.get(rhs))
+            {
                 if l_dims.len() == 2 && r_dims.len() == 2 {
-                    Some((l_dims[0].clone(), l_dims[1].clone(), r_dims[0].clone(), r_dims[1].clone()))
+                    Some((
+                        l_dims[0].clone(),
+                        l_dims[1].clone(),
+                        r_dims[0].clone(),
+                        r_dims[1].clone(),
+                    ))
                 } else {
                     None
                 }
@@ -257,11 +285,12 @@ pub fn translate<
             if let Some((l0, l1, r0, r1)) = dims_opt {
                 let eq = ctx.backend.int_eq(&l1, &r0);
                 let not_eq = ctx.backend.bool_not(&eq);
-                
+
                 ctx.check_safety(
                     path_cond,
                     &not_eq,
-                    "Matrix multiplication dimension mismatch: inner dimensions must be equal".to_string(),
+                    "Matrix multiplication dimension mismatch: inner dimensions must be equal"
+                        .to_string(),
                     inst.location,
                 )?;
 
@@ -271,9 +300,10 @@ pub fn translate<
             }
         }
         InstructionKind::TensorFused(dest, inputs, _) => {
-            let tensor_inputs: Vec<&lirien_ir::ir::Value> = inputs.iter().filter(|in_val| {
-                ctx.func.get_type(**in_val).is_tensor()
-            }).collect();
+            let tensor_inputs: Vec<&lirien_ir::ir::Value> = inputs
+                .iter()
+                .filter(|in_val| ctx.func.get_type(**in_val).is_tensor())
+                .collect();
 
             if let Some(&first_tensor) = tensor_inputs.first() {
                 if let Some(first_dims) = ctx.z3_tensor_dims.get(first_tensor).cloned() {
@@ -378,7 +408,10 @@ pub fn translate<
 
                 let bit_width = inner_ty.int_bit_width().unwrap_or(64);
                 let res_array = ctx.backend.array_const(
-                    &format!("{}_v{}_tensor_scalar_res_{}", ctx.func.name, dest.0, ctx.uid),
+                    &format!(
+                        "{}_v{}_tensor_scalar_res_{}",
+                        ctx.func.name, dest.0, ctx.uid
+                    ),
                     inner_ty.is_float(),
                     bit_width,
                 );
@@ -850,10 +883,10 @@ pub fn translate<
                     let is_base_zero = ctx.backend.float_eq(z3_l, &zero);
                     let is_exp_nonpositive = ctx.backend.float_le(z3_r, &zero);
                     let is_base_negative = ctx.backend.float_lt(z3_l, &zero);
- 
+
                     let a1 = ctx.backend.bool_and(&[&is_base_zero, &is_exp_nonpositive]);
                     let domain_err = ctx.backend.bool_or(&[&a1, &is_base_negative]);
- 
+
                     ctx.check_safety(
                         path_cond,
                         &domain_err,

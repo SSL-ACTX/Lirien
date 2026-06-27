@@ -1,4 +1,4 @@
-use super::super::ir::{Function, InstructionKind, Value, FusedExpr, SourceLocation, Type};
+use super::super::ir::{Function, FusedExpr, InstructionKind, SourceLocation, Type, Value};
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -22,69 +22,133 @@ pub fn fuse_tensor_kernels(func: &mut Function) {
     for block in &mut func.blocks {
         // Map from defined value in this block to its instruction kind and location.
         let mut def_map = HashMap::new();
-        
+
         for inst in &mut block.instructions {
             let mut fused_opt = None;
-            
+
             debug!(target: "lirien::ssa::opt", "Processing instruction: {:?}", inst.kind);
 
             // Check if this instruction is a candidate to become or extend a fused tensor op.
             match &inst.kind {
                 InstructionKind::TensorAdd(dest, lhs, rhs)
-                    if should_fuse(*lhs, &def_map, &use_counts) || should_fuse(*rhs, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let left_expr = get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
-                        let right_expr = get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Add(Box::new(left_expr), Box::new(right_expr))));
+                    if should_fuse(*lhs, &def_map, &use_counts)
+                        || should_fuse(*rhs, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let left_expr =
+                        get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
+                    let right_expr =
+                        get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Add(Box::new(left_expr), Box::new(right_expr)),
+                    ));
                 }
                 InstructionKind::TensorSub(dest, lhs, rhs)
-                    if should_fuse(*lhs, &def_map, &use_counts) || should_fuse(*rhs, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let left_expr = get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
-                        let right_expr = get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Sub(Box::new(left_expr), Box::new(right_expr))));
+                    if should_fuse(*lhs, &def_map, &use_counts)
+                        || should_fuse(*rhs, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let left_expr =
+                        get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
+                    let right_expr =
+                        get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Sub(Box::new(left_expr), Box::new(right_expr)),
+                    ));
                 }
                 InstructionKind::TensorMul(dest, lhs, rhs)
-                    if should_fuse(*lhs, &def_map, &use_counts) || should_fuse(*rhs, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let left_expr = get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
-                        let right_expr = get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Mul(Box::new(left_expr), Box::new(right_expr))));
+                    if should_fuse(*lhs, &def_map, &use_counts)
+                        || should_fuse(*rhs, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let left_expr =
+                        get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
+                    let right_expr =
+                        get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Mul(Box::new(left_expr), Box::new(right_expr)),
+                    ));
                 }
                 InstructionKind::TensorDiv(dest, lhs, rhs)
-                    if should_fuse(*lhs, &def_map, &use_counts) || should_fuse(*rhs, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let left_expr = get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
-                        let right_expr = get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Div(Box::new(left_expr), Box::new(right_expr))));
+                    if should_fuse(*lhs, &def_map, &use_counts)
+                        || should_fuse(*rhs, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let left_expr =
+                        get_fused_expr(*lhs, &def_map, &use_counts, value_types, &mut inputs);
+                    let right_expr =
+                        get_fused_expr(*rhs, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Div(Box::new(left_expr), Box::new(right_expr)),
+                    ));
                 }
                 InstructionKind::TensorScalarAdd(dest, tensor, scalar)
-                    if should_fuse(*tensor, &def_map, &use_counts) || should_fuse(*scalar, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let t_expr = get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
-                        let s_expr = get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Add(Box::new(t_expr), Box::new(s_expr))));
+                    if should_fuse(*tensor, &def_map, &use_counts)
+                        || should_fuse(*scalar, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let t_expr =
+                        get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
+                    let s_expr =
+                        get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Add(Box::new(t_expr), Box::new(s_expr)),
+                    ));
                 }
                 InstructionKind::TensorScalarSub(dest, tensor, scalar)
-                    if should_fuse(*tensor, &def_map, &use_counts) || should_fuse(*scalar, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let t_expr = get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
-                        let s_expr = get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Sub(Box::new(t_expr), Box::new(s_expr))));
+                    if should_fuse(*tensor, &def_map, &use_counts)
+                        || should_fuse(*scalar, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let t_expr =
+                        get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
+                    let s_expr =
+                        get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Sub(Box::new(t_expr), Box::new(s_expr)),
+                    ));
                 }
                 InstructionKind::TensorScalarMul(dest, tensor, scalar)
-                    if should_fuse(*tensor, &def_map, &use_counts) || should_fuse(*scalar, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let t_expr = get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
-                        let s_expr = get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Mul(Box::new(t_expr), Box::new(s_expr))));
+                    if should_fuse(*tensor, &def_map, &use_counts)
+                        || should_fuse(*scalar, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let t_expr =
+                        get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
+                    let s_expr =
+                        get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Mul(Box::new(t_expr), Box::new(s_expr)),
+                    ));
                 }
                 InstructionKind::TensorScalarDiv(dest, tensor, scalar)
-                    if should_fuse(*tensor, &def_map, &use_counts) || should_fuse(*scalar, &def_map, &use_counts) => {
-                        let mut inputs = Vec::new();
-                        let t_expr = get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
-                        let s_expr = get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
-                        fused_opt = Some((*dest, inputs, FusedExpr::Div(Box::new(t_expr), Box::new(s_expr))));
+                    if should_fuse(*tensor, &def_map, &use_counts)
+                        || should_fuse(*scalar, &def_map, &use_counts) =>
+                {
+                    let mut inputs = Vec::new();
+                    let t_expr =
+                        get_fused_expr(*tensor, &def_map, &use_counts, value_types, &mut inputs);
+                    let s_expr =
+                        get_fused_expr(*scalar, &def_map, &use_counts, value_types, &mut inputs);
+                    fused_opt = Some((
+                        *dest,
+                        inputs,
+                        FusedExpr::Div(Box::new(t_expr), Box::new(s_expr)),
+                    ));
                 }
                 _ => {}
             }
@@ -141,23 +205,31 @@ fn get_fused_expr(
         if use_counts.get(&val).copied().unwrap_or(0) == 1 {
             match kind {
                 InstructionKind::TensorAdd(_, l, r) => {
-                    let left_expr = get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
-                    let right_expr = get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
+                    let left_expr =
+                        get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
+                    let right_expr =
+                        get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
                     return FusedExpr::Add(Box::new(left_expr), Box::new(right_expr));
                 }
                 InstructionKind::TensorSub(_, l, r) => {
-                    let left_expr = get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
-                    let right_expr = get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
+                    let left_expr =
+                        get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
+                    let right_expr =
+                        get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
                     return FusedExpr::Sub(Box::new(left_expr), Box::new(right_expr));
                 }
                 InstructionKind::TensorMul(_, l, r) => {
-                    let left_expr = get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
-                    let right_expr = get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
+                    let left_expr =
+                        get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
+                    let right_expr =
+                        get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
                     return FusedExpr::Mul(Box::new(left_expr), Box::new(right_expr));
                 }
                 InstructionKind::TensorDiv(_, l, r) => {
-                    let left_expr = get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
-                    let right_expr = get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
+                    let left_expr =
+                        get_fused_expr(*l, def_map, use_counts, value_types, fused_inputs);
+                    let right_expr =
+                        get_fused_expr(*r, def_map, use_counts, value_types, fused_inputs);
                     return FusedExpr::Div(Box::new(left_expr), Box::new(right_expr));
                 }
                 InstructionKind::TensorScalarAdd(_, t, s) => {
@@ -196,7 +268,10 @@ fn get_fused_expr(
     if !fused_inputs.contains(&val) {
         fused_inputs.push(val);
     }
-    let is_tensor = value_types.get(&val).map(|t| t.is_tensor()).unwrap_or(false);
+    let is_tensor = value_types
+        .get(&val)
+        .map(|t| t.is_tensor())
+        .unwrap_or(false);
     if is_tensor {
         FusedExpr::Input(val)
     } else {

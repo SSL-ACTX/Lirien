@@ -1,5 +1,5 @@
-use super::error::{BuilderError, BuilderResult};
 use super::super::ir::Type;
+use super::error::{BuilderError, BuilderResult};
 use rustpython_ast as ast;
 use rustpython_parser::Parse;
 use std::collections::{HashMap, HashSet};
@@ -14,9 +14,16 @@ pub fn parse_type(
     match expr {
         ast::Expr::Name(n) => {
             if let Some(alias) = aliases.get(n.id.as_str()) {
-                let alias_expr = ast::Expr::parse(alias, "<alias>")
-                    .map_err(|e| BuilderError::General(format!("Error parsing alias '{}': {}", n.id, e), None))?;
-                return parse_type(&alias_expr, aliases, named_tuple_names, typed_dict_names, enum_names);
+                let alias_expr = ast::Expr::parse(alias, "<alias>").map_err(|e| {
+                    BuilderError::General(format!("Error parsing alias '{}': {}", n.id, e), None)
+                })?;
+                return parse_type(
+                    &alias_expr,
+                    aliases,
+                    named_tuple_names,
+                    typed_dict_names,
+                    enum_names,
+                );
             }
 
             match n.id.as_str() {
@@ -91,7 +98,12 @@ pub fn parse_type(
             let base_str = match &*s.value {
                 ast::Expr::Name(n) => n.id.as_str(),
                 ast::Expr::Attribute(a) => a.attr.as_str(),
-                _ => return Err(BuilderError::General(format!("Invalid type annotation base: {:?}", s.value), None)),
+                _ => {
+                    return Err(BuilderError::General(
+                        format!("Invalid type annotation base: {:?}", s.value),
+                        None,
+                    ))
+                }
             };
 
             let base = if let Some(alias) = aliases.get(base_str) {
@@ -102,41 +114,82 @@ pub fn parse_type(
 
             match base.to_lowercase().as_str() {
                 "array" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
                 "sizedarray" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.len() == 2 {
-                            let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                            let inner = parse_type(
+                                &t.elts[0],
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            )?;
                             if let ast::Expr::Constant(c) = &t.elts[1] {
                                 if let ast::Constant::Int(i) = &c.value {
-                                    let size = i
-                                        .to_string()
-                                        .parse::<usize>()
-                                        .map_err(|_| BuilderError::General("Invalid array size".to_string(), None))?;
+                                    let size = i.to_string().parse::<usize>().map_err(|_| {
+                                        BuilderError::General(
+                                            "Invalid array size".to_string(),
+                                            None,
+                                        )
+                                    })?;
                                     return Ok(Type::Array(Box::new(inner), Some(size)));
                                 }
                             }
                         }
                     }
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(Type::Array(Box::new(inner), None))
                 }
                 "buffer" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(Type::Buffer(Box::new(inner)))
                 }
                 "list" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(Type::List(Box::new(inner)))
                 }
                 "tensor" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if t.elts.is_empty() {
-                            return Err(BuilderError::General("Tensor requires at least a base type".to_string(), None));
+                            return Err(BuilderError::General(
+                                "Tensor requires at least a base type".to_string(),
+                                None,
+                            ));
                         }
-                        let inner = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                        let inner = parse_type(
+                            &t.elts[0],
+                            aliases,
+                            named_tuple_names,
+                            typed_dict_names,
+                            enum_names,
+                        )?;
                         let mut dims = Vec::new();
                         for dim_expr in t.elts.iter().skip(1) {
                             if let ast::Expr::Constant(c) = dim_expr {
@@ -147,33 +200,57 @@ pub fn parse_type(
                                     _ => return Err(BuilderError::General("Tensor dimensions must be strings (e.g., \"M\"), integers, or Ellipsis (...)".to_string(), None)),
                                 }
                             } else {
-                                return Err(BuilderError::General("Tensor dimensions must be string constants or Ellipsis".to_string(), None));
+                                return Err(BuilderError::General(
+                                    "Tensor dimensions must be string constants or Ellipsis"
+                                        .to_string(),
+                                    None,
+                                ));
                             }
                         }
                         Ok(Type::Tensor(Box::new(inner), dims))
                     } else {
-                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                        let inner = parse_type(
+                            &s.slice,
+                            aliases,
+                            named_tuple_names,
+                            typed_dict_names,
+                            enum_names,
+                        )?;
                         Ok(Type::Tensor(Box::new(inner), Vec::new()))
                     }
                 }
                 "literal" => {
                     if let ast::Expr::Constant(c) = &*s.slice {
                         if let ast::Constant::Int(i) = &c.value {
-                            let val = i
-                                .to_string()
-                                .parse::<i64>()
-                                .map_err(|_| BuilderError::General("Invalid literal value".to_string(), None))?;
+                            let val = i.to_string().parse::<i64>().map_err(|_| {
+                                BuilderError::General("Invalid literal value".to_string(), None)
+                            })?;
                             return Ok(Type::Literal(Box::new(Type::I64), val));
                         }
                     }
-                    Err(BuilderError::General("Literal expects an integer constant".to_string(), None))
+                    Err(BuilderError::General(
+                        "Literal expects an integer constant".to_string(),
+                        None,
+                    ))
                 }
                 "box" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(Type::Pointer(Box::new(inner)))
                 }
                 "nullable" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
                         Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
@@ -192,24 +269,49 @@ pub fn parse_type(
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
-                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                                    arg_types.push(parse_type(
+                                        arg,
+                                        aliases,
+                                        named_tuple_names,
+                                        typed_dict_names,
+                                        enum_names,
+                                    )?);
                                 }
                             } else {
-                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                                arg_types.push(parse_type(
+                                    &t.elts[0],
+                                    aliases,
+                                    named_tuple_names,
+                                    typed_dict_names,
+                                    enum_names,
+                                )?);
                             }
-                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                            let ret_type = parse_type(
+                                &t.elts[1],
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            )?;
                             let target = if t.elts.len() > 2 {
                                 if let ast::Expr::Constant(c) = &t.elts[2] {
                                     match &c.value {
                                         ast::Constant::Str(s) => Some(s.to_string()),
                                         _ => None,
                                     }
-                                } else { None }
-                            } else { None };
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
                             return Ok(Type::FnPointer(arg_types, Box::new(ret_type), target));
                         }
                     }
-                    Err(BuilderError::General("FnPointer expects [[arg_types], ret_type, optional_target]".to_string(), None))
+                    Err(BuilderError::General(
+                        "FnPointer expects [[arg_types], ret_type, optional_target]".to_string(),
+                        None,
+                    ))
                 }
                 "closure" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
@@ -217,20 +319,42 @@ pub fn parse_type(
                             let mut arg_types = Vec::new();
                             if let ast::Expr::List(args) = &t.elts[0] {
                                 for arg in &args.elts {
-                                    arg_types.push(parse_type(arg, aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                                    arg_types.push(parse_type(
+                                        arg,
+                                        aliases,
+                                        named_tuple_names,
+                                        typed_dict_names,
+                                        enum_names,
+                                    )?);
                                 }
                             } else {
-                                arg_types.push(parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                                arg_types.push(parse_type(
+                                    &t.elts[0],
+                                    aliases,
+                                    named_tuple_names,
+                                    typed_dict_names,
+                                    enum_names,
+                                )?);
                             }
-                            let ret_type = parse_type(&t.elts[1], aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                            let ret_type = parse_type(
+                                &t.elts[1],
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            )?;
                             let target = if t.elts.len() > 2 {
                                 if let ast::Expr::Constant(c) = &t.elts[2] {
                                     match &c.value {
                                         ast::Constant::Str(s) => Some(s.to_string()),
                                         _ => None,
                                     }
-                                } else { None }
-                            } else { None };
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
                             return Ok(Type::Closure(
                                 "".to_string(),
                                 arg_types,
@@ -239,40 +363,85 @@ pub fn parse_type(
                             ));
                         }
                     }
-                    Err(BuilderError::General("Closure expects [[arg_types], ret_type, optional_target]".to_string(), None))
+                    Err(BuilderError::General(
+                        "Closure expects [[arg_types], ret_type, optional_target]".to_string(),
+                        None,
+                    ))
                 }
                 "tuple" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         let mut types = Vec::new();
                         for elt in &t.elts {
-                            types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                            types.push(parse_type(
+                                elt,
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            )?);
                         }
                         Ok(Type::Tuple(types))
                     } else {
                         // Handle Tuple[i64]
-                        let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                        let inner = parse_type(
+                            &s.slice,
+                            aliases,
+                            named_tuple_names,
+                            typed_dict_names,
+                            enum_names,
+                        )?;
                         Ok(Type::Tuple(vec![inner]))
                     }
                 }
                 "refined" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
-                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names);
+                            return parse_type(
+                                &t.elts[0],
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            );
                         }
                     }
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     Ok(inner)
                 }
                 "annotated" => {
                     if let ast::Expr::Tuple(t) = &*s.slice {
                         if !t.elts.is_empty() {
-                            return parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names);
+                            return parse_type(
+                                &t.elts[0],
+                                aliases,
+                                named_tuple_names,
+                                typed_dict_names,
+                                enum_names,
+                            );
                         }
                     }
-                    parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)
+                    parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )
                 }
                 "optional" => {
-                    let inner = parse_type(&s.slice, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let inner = parse_type(
+                        &s.slice,
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     match inner {
                         Type::Pointer(p) => Ok(Type::NullablePointer(p)),
                         Type::NullablePointer(p) => Ok(Type::NullablePointer(p)),
@@ -297,7 +466,13 @@ pub fn parse_type(
                                         continue;
                                     }
                                 }
-                                inner_ty = Some(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                                inner_ty = Some(parse_type(
+                                    elt,
+                                    aliases,
+                                    named_tuple_names,
+                                    typed_dict_names,
+                                    enum_names,
+                                )?);
                             }
                             if has_none {
                                 if let Some(inner) = inner_ty {
@@ -316,13 +491,19 @@ pub fn parse_type(
                             }
                         }
                     }
-                    Err(BuilderError::General("Only Union[T, None] is supported".to_string(), None))
+                    Err(BuilderError::General(
+                        "Only Union[T, None] is supported".to_string(),
+                        None,
+                    ))
                 }
-                _ => Err(BuilderError::General(format!(
-                    "Unsupported generic type: '{}' (lowered: '{}')",
-                    base,
-                    base.to_lowercase()
-                ), None)),
+                _ => Err(BuilderError::General(
+                    format!(
+                        "Unsupported generic type: '{}' (lowered: '{}')",
+                        base,
+                        base.to_lowercase()
+                    ),
+                    None,
+                )),
             }
         }
         ast::Expr::Constant(c) => {
@@ -333,19 +514,40 @@ pub fn parse_type(
                 ast::Constant::Bool(_) => Ok(Type::Bool),
                 ast::Constant::None => Ok(Type::Unknown),
                 ast::Constant::Ellipsis => Ok(Type::Unknown),
-                _ => Err(BuilderError::General(format!("Unsupported constant in type annotation: {:?}", c.value), None)),
+                _ => Err(BuilderError::General(
+                    format!("Unsupported constant in type annotation: {:?}", c.value),
+                    None,
+                )),
             }
         }
         ast::Expr::Tuple(t) => {
             let mut types = Vec::new();
             for elt in &t.elts {
-                types.push(parse_type(elt, aliases, named_tuple_names, typed_dict_names, enum_names)?);
+                types.push(parse_type(
+                    elt,
+                    aliases,
+                    named_tuple_names,
+                    typed_dict_names,
+                    enum_names,
+                )?);
             }
             Ok(Type::Tuple(types))
         }
         ast::Expr::BinOp(b) if matches!(b.op, ast::Operator::BitOr) => {
-            let lhs = parse_type(&b.left, aliases, named_tuple_names, typed_dict_names, enum_names)?;
-            let rhs = parse_type(&b.right, aliases, named_tuple_names, typed_dict_names, enum_names)?;
+            let lhs = parse_type(
+                &b.left,
+                aliases,
+                named_tuple_names,
+                typed_dict_names,
+                enum_names,
+            )?;
+            let rhs = parse_type(
+                &b.right,
+                aliases,
+                named_tuple_names,
+                typed_dict_names,
+                enum_names,
+            )?;
 
             let (inner, has_none) = match (&lhs, &rhs) {
                 (Type::Unknown, other) | (other, Type::Unknown) => (other.clone(), true),
@@ -365,10 +567,16 @@ pub fn parse_type(
                     }
                 }
             } else {
-                Err(BuilderError::General("Only T | None is supported for unions".to_string(), None))
+                Err(BuilderError::General(
+                    "Only T | None is supported for unions".to_string(),
+                    None,
+                ))
             }
         }
-        _ => Err(BuilderError::General(format!("Invalid type annotation: {:?}", expr), None)),
+        _ => Err(BuilderError::General(
+            format!("Invalid type annotation: {:?}", expr),
+            None,
+        )),
     }
 }
 
@@ -388,36 +596,37 @@ pub fn extract_refinement(
             };
             if base_name == "Refined" || base_name == "Annotated" {
                 if let ast::Expr::Tuple(t) = &*s.slice {
-                    let base_ty = parse_type(&t.elts[0], aliases, named_tuple_names, typed_dict_names, enum_names)?;
+                    let base_ty = parse_type(
+                        &t.elts[0],
+                        aliases,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    )?;
                     for elt in t.elts.iter().skip(1) {
                         match elt {
-                            ast::Expr::Constant(c) => {
-                                match &c.value {
-                                    ast::Constant::Str(s) => {
-                                        let refinement_expr = ast::Expr::parse(s, "<refinement>")
-                                            .map_err(|e| BuilderError::General(e.to_string(), None))?;
-                                        return Ok(Some(
-                                            expr_to_string_internal(
-                                                &refinement_expr,
-                                                None,
-                                                &base_ty,
-                                                struct_layouts,
-                                            )?
-                                            .0,
-                                        ));
-                                    }
-                                    ast::Constant::Ellipsis => return Ok(Some("...".to_string())),
-                                    _ => {}
+                            ast::Expr::Constant(c) => match &c.value {
+                                ast::Constant::Str(s) => {
+                                    let refinement_expr = ast::Expr::parse(s, "<refinement>")
+                                        .map_err(|e| BuilderError::General(e.to_string(), None))?;
+                                    return Ok(Some(
+                                        expr_to_string_internal(
+                                            &refinement_expr,
+                                            None,
+                                            &base_ty,
+                                            struct_layouts,
+                                        )?
+                                        .0,
+                                    ));
                                 }
-                            }
+                                ast::Constant::Ellipsis => return Ok(Some("...".to_string())),
+                                _ => {}
+                            },
                             _ => {
                                 // Try to extract from non-constant expression (e.g. lambda)
-                                if let Ok((s, _)) = expr_to_string_internal(
-                                    elt,
-                                    None,
-                                    &base_ty,
-                                    struct_layouts,
-                                ) {
+                                if let Ok((s, _)) =
+                                    expr_to_string_internal(elt, None, &base_ty, struct_layouts)
+                                {
                                     return Ok(Some(s));
                                 }
                             }
@@ -429,7 +638,14 @@ pub fn extract_refinement(
         ast::Expr::Name(n) => {
             if let Some(alias) = aliases.get(n.id.as_str()) {
                 if let Ok(alias_expr) = ast::Expr::parse(alias, "<alias>") {
-                    return extract_refinement(&alias_expr, aliases, struct_layouts, named_tuple_names, typed_dict_names, enum_names);
+                    return extract_refinement(
+                        &alias_expr,
+                        aliases,
+                        struct_layouts,
+                        named_tuple_names,
+                        typed_dict_names,
+                        enum_names,
+                    );
                 }
             }
         }
@@ -463,7 +679,8 @@ fn expr_to_string_internal(
             expr_to_string_internal(&l.body, name, base_ty, struct_layouts)
         }
         ast::Expr::Compare(c) => {
-            let (mut left, _) = expr_to_string_internal(&c.left, arg_name, base_ty, struct_layouts)?;
+            let (mut left, _) =
+                expr_to_string_internal(&c.left, arg_name, base_ty, struct_layouts)?;
             let mut parts = Vec::new();
 
             for i in 0..c.ops.len() {
@@ -474,14 +691,15 @@ fn expr_to_string_internal(
                     ast::CmpOp::LtE => "<=",
                     ast::CmpOp::Gt => ">",
                     ast::CmpOp::GtE => ">=",
-                    _ => return Err(BuilderError::General("Unsupported operator in refinement".to_string(), None)),
+                    _ => {
+                        return Err(BuilderError::General(
+                            "Unsupported operator in refinement".to_string(),
+                            None,
+                        ))
+                    }
                 };
-                let (right, _) = expr_to_string_internal(
-                    &c.comparators[i],
-                    arg_name,
-                    base_ty,
-                    struct_layouts,
-                )?;
+                let (right, _) =
+                    expr_to_string_internal(&c.comparators[i], arg_name, base_ty, struct_layouts)?;
                 parts.push(format!("({} {} {})", op, left, right));
                 left = right;
             }
@@ -505,7 +723,12 @@ fn expr_to_string_internal(
                 ast::Operator::BitXor => "^",
                 ast::Operator::LShift => "<<",
                 ast::Operator::RShift => ">>",
-                _ => return Err(BuilderError::General(format!("Unsupported binop in refinement: {:?}", b.op), None)),
+                _ => {
+                    return Err(BuilderError::General(
+                        format!("Unsupported binop in refinement: {:?}", b.op),
+                        None,
+                    ))
+                }
             };
             let (right, _) = expr_to_string_internal(&b.right, arg_name, base_ty, struct_layouts)?;
             Ok((format!("({} {} {})", op, left, right), l_ty))
@@ -517,40 +740,51 @@ fn expr_to_string_internal(
             };
             let mut parts = Vec::new();
             for val in &b.values {
-                let (s, _) = expr_to_string_internal(
-                    val,
-                    arg_name,
-                    base_ty,
-                    struct_layouts,
-                )?;
+                let (s, _) = expr_to_string_internal(val, arg_name, base_ty, struct_layouts)?;
                 parts.push(s);
             }
             Ok((format!("({} {})", op, parts.join(" ")), Type::Bool))
         }
         ast::Expr::UnaryOp(u) => {
-            let (operand, ty) = expr_to_string_internal(&u.operand, arg_name, base_ty, struct_layouts)?;
+            let (operand, ty) =
+                expr_to_string_internal(&u.operand, arg_name, base_ty, struct_layouts)?;
             let op = match u.op {
                 ast::UnaryOp::Not => "not",
                 ast::UnaryOp::Invert => "~",
                 ast::UnaryOp::USub => "-",
-                _ => return Err(BuilderError::General(format!("Unsupported unary op in refinement: {:?}", u.op), None)),
+                _ => {
+                    return Err(BuilderError::General(
+                        format!("Unsupported unary op in refinement: {:?}", u.op),
+                        None,
+                    ))
+                }
             };
-            Ok((format!("({} {})", op, operand), if op == "not" { Type::Bool } else { ty }))
+            Ok((
+                format!("({} {})", op, operand),
+                if op == "not" { Type::Bool } else { ty },
+            ))
         }
         ast::Expr::IfExp(i) => {
             let (test, _) = expr_to_string_internal(&i.test, arg_name, base_ty, struct_layouts)?;
             let (body, ty) = expr_to_string_internal(&i.body, arg_name, base_ty, struct_layouts)?;
-            let (orelse, _) = expr_to_string_internal(&i.orelse, arg_name, base_ty, struct_layouts)?;
+            let (orelse, _) =
+                expr_to_string_internal(&i.orelse, arg_name, base_ty, struct_layouts)?;
             Ok((format!("(ite {} {} {})", test, body, orelse), ty))
         }
         ast::Expr::Call(c) => {
             let (func_name, method_obj) = match &*c.func {
                 ast::Expr::Name(n) => (n.id.to_string(), None),
                 ast::Expr::Attribute(a) => {
-                    let (obj, _) = expr_to_string_internal(&a.value, arg_name, base_ty, struct_layouts)?;
+                    let (obj, _) =
+                        expr_to_string_internal(&a.value, arg_name, base_ty, struct_layouts)?;
                     (a.attr.to_string(), Some(obj))
                 }
-                _ => return Err(BuilderError::General("Only named functions supported in refinements".to_string(), None)),
+                _ => {
+                    return Err(BuilderError::General(
+                        "Only named functions supported in refinements".to_string(),
+                        None,
+                    ))
+                }
             };
 
             let mut args = Vec::new();
@@ -558,22 +792,21 @@ fn expr_to_string_internal(
                 args.push(obj);
             }
             for arg in &c.args {
-                let (s, _) = expr_to_string_internal(
-                    arg,
-                    arg_name,
-                    base_ty,
-                    struct_layouts,
-                )?;
+                let (s, _) = expr_to_string_internal(arg, arg_name, base_ty, struct_layouts)?;
                 args.push(s);
             }
             Ok((format!("({} {})", func_name, args.join(" ")), Type::I64)) // Defaulting to I64 for calls
         }
         ast::Expr::Attribute(s) => {
-            let (base_expr, current_ty) = expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
-            
+            let (base_expr, current_ty) =
+                expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
+
             if let Type::Struct(struct_name) = current_ty {
                 let fields = struct_layouts.get(&struct_name).ok_or_else(|| {
-                    BuilderError::General(format!("Struct '{}' not found in layouts", struct_name), None)
+                    BuilderError::General(
+                        format!("Struct '{}' not found in layouts", struct_name),
+                        None,
+                    )
                 })?;
                 let mut offset = 0;
                 for (f_name, f_ty) in fields {
@@ -584,17 +817,18 @@ fn expr_to_string_internal(
                     }
                     offset += f_ty.size(struct_layouts);
                 }
-                return Err(BuilderError::General(format!(
-                    "Field '{}' not found in struct '{}'",
-                    s.attr, struct_name
-                ), None));
+                return Err(BuilderError::General(
+                    format!("Field '{}' not found in struct '{}'", s.attr, struct_name),
+                    None,
+                ));
             }
-            
+
             // If it's not a direct attribute of a known struct, treat it as a symbolic name
             Ok((format!("({} {})", s.attr, base_expr), Type::Unknown))
         }
         ast::Expr::Subscript(s) => {
-            let (base, b_ty) = expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
+            let (base, b_ty) =
+                expr_to_string_internal(&s.value, arg_name, base_ty, struct_layouts)?;
             let (slice, _) = expr_to_string_internal(&s.slice, arg_name, base_ty, struct_layouts)?;
             let inner_ty = match b_ty {
                 Type::Array(t, _) | Type::Buffer(t) | Type::List(t) | Type::Tensor(t, _) => *t,
@@ -616,13 +850,18 @@ fn expr_to_string_internal(
         ast::Expr::Constant(c) => match &c.value {
             ast::Constant::Int(i) => Ok((i.to_string(), Type::I64)),
             ast::Constant::Float(f) => Ok((f.to_string(), Type::F64)),
-            ast::Constant::Bool(b) => Ok((if *b { "true" } else { "false" }.to_string(), Type::Bool)),
+            ast::Constant::Bool(b) => {
+                Ok((if *b { "true" } else { "false" }.to_string(), Type::Bool))
+            }
             ast::Constant::Str(s) => Ok((format!("\"{}\"", s), Type::Unknown)),
-            _ => Err(BuilderError::General("Unsupported constant in refinement".to_string(), None)),
+            _ => Err(BuilderError::General(
+                "Unsupported constant in refinement".to_string(),
+                None,
+            )),
         },
-        _ => Err(BuilderError::General(format!(
-            "Expression {:?} not supported in refinements",
-            expr
-        ), None)),
+        _ => Err(BuilderError::General(
+            format!("Expression {:?} not supported in refinements", expr),
+            None,
+        )),
     }
 }

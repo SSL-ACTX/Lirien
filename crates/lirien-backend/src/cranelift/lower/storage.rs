@@ -74,7 +74,13 @@ impl StorageDest {
         }
     }
 
-    pub fn copy<M: Module>(&self, ctx: &mut CodegenContext<M>, src_val: Value, offset: i32, size: usize) {
+    pub fn copy<M: Module>(
+        &self,
+        ctx: &mut CodegenContext<M>,
+        src_val: Value,
+        offset: i32,
+        size: usize,
+    ) {
         match self {
             StorageDest::Stack(slot) => {
                 copy_to_stack(&mut ctx.builder, src_val, *slot, offset, size);
@@ -157,7 +163,14 @@ pub fn store_to_stack<M: Module>(
     if let Some(flat_vals) = ctx.unpacked_values.get(&src).cloned() {
         let mut current_offset = slot_offset;
         let mut val_idx = 0;
-        store_recursive(ctx, &ty, &flat_vals, &dest, &mut current_offset, &mut val_idx);
+        store_recursive(
+            ctx,
+            &ty,
+            &flat_vals,
+            &dest,
+            &mut current_offset,
+            &mut val_idx,
+        );
     } else {
         let val = super::utils::get_val(&ctx.values, &src);
         let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;
@@ -180,7 +193,14 @@ pub fn store_to_memory<M: Module>(
     if let Some(flat_vals) = ctx.unpacked_values.get(&src).cloned() {
         let mut current_offset = dest_offset;
         let mut val_idx = 0;
-        store_recursive(ctx, &ty, &flat_vals, &dest, &mut current_offset, &mut val_idx);
+        store_recursive(
+            ctx,
+            &ty,
+            &flat_vals,
+            &dest,
+            &mut current_offset,
+            &mut val_idx,
+        );
     } else {
         let val = super::utils::get_val(&ctx.values, &src);
         let size = ty.size(&ctx.ssa_func.struct_layouts) as i32;

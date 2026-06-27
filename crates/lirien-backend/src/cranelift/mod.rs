@@ -47,9 +47,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::I8 | SsaType::U8 | SsaType::Bool => types::I8,
         SsaType::I16 | SsaType::U16 => types::I16,
         SsaType::I32 | SsaType::U32 => types::I32,
-        SsaType::I64 | SsaType::U64 | SsaType::FnPointer(..) | SsaType::Closure(..) => {
-            types::I64
-        }
+        SsaType::I64 | SsaType::U64 | SsaType::FnPointer(..) | SsaType::Closure(..) => types::I64,
         SsaType::F32 => types::F32,
         SsaType::F64 => types::F64,
         SsaType::F32X4 => types::F32X4,
@@ -86,7 +84,6 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
 /// # Errors
 /// Returns an error string if machine lowering, parsing, or JIT linking fails.
 pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
-
     info!(target: "lirien::jit", "Compiling SSA to Machine Code via Cranelift for '{}'...", ssa_func.name);
 
     let mut flag_builder = settings::builder();
@@ -120,23 +117,57 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         fn malloc(size: usize) -> *mut u8;
         fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
     }
-    extern "C" fn lirien_sin(x: f64) -> f64 { x.sin() }
-    extern "C" fn lirien_cos(x: f64) -> f64 { x.cos() }
-    extern "C" fn lirien_tan(x: f64) -> f64 { x.tan() }
-    extern "C" fn lirien_asin(x: f64) -> f64 { x.asin() }
-    extern "C" fn lirien_acos(x: f64) -> f64 { x.acos() }
-    extern "C" fn lirien_atan(x: f64) -> f64 { x.atan() }
-    extern "C" fn lirien_exp(x: f64) -> f64 { x.exp() }
-    extern "C" fn lirien_log(x: f64) -> f64 { x.ln() }
-    extern "C" fn lirien_log10(x: f64) -> f64 { x.log10() }
-    extern "C" fn lirien_pow(x: f64, y: f64) -> f64 { x.powf(y) }
-    extern "C" fn lirien_floor(x: f64) -> f64 { x.floor() }
-    extern "C" fn lirien_ceil(x: f64) -> f64 { x.ceil() }
-    extern "C" fn lirien_trunc(x: f64) -> f64 { x.trunc() }
-    extern "C" fn lirien_nearest(x: f64) -> f64 { x.round() }
-    
+    extern "C" fn lirien_sin(x: f64) -> f64 {
+        x.sin()
+    }
+    extern "C" fn lirien_cos(x: f64) -> f64 {
+        x.cos()
+    }
+    extern "C" fn lirien_tan(x: f64) -> f64 {
+        x.tan()
+    }
+    extern "C" fn lirien_asin(x: f64) -> f64 {
+        x.asin()
+    }
+    extern "C" fn lirien_acos(x: f64) -> f64 {
+        x.acos()
+    }
+    extern "C" fn lirien_atan(x: f64) -> f64 {
+        x.atan()
+    }
+    extern "C" fn lirien_exp(x: f64) -> f64 {
+        x.exp()
+    }
+    extern "C" fn lirien_log(x: f64) -> f64 {
+        x.ln()
+    }
+    extern "C" fn lirien_log10(x: f64) -> f64 {
+        x.log10()
+    }
+    extern "C" fn lirien_pow(x: f64, y: f64) -> f64 {
+        x.powf(y)
+    }
+    extern "C" fn lirien_floor(x: f64) -> f64 {
+        x.floor()
+    }
+    extern "C" fn lirien_ceil(x: f64) -> f64 {
+        x.ceil()
+    }
+    extern "C" fn lirien_trunc(x: f64) -> f64 {
+        x.trunc()
+    }
+    extern "C" fn lirien_nearest(x: f64) -> f64 {
+        x.round()
+    }
+
     // Naive math kernel for testing dependent types execution
-    extern "C" fn lirien_matmul_alloc_f32(a: *const f32, b: *const f32, m: usize, n: usize, k: usize) -> *mut f32 {
+    extern "C" fn lirien_matmul_alloc_f32(
+        a: *const f32,
+        b: *const f32,
+        m: usize,
+        n: usize,
+        k: usize,
+    ) -> *mut f32 {
         unsafe {
             let c = malloc(m * k * 4) as *mut f32;
             for i in 0..m {
@@ -152,7 +183,12 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }
     }
 
-    extern "C" fn lirien_tensor_arith_f32(a: *const f32, b: *const f32, size: usize, op: u8) -> *mut f32 {
+    extern "C" fn lirien_tensor_arith_f32(
+        a: *const f32,
+        b: *const f32,
+        size: usize,
+        op: u8,
+    ) -> *mut f32 {
         unsafe {
             let c = malloc(size * 4) as *mut f32;
             for i in 0..size {
@@ -172,14 +208,28 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
     extern "C" fn lirien_tensor_reduce_f32(a: *const f32, size: usize, op: u8) -> f32 {
         unsafe {
-            if size == 0 { return 0.0; }
+            if size == 0 {
+                return 0.0;
+            }
             let mut res = *a;
             for i in 1..size {
                 let v = *a.add(i);
                 res = match op {
                     0 => res + v, // Sum
-                    1 => if v > res { v } else { res }, // Max
-                    2 => if v < res { v } else { res }, // Min
+                    1 => {
+                        if v > res {
+                            v
+                        } else {
+                            res
+                        }
+                    } // Max
+                    2 => {
+                        if v < res {
+                            v
+                        } else {
+                            res
+                        }
+                    } // Min
                     _ => res,
                 };
             }
@@ -187,7 +237,12 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }
     }
 
-    extern "C" fn lirien_tensor_scalar_arith_f32(a: *const f32, b: f32, size: usize, op: u8) -> *mut f32 {
+    extern "C" fn lirien_tensor_scalar_arith_f32(
+        a: *const f32,
+        b: f32,
+        size: usize,
+        op: u8,
+    ) -> *mut f32 {
         unsafe {
             let c = malloc(size * 4) as *mut f32;
             for i in 0..size {
@@ -223,7 +278,8 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
             let mut src_strides = vec![1; src_rank];
             for i in (0..src_rank as i64 - 1).rev() {
-                src_strides[i as usize] = src_strides[i as usize + 1] * src_dims_slice[i as usize + 1];
+                src_strides[i as usize] =
+                    src_strides[i as usize + 1] * src_dims_slice[i as usize + 1];
             }
 
             let mut broadcast_strides = vec![0; target_rank];
@@ -277,7 +333,9 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             if list.len == list.cap {
                 let new_cap = if list.cap == 0 { 4 } else { list.cap * 2 };
                 let new_data = if list.data.is_null() {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align(new_cap * elem_size, 8).unwrap())
+                    std::alloc::alloc(
+                        std::alloc::Layout::from_size_align(new_cap * elem_size, 8).unwrap(),
+                    )
                 } else {
                     std::alloc::realloc(
                         list.data,
@@ -291,11 +349,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                 list.data = new_data;
                 list.cap = new_cap;
             }
-            std::ptr::copy_nonoverlapping(
-                item_ptr,
-                list.data.add(list.len * elem_size),
-                elem_size,
-            );
+            std::ptr::copy_nonoverlapping(item_ptr, list.data.add(list.len * elem_size), elem_size);
             list.len += 1;
         }
     }
@@ -304,27 +358,38 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         unsafe { (*list).len }
     }
 
-    extern "C" fn lirien_list_get(list: *mut ListHeader, index: usize, elem_size: usize) -> *mut u8 {
+    extern "C" fn lirien_list_get(
+        list: *mut ListHeader,
+        index: usize,
+        elem_size: usize,
+    ) -> *mut u8 {
         unsafe {
             let list = &*list;
             if index >= list.len {
-                panic!("Index out of bounds in lirien_list_get: {} >= {}", index, list.len);
+                panic!(
+                    "Index out of bounds in lirien_list_get: {} >= {}",
+                    index, list.len
+                );
             }
             list.data.add(index * elem_size)
         }
     }
 
-    extern "C" fn lirien_list_set(list: *mut ListHeader, index: usize, item_ptr: *const u8, elem_size: usize) {
+    extern "C" fn lirien_list_set(
+        list: *mut ListHeader,
+        index: usize,
+        item_ptr: *const u8,
+        elem_size: usize,
+    ) {
         unsafe {
             let list = &mut *list;
             if index >= list.len {
-                panic!("Index out of bounds in lirien_list_set: {} >= {}", index, list.len);
+                panic!(
+                    "Index out of bounds in lirien_list_set: {} >= {}",
+                    index, list.len
+                );
             }
-            std::ptr::copy_nonoverlapping(
-                item_ptr,
-                list.data.add(index * elem_size),
-                elem_size,
-            );
+            std::ptr::copy_nonoverlapping(item_ptr, list.data.add(index * elem_size), elem_size);
         }
     }
 
@@ -344,11 +409,26 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("ceil", lirien_ceil as *const u8);
     jit_builder.symbol("trunc", lirien_trunc as *const u8);
     jit_builder.symbol("nearest", lirien_nearest as *const u8);
-    jit_builder.symbol("lirien_matmul_alloc_f32", lirien_matmul_alloc_f32 as *const u8);
-    jit_builder.symbol("lirien_tensor_arith_f32", lirien_tensor_arith_f32 as *const u8);
-    jit_builder.symbol("lirien_tensor_reduce_f32", lirien_tensor_reduce_f32 as *const u8);
-    jit_builder.symbol("lirien_tensor_scalar_arith_f32", lirien_tensor_scalar_arith_f32 as *const u8);
-    jit_builder.symbol("lirien_tensor_broadcast_f32", lirien_tensor_broadcast_f32 as *const u8);
+    jit_builder.symbol(
+        "lirien_matmul_alloc_f32",
+        lirien_matmul_alloc_f32 as *const u8,
+    );
+    jit_builder.symbol(
+        "lirien_tensor_arith_f32",
+        lirien_tensor_arith_f32 as *const u8,
+    );
+    jit_builder.symbol(
+        "lirien_tensor_reduce_f32",
+        lirien_tensor_reduce_f32 as *const u8,
+    );
+    jit_builder.symbol(
+        "lirien_tensor_scalar_arith_f32",
+        lirien_tensor_scalar_arith_f32 as *const u8,
+    );
+    jit_builder.symbol(
+        "lirien_tensor_broadcast_f32",
+        lirien_tensor_broadcast_f32 as *const u8,
+    );
     jit_builder.symbol("lirien_list_new", lirien_list_new as *const u8);
     jit_builder.symbol("lirien_list_append", lirien_list_append as *const u8);
     jit_builder.symbol("lirien_list_len", lirien_list_len as *const u8);
@@ -474,7 +554,8 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                         let cl_types = lower::get_flattened_types(ssa_func, &ty);
                         let mut field_vals = Vec::new();
                         for cl_ty in cl_types {
-                            field_vals.push(cg_ctx.builder.append_block_param(current_cl_block, cl_ty));
+                            field_vals
+                                .push(cg_ctx.builder.append_block_param(current_cl_block, cl_ty));
                         }
                         cg_ctx.unpacked_values.insert(*dest, field_vals);
                     } else {
@@ -533,15 +614,22 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                     let ty = ssa_func.get_type(val);
                     match ty {
                         SsaType::Buffer(_) => {
-                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
-                            cg_ctx.buffer_lengths.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx + 1]);
+                            cg_ctx
+                                .values
+                                .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            cg_ctx
+                                .buffer_lengths
+                                .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx + 1]);
                             p_idx += 2;
                         }
                         SsaType::Tensor(_, ref dims) => {
-                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            cg_ctx
+                                .values
+                                .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
                             let mut dim_vals = Vec::new();
                             for j in 0..dims.len() {
-                                dim_vals.push(cg_ctx.builder.block_params(entry_block)[p_idx + 1 + j]);
+                                dim_vals
+                                    .push(cg_ctx.builder.block_params(entry_block)[p_idx + 1 + j]);
                             }
                             cg_ctx.tensor_dims.insert(val, dim_vals);
                             p_idx += 1 + dims.len();
@@ -563,7 +651,9 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                             cg_ctx.values.insert(val, vec_val);
                         }
                         _ => {
-                            cg_ctx.values.insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
+                            cg_ctx
+                                .values
+                                .insert(val, cg_ctx.builder.block_params(entry_block)[p_idx]);
                             p_idx += 1;
                         }
                     }

@@ -1,4 +1,6 @@
-use super::{get_all_cl_values, get_flattened_types, get_val, translate_type, CodegenContext, LoweringError};
+use super::{
+    get_all_cl_values, get_flattened_types, get_val, translate_type, CodegenContext, LoweringError,
+};
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use lirien_ir::ir::{Type as SsaType, Value as SsaValue};
@@ -23,13 +25,8 @@ pub fn lower<M: Module>(
         }
     };
 
-    let (sig, is_sret, is_register_composite_ret) = super::build_cranelift_signature(
-        ctx.ssa_func,
-        &arg_types,
-        &ret_ty,
-        is_closure,
-        ctx.module,
-    );
+    let (sig, is_sret, is_register_composite_ret) =
+        super::build_cranelift_signature(ctx.ssa_func, &arg_types, &ret_ty, is_closure, ctx.module);
 
     let cl_fn_val = get_val(&ctx.values, &fn_ptr);
     let cl_fn_ptr = if is_closure {

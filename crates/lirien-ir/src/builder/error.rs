@@ -39,28 +39,25 @@ pub enum BuilderError {
     Internal(String, Option<SourceLocation>),
 }
 
-
 impl BuilderError {
     /// Attaches or updates the source location on the compiler builder error.
     pub fn with_location(self, loc: SourceLocation) -> Self {
         match self {
             BuilderError::UnboundVariable(s, _) => BuilderError::UnboundVariable(s, Some(loc)),
             BuilderError::TypeMismatch {
-                expected,
-                found, ..
+                expected, found, ..
             } => BuilderError::TypeMismatch {
                 expected,
                 found,
                 location: Some(loc),
             },
-            BuilderError::AttributeNotFound {
-                target,
-                attr, ..
-            } => BuilderError::AttributeNotFound {
-                target,
-                attr,
-                location: Some(loc),
-            },
+            BuilderError::AttributeNotFound { target, attr, .. } => {
+                BuilderError::AttributeNotFound {
+                    target,
+                    attr,
+                    location: Some(loc),
+                }
+            }
             BuilderError::UnsupportedExpression(s, _) => {
                 BuilderError::UnsupportedExpression(s, Some(loc))
             }
@@ -137,4 +134,3 @@ impl From<String> for BuilderError {
 
 /// Specialized Result type for the builder, yielding a [`BuilderError`] upon failure.
 pub type BuilderResult<T> = Result<T, BuilderError>;
-

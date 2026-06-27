@@ -1,18 +1,21 @@
 use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::{push_inst, builder_error};
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 
 impl CFGBuilder {
-    pub(crate) fn visit_attribute(&mut self, s: ast::ExprAttribute, expr_offset: usize) -> BuilderResult<Value> {
+    pub(crate) fn visit_attribute(
+        &mut self,
+        s: ast::ExprAttribute,
+        expr_offset: usize,
+    ) -> BuilderResult<Value> {
         let mut obj = self.visit_expr(*s.value.clone())?;
         let mut curr_ty = self.func.get_type(obj);
 
         loop {
             // Handle .val or .value unwrap for Refined/Box types
-            if s.attr.as_str() == "val" || s.attr.as_str() == "value"
-            {
+            if s.attr.as_str() == "val" || s.attr.as_str() == "value" {
                 if let Type::Pointer(inner) | Type::NullablePointer(inner) = &curr_ty {
                     if !matches!(**inner, Type::Struct(_)) {
                         let deref_val = self.func.next_value();
@@ -29,9 +32,15 @@ impl CFGBuilder {
 
             match curr_ty {
                 Type::Struct(ref struct_name) | Type::NamedTuple(ref struct_name) => {
-                    let field_offset = self.get_field_offset(struct_name, s.attr.as_str()).ok_or_else(|| {
-                        builder_error!(AttributeNotFound, struct_name.clone(), s.attr.to_string())
-                    })?;
+                    let field_offset = self
+                        .get_field_offset(struct_name, s.attr.as_str())
+                        .ok_or_else(|| {
+                            builder_error!(
+                                AttributeNotFound,
+                                struct_name.clone(),
+                                s.attr.to_string()
+                            )
+                        })?;
 
                     let fields = self.func.struct_layouts.get(struct_name).unwrap();
                     let field_ty = fields
@@ -45,7 +54,8 @@ impl CFGBuilder {
                         return Err(builder_error!(
                             General,
                             "Field '{}' has unknown type in struct '{}'",
-                            s.attr, struct_name
+                            s.attr,
+                            struct_name
                         ));
                     }
 
@@ -75,7 +85,8 @@ impl CFGBuilder {
                     return Err(builder_error!(
                         General,
                         "Cannot resolve attribute '{}' on non-struct type {:?}",
-                        s.attr, curr_ty
+                        s.attr,
+                        curr_ty
                     ));
                 }
             }
@@ -127,23 +138,28 @@ impl CFGBuilder {
                         }
 
                         if let Some(key) = key_val {
-                            let field_offset = self.get_field_offset(dict_name, &key).ok_or_else(|| {
-                                builder_error!(General, "Key '{}' not found in TypedDict '{}'", key, dict_name)
-                            })?;
+                            let field_offset =
+                                self.get_field_offset(dict_name, &key).ok_or_else(|| {
+                                    builder_error!(
+                                        General,
+                                        "Key '{}' not found in TypedDict '{}'",
+                                        key,
+                                        dict_name
+                                    )
+                                })?;
 
                             let fields = self.func.struct_layouts.get(dict_name).unwrap();
-                            let field_ty = fields
-                                .iter()
-                                .find(|(f, _)| f == &key)
-                                .unwrap()
-                                .1
-                                .clone();
+                            let field_ty =
+                                fields.iter().find(|(f, _)| f == &key).unwrap().1.clone();
 
                             push_inst!(self, InstructionKind::StructLoad(dest, arr, field_offset));
                             self.func.set_type(dest, field_ty);
                             return Ok(dest);
                         } else {
-                            return Err(builder_error!(General, "TypedDict key must be a constant string"));
+                            return Err(builder_error!(
+                                General,
+                                "TypedDict key must be a constant string"
+                            ));
                         }
                     }
                     _ => {
@@ -182,15 +198,23 @@ impl CFGBuilder {
                                 if let Some(i) = idx_val {
                                     if i < elt_types.len() {
                                         let elt_ty = elt_types[i].clone();
-                                        push_inst!(self, InstructionKind::TupleExtract(
-                                            dest, arr, i,
-                                        ));
+                                        push_inst!(
+                                            self,
+                                            InstructionKind::TupleExtract(dest, arr, i,)
+                                        );
                                         self.func.set_type(dest, elt_ty);
                                     } else {
-                                        return Err(builder_error!(General, "Tuple index out of bounds: {}", i));
+                                        return Err(builder_error!(
+                                            General,
+                                            "Tuple index out of bounds: {}",
+                                            i
+                                        ));
                                     }
                                 } else {
-                                    return Err(builder_error!(General, "Tuple index must be a constant"));
+                                    return Err(builder_error!(
+                                        General,
+                                        "Tuple index must be a constant"
+                                    ));
                                 }
                             }
                             _ => {
@@ -243,7 +267,10 @@ impl CFGBuilder {
             self.func.set_type(v, Type::I64);
             v
         } else {
-            return Err(builder_error!(General, "Slice end index required for Buffers"));
+            return Err(builder_error!(
+                General,
+                "Slice end index required for Buffers"
+            ));
         };
 
         let step = if let Some(s) = &slice.step {

@@ -39,7 +39,6 @@ pub trait SolverBackend {
     /// Pops a specified number of solver assertion scopes.
     fn pop(&mut self, num: u32);
 
-
     fn bool_const(&mut self, name: &str) -> Self::Bool;
     fn bool_from_bool(&mut self, val: bool) -> Self::Bool;
     fn bool_not(&mut self, a: &Self::Bool) -> Self::Bool;
@@ -48,7 +47,12 @@ pub trait SolverBackend {
     fn bool_implies(&mut self, a: &Self::Bool, b: &Self::Bool) -> Self::Bool;
     fn bool_eq(&mut self, a: &Self::Bool, b: &Self::Bool) -> Self::Bool;
     fn bool_ite(&mut self, cond: &Self::Bool, then: &Self::BV, orelse: &Self::BV) -> Self::BV;
-    fn float_ite(&mut self, cond: &Self::Bool, then: &Self::Float, orelse: &Self::Float) -> Self::Float;
+    fn float_ite(
+        &mut self,
+        cond: &Self::Bool,
+        then: &Self::Float,
+        orelse: &Self::Float,
+    ) -> Self::Float;
 
     fn int_const(&mut self, name: &str) -> Self::Int;
     fn int_from_i64(&mut self, val: i64) -> Self::Int;
@@ -110,7 +114,12 @@ pub trait SolverBackend {
 
     fn array_const(&mut self, name: &str, is_float: bool, bit_width: u32) -> Self::Array;
     fn array_select_bv(&mut self, a: &Self::Array, index: &Self::Int) -> Self::BV;
-    fn array_select_float(&mut self, a: &Self::Array, index: &Self::Int, is_f32: bool) -> Self::Float;
+    fn array_select_float(
+        &mut self,
+        a: &Self::Array,
+        index: &Self::Int,
+        is_f32: bool,
+    ) -> Self::Float;
     fn array_select_int(&mut self, a: &Self::Array, index: &Self::Int) -> Self::Int;
     fn array_store_bv(&mut self, a: &Self::Array, index: &Self::Int, val: &Self::BV)
         -> Self::Array;

@@ -1,11 +1,15 @@
 use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::{push_inst, builder_error};
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 
 impl CFGBuilder {
-    pub(crate) fn visit_binop(&mut self, s: ast::ExprBinOp, expr_offset: usize) -> BuilderResult<Value> {
+    pub(crate) fn visit_binop(
+        &mut self,
+        s: ast::ExprBinOp,
+        expr_offset: usize,
+    ) -> BuilderResult<Value> {
         let mut lhs = self.visit_expr(*s.left)?;
         let mut rhs = self.visit_expr(*s.right)?;
         lhs = self.auto_load(lhs);
@@ -49,20 +53,18 @@ impl CFGBuilder {
 
             match s.op {
                 ast::BoolOp::And => {
-                    push_inst!(self, InstructionKind::Branch(
-                        last_val,
-                        next_block,
-                        merge_block,
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::Branch(last_val, next_block, merge_block,)
+                    );
                     self.link_blocks(self.current_block, next_block);
                     self.link_blocks(self.current_block, merge_block);
                 }
                 ast::BoolOp::Or => {
-                    push_inst!(self, InstructionKind::Branch(
-                        last_val,
-                        merge_block,
-                        next_block,
-                    ));
+                    push_inst!(
+                        self,
+                        InstructionKind::Branch(last_val, merge_block, next_block,)
+                    );
                     self.link_blocks(self.current_block, merge_block);
                     self.link_blocks(self.current_block, next_block);
                 }
@@ -90,9 +92,7 @@ impl CFGBuilder {
         let (kind, op_str) = match s.op {
             ast::UnaryOp::Not => (InstructionKind::Not(dest, operand), "not"),
             ast::UnaryOp::Invert => (InstructionKind::Not(dest, operand), "~"),
-            ast::UnaryOp::USub => {
-                (InstructionKind::Neg(dest, operand), "-")
-            }
+            ast::UnaryOp::USub => (InstructionKind::Neg(dest, operand), "-"),
             ast::UnaryOp::UAdd => return Ok(operand),
         };
         self.func.set_type(dest, self.func.get_type(operand));
@@ -105,9 +105,16 @@ impl CFGBuilder {
         Ok(dest)
     }
 
-    pub(crate) fn visit_compare(&mut self, s: ast::ExprCompare, expr_offset: usize) -> BuilderResult<Value> {
+    pub(crate) fn visit_compare(
+        &mut self,
+        s: ast::ExprCompare,
+        expr_offset: usize,
+    ) -> BuilderResult<Value> {
         if s.ops.len() != 1 || s.comparators.len() != 1 {
-            return Err(builder_error!(General, "Complex comparisons not supported yet"));
+            return Err(builder_error!(
+                General,
+                "Complex comparisons not supported yet"
+            ));
         }
         let mut lhs = self.visit_expr(*s.left)?;
         let mut rhs = self.visit_expr(s.comparators[0].clone())?;

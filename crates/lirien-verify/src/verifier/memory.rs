@@ -74,7 +74,9 @@ pub fn init_values<
             ctx.z3_arrays.insert(val, z3_val);
 
             // Also create a BV for the address (required for null checks)
-            let z3_ptr = ctx.backend.bv_const(&format!("{}_v{}_addr_{}", ctx.func.name, i, ctx.uid), 64);
+            let z3_ptr = ctx
+                .backend
+                .bv_const(&format!("{}_v{}_addr_{}", ctx.func.name, i, ctx.uid), 64);
 
             if is_non_nullable {
                 let zero = ctx.backend.bv_from_i64(0, 64);
@@ -153,7 +155,7 @@ pub fn init_values<
             let addr_val = ctx
                 .backend
                 .bv_const(&format!("{}_v{}_ptr_{}", ctx.func.name, i, ctx.uid), 64);
-            
+
             // For standard Pointer (non-nullable), assert it's not null at init
             if let Type::Pointer(_) = inner_ty {
                 let zero = ctx.backend.bv_from_i64(0, 64);
@@ -161,7 +163,7 @@ pub fn init_values<
                 let is_not_null = ctx.backend.bool_not(&is_null);
                 ctx.backend.assert(&is_not_null);
             }
-            
+
             ctx.z3_bvs.insert(val, addr_val);
 
             let payload_val = ctx.backend.array_const(
@@ -177,14 +179,12 @@ pub fn init_values<
                 .float_const(&format!("{}_v{}_{}", ctx.func.name, i, ctx.uid), is_f32);
 
             if let Some(refinement) = ctx.func.refinements.get(&val) {
-                let ref_expr =
-                    crate::refinement::parse_float_refinement(refinement, &z3_val)?;
+                let ref_expr = crate::refinement::parse_float_refinement(refinement, &z3_val)?;
                 ctx.backend.assert(&ref_expr);
                 ctx.has_refinements = true;
             }
             if let Some(constraint) = &propagated_constraint {
-                let ref_expr =
-                    crate::refinement::parse_float_refinement(constraint, &z3_val)?;
+                let ref_expr = crate::refinement::parse_float_refinement(constraint, &z3_val)?;
                 ctx.backend.assert(&ref_expr);
             }
             ctx.z3_floats.insert(val, z3_val);
@@ -267,7 +267,11 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
                 let dest_ty = ctx.func.get_type(*dest);
-                let res = ctx.backend.array_select_float(&z3_arr, &z3_idx_int, matches!(dest_ty, Type::F32));
+                let res = ctx.backend.array_select_float(
+                    &z3_arr,
+                    &z3_idx_int,
+                    matches!(dest_ty, Type::F32),
+                );
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -297,7 +301,12 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
                 let val_ty = ctx.func.get_type(*val);
-                let stored = ctx.backend.array_store_float(&z3_arr, &z3_idx_int, &z3_val, matches!(val_ty, Type::F32));
+                let stored = ctx.backend.array_store_float(
+                    &z3_arr,
+                    &z3_idx_int,
+                    &z3_val,
+                    matches!(val_ty, Type::F32),
+                );
                 let __inner = ctx.backend.array_eq(&z3_dest, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -421,9 +430,11 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
                 let dest_ty = ctx.func.get_type(*dest);
-                let res = ctx
-                    .backend
-                    .array_select_float(&z3_tensor_data, &z3_idx_int, matches!(dest_ty, Type::F32));
+                let res = ctx.backend.array_select_float(
+                    &z3_tensor_data,
+                    &z3_idx_int,
+                    matches!(dest_ty, Type::F32),
+                );
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -502,9 +513,12 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
                 let val_ty = ctx.func.get_type(*val);
-                let stored = ctx
-                    .backend
-                    .array_store_float(&z3_tensor_data, &z3_idx_int, &z3_val, matches!(val_ty, Type::F32));
+                let stored = ctx.backend.array_store_float(
+                    &z3_tensor_data,
+                    &z3_idx_int,
+                    &z3_val,
+                    matches!(val_ty, Type::F32),
+                );
                 let __inner = ctx.backend.array_eq(&z3_dest_data, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -514,12 +528,16 @@ pub fn translate<
             ctx.z3_tensor_dims.insert(*dest, dims.clone());
         }
         InstructionKind::BufferLoad(dest, buf, idx) => {
-            let z3_idx = ctx.z3_bvs.get(idx).cloned().ok_or_else(|| {
-                format!("BufferLoad: v{} (idx) not found in z3_bvs", idx.0)
-            })?;
-            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
-                format!("BufferLoad: v{} (buf) not found in z3_bvs", buf.0)
-            })?;
+            let z3_idx = ctx
+                .z3_bvs
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| format!("BufferLoad: v{} (idx) not found in z3_bvs", idx.0))?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(buf)
+                .cloned()
+                .ok_or_else(|| format!("BufferLoad: v{} (buf) not found in z3_bvs", buf.0))?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
 
             // Model the loaded value as an unconstrained constant of the appropriate sort
@@ -557,12 +575,16 @@ pub fn translate<
             ctx.z3_tensor_dims.insert(*dest, Vec::new());
         }
         InstructionKind::BufferStore(dest, buf, idx, _val, _) => {
-            let z3_idx = ctx.z3_bvs.get(idx).cloned().ok_or_else(|| {
-                format!("BufferStore: v{} (idx) not found in z3_bvs", idx.0)
-            })?;
-            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
-                format!("BufferStore: v{} (buf) not found in z3_bvs", buf.0)
-            })?;
+            let z3_idx = ctx
+                .z3_bvs
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| format!("BufferStore: v{} (idx) not found in z3_bvs", idx.0))?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(buf)
+                .cloned()
+                .ok_or_else(|| format!("BufferStore: v{} (buf) not found in z3_bvs", buf.0))?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
             if let (Some(z3_dest_len), Some(z3_buf_len)) =
                 (ctx.z3_bvs.get(dest).cloned(), ctx.z3_bvs.get(buf).cloned())
@@ -573,12 +595,16 @@ pub fn translate<
             }
         }
         InstructionKind::BufferLen(dest, buf) => {
-            let z3_len = ctx.z3_bvs.get(buf).cloned().ok_or_else(|| {
-                format!("BufferLen: v{} (buf) not found in z3_bvs", buf.0)
-            })?;
-            let z3_dest = ctx.z3_bvs.get(dest).cloned().ok_or_else(|| {
-                format!("BufferLen: v{} (dest) not found in z3_bvs", dest.0)
-            })?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(buf)
+                .cloned()
+                .ok_or_else(|| format!("BufferLen: v{} (buf) not found in z3_bvs", buf.0))?;
+            let z3_dest = ctx
+                .z3_bvs
+                .get(dest)
+                .cloned()
+                .ok_or_else(|| format!("BufferLen: v{} (dest) not found in z3_bvs", dest.0))?;
             let __inner = ctx.backend.bv_eq(&z3_dest, &z3_len);
             let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
             ctx.backend.assert(&__tmp);
@@ -588,26 +614,34 @@ pub fn translate<
             ctx.z3_bvs.insert(*dest, z3_len);
         }
         InstructionKind::ListAppend(dest, list, _val) => {
-            let z3_list_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
-                format!("ListAppend: list v{} not found in z3_bvs", list.0)
-            })?;
+            let z3_list_len = ctx
+                .z3_bvs
+                .get(list)
+                .cloned()
+                .ok_or_else(|| format!("ListAppend: list v{} not found in z3_bvs", list.0))?;
             let one = ctx.backend.bv_from_i64(1, 64);
             let z3_new_len = ctx.backend.bv_add(&z3_list_len, &one);
             ctx.z3_bvs.insert(*dest, z3_new_len);
         }
         InstructionKind::ListLen(dest, list) => {
-            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
-                format!("ListLen: list v{} not found in z3_bvs", list.0)
-            })?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(list)
+                .cloned()
+                .ok_or_else(|| format!("ListLen: list v{} not found in z3_bvs", list.0))?;
             ctx.z3_bvs.insert(*dest, z3_len);
         }
         InstructionKind::ListLoad(dest, list, index) => {
-            let z3_idx = ctx.z3_bvs.get(index).cloned().ok_or_else(|| {
-                format!("ListLoad: index v{} not found in z3_bvs", index.0)
-            })?;
-            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
-                format!("ListLoad: list v{} not found in z3_bvs", list.0)
-            })?;
+            let z3_idx = ctx
+                .z3_bvs
+                .get(index)
+                .cloned()
+                .ok_or_else(|| format!("ListLoad: index v{} not found in z3_bvs", index.0))?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(list)
+                .cloned()
+                .ok_or_else(|| format!("ListLoad: list v{} not found in z3_bvs", list.0))?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
 
             let dest_ty = ctx.func.get_type(*dest);
@@ -628,12 +662,16 @@ pub fn translate<
             }
         }
         InstructionKind::ListStore(dest, list, index, _val) => {
-            let z3_idx = ctx.z3_bvs.get(index).cloned().ok_or_else(|| {
-                format!("ListStore: index v{} not found in z3_bvs", index.0)
-            })?;
-            let z3_len = ctx.z3_bvs.get(list).cloned().ok_or_else(|| {
-                format!("ListStore: list v{} not found in z3_bvs", list.0)
-            })?;
+            let z3_idx = ctx
+                .z3_bvs
+                .get(index)
+                .cloned()
+                .ok_or_else(|| format!("ListStore: index v{} not found in z3_bvs", index.0))?;
+            let z3_len = ctx
+                .z3_bvs
+                .get(list)
+                .cloned()
+                .ok_or_else(|| format!("ListStore: list v{} not found in z3_bvs", list.0))?;
             check_buffer_bounds(ctx, path_cond, &z3_idx, &z3_len, dest.0, inst.location)?;
             ctx.z3_bvs.insert(*dest, z3_len);
         }
@@ -670,9 +708,12 @@ pub fn translate<
                                     .array_store_bv(&current_state, &z3_offset, &z3_v);
                         } else if let Some(z3_v) = ctx.z3_floats.get(p_val).cloned() {
                             let p_ty = ctx.func.get_type(*p_val);
-                            current_state =
-                                ctx.backend
-                                    .array_store_float(&current_state, &z3_offset, &z3_v, matches!(p_ty, Type::F32));
+                            current_state = ctx.backend.array_store_float(
+                                &current_state,
+                                &z3_offset,
+                                &z3_v,
+                                matches!(p_ty, Type::F32),
+                            );
                         }
                     }
                     offset += f_ty.size(&ctx.func.struct_layouts);
@@ -688,7 +729,7 @@ pub fn translate<
                 return Ok(());
             }
             if let Type::TypedDict(_) = obj_ty {
-                 // TypedDict is modeled as an array (memory object)
+                // TypedDict is modeled as an array (memory object)
             }
             let z3_obj = ctx.z3_arrays.get(obj).cloned().unwrap();
             let z3_offset = ctx.backend.int_from_i64(*offset as i64);
@@ -710,7 +751,11 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_dest) = ctx.z3_floats.get(dest).cloned() {
                 let dest_ty = ctx.func.get_type(*dest);
-                let res = ctx.backend.array_select_float(&z3_obj, &z3_offset, matches!(dest_ty, Type::F32));
+                let res = ctx.backend.array_select_float(
+                    &z3_obj,
+                    &z3_offset,
+                    matches!(dest_ty, Type::F32),
+                );
                 let __inner = ctx.backend.float_eq(&z3_dest, &res);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -739,7 +784,12 @@ pub fn translate<
                 ctx.backend.assert(&__tmp);
             } else if let Some(z3_val) = ctx.z3_floats.get(val).cloned() {
                 let val_ty = ctx.func.get_type(*val);
-                let stored = ctx.backend.array_store_float(&z3_obj, &z3_offset, &z3_val, matches!(val_ty, Type::F32));
+                let stored = ctx.backend.array_store_float(
+                    &z3_obj,
+                    &z3_offset,
+                    &z3_val,
+                    matches!(val_ty, Type::F32),
+                );
                 let __inner = ctx.backend.array_eq(&z3_dest, &stored);
                 let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                 ctx.backend.assert(&__tmp);
@@ -861,7 +911,11 @@ pub fn translate<
                 } else if let Some(dest_float) = ctx.z3_floats.get(dest).cloned() {
                     let zero_idx = ctx.backend.int_from_i64(0);
                     let dest_ty = ctx.func.get_type(*dest);
-                    let res = ctx.backend.array_select_float(&ptr_payload, &zero_idx, matches!(dest_ty, Type::F32));
+                    let res = ctx.backend.array_select_float(
+                        &ptr_payload,
+                        &zero_idx,
+                        matches!(dest_ty, Type::F32),
+                    );
                     let __inner = ctx.backend.float_eq(&dest_float, &res);
                     let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
                     ctx.backend.assert(&__tmp);
@@ -896,7 +950,12 @@ pub fn translate<
                     ctx.z3_arrays.insert(*ptr, new_payload);
                 } else if let Some(val_float) = ctx.z3_floats.get(val).cloned() {
                     let zero_idx = ctx.backend.int_from_i64(0);
-                    let new_payload = ctx.backend.array_store_float(&ptr_payload, &zero_idx, &val_float, matches!(val_ty, Type::F32));
+                    let new_payload = ctx.backend.array_store_float(
+                        &ptr_payload,
+                        &zero_idx,
+                        &val_float,
+                        matches!(val_ty, Type::F32),
+                    );
                     ctx.z3_arrays.insert(*ptr, new_payload);
                 }
             }
@@ -929,7 +988,10 @@ fn check_bounds<
     ctx.check_safety(
         path_cond,
         &cond_slt,
-        format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds access (negative index) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -938,7 +1000,10 @@ fn check_bounds<
     ctx.check_safety(
         path_cond,
         &cond_sge,
-        format!("Potential out-of-bounds access (index >= length) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds access (index >= length) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -979,7 +1044,10 @@ fn check_symbolic_bounds<
         ctx.check_safety(
             path_cond,
             &cond_lt,
-            format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+            format!(
+                "Potential out-of-bounds access (negative index) at v{}",
+                dest_id
+            ),
             location,
         )?;
     }
@@ -988,7 +1056,10 @@ fn check_symbolic_bounds<
     ctx.check_safety(
         path_cond,
         &cond_ge,
-        format!("Potential out-of-bounds access (index >= length) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds access (index >= length) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -1018,7 +1089,10 @@ fn check_slice_start_bounds<
     ctx.check_safety(
         path_cond,
         &cond_slt,
-        format!("Potential out-of-bounds access (negative index) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds access (negative index) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -1027,7 +1101,10 @@ fn check_slice_start_bounds<
     ctx.check_safety(
         path_cond,
         &cond_sgt,
-        format!("Potential out-of-bounds access (index > length) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds access (index > length) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -1056,7 +1133,10 @@ fn check_buffer_bounds<
     ctx.check_safety(
         path_cond,
         &cond_slt,
-        format!("Potential out-of-bounds buffer access (index < 0) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds buffer access (index < 0) at v{}",
+            dest_id
+        ),
         location,
     )?;
 
@@ -1064,7 +1144,10 @@ fn check_buffer_bounds<
     ctx.check_safety(
         path_cond,
         &cond_sge,
-        format!("Potential out-of-bounds buffer access (index >= len) at v{}", dest_id),
+        format!(
+            "Potential out-of-bounds buffer access (index >= len) at v{}",
+            dest_id
+        ),
         location,
     )?;
 

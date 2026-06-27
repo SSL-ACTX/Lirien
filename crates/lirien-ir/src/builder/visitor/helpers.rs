@@ -70,16 +70,8 @@ impl CFGBuilder {
             let idx1 = i as i64 - (max_len as i64 - len1 as i64);
             let idx2 = i as i64 - (max_len as i64 - len2 as i64);
 
-            let d1 = if idx1 < 0 {
-                "1"
-            } else {
-                &dims1[idx1 as usize]
-            };
-            let d2 = if idx2 < 0 {
-                "1"
-            } else {
-                &dims2[idx2 as usize]
-            };
+            let d1 = if idx1 < 0 { "1" } else { &dims1[idx1 as usize] };
+            let d2 = if idx2 < 0 { "1" } else { &dims2[idx2 as usize] };
 
             if d1 == d2 {
                 res.push(d1.to_string());

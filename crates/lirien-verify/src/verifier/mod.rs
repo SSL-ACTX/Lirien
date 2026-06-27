@@ -191,7 +191,6 @@ pub fn verify_with_context<
     _liveness: lirien_ir::analysis::liveness::LivenessAnalysisResults,
     uid: usize,
 ) -> Result<Option<String>, String> {
-
     let mut t_ctx = TranslationContext {
         backend,
         func,
@@ -232,7 +231,10 @@ pub fn verify_with_context<
         t_ctx.backend.assert(&check.path_cond);
         t_ctx.backend.assert(&check.violation_cond);
         if t_ctx.backend.check()? {
-            let loc_info = check.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+            let loc_info = check
+                .location
+                .map(|l| format!(" at {}", l))
+                .unwrap_or_default();
             return Err(format!("{}{}", check.error_message, loc_info));
         }
         t_ctx.backend.pop(1);
@@ -535,9 +537,16 @@ pub fn verify_loop_invariants<
     };
 
     for invariant in &t_ctx.func.loop_invariants {
-        let header_cond = t_ctx.block_conditions.get(&invariant.header_block).ok_or_else(|| {
-            format!("Block condition not found for header block {:?}", invariant.header_block)
-        })?.clone();
+        let header_cond = t_ctx
+            .block_conditions
+            .get(&invariant.header_block)
+            .ok_or_else(|| {
+                format!(
+                    "Block condition not found for header block {:?}",
+                    invariant.header_block
+                )
+            })?
+            .clone();
 
         // 1. Assert the loop invariant at the loop header under header_cond
         let z3_invariant = parse_bool_expr_with_resolver(&invariant.predicate, &resolver)?;
@@ -545,12 +554,19 @@ pub fn verify_loop_invariants<
         t_ctx.backend.assert(&assume_invariant);
 
         // 2. Identify predecessor blocks of the loop header
-        let header_node = t_ctx.func.blocks.iter().find(|b| b.id == invariant.header_block)
+        let header_node = t_ctx
+            .func
+            .blocks
+            .iter()
+            .find(|b| b.id == invariant.header_block)
             .ok_or_else(|| "Header block not found".to_string())?;
 
         for &pred in &header_node.predecessors {
-            let edge_cond = t_ctx.edge_conditions.get(&(pred, invariant.header_block))
-                .ok_or_else(|| "Edge condition not found".to_string())?.clone();
+            let edge_cond = t_ctx
+                .edge_conditions
+                .get(&(pred, invariant.header_block))
+                .ok_or_else(|| "Edge condition not found".to_string())?
+                .clone();
 
             let is_backedge = is_reachable_block(t_ctx.func, invariant.header_block, pred);
 
@@ -562,12 +578,14 @@ pub fn verify_loop_invariants<
                         if let Some(next_val) = incoming.get(&pred) {
                             let from_name = format!("v{}", dest.0);
                             let to_name = format!("v{}", next_val.0);
-                            substituted_pred = substitute_var(&substituted_pred, &from_name, &to_name);
+                            substituted_pred =
+                                substitute_var(&substituted_pred, &from_name, &to_name);
                         }
                     }
                 }
 
-                let z3_invariant_next = parse_bool_expr_with_resolver(&substituted_pred, &resolver)?;
+                let z3_invariant_next =
+                    parse_bool_expr_with_resolver(&substituted_pred, &resolver)?;
                 let violation_cond = t_ctx.backend.bool_not(&z3_invariant_next);
 
                 t_ctx.safety_checks.push(SafetyCheck {
@@ -598,11 +616,7 @@ pub fn verify_loop_invariants<
     Ok(())
 }
 
-fn is_reachable_block(
-    func: &lirien_ir::ir::Function,
-    start: BlockId,
-    target: BlockId,
-) -> bool {
+fn is_reachable_block(func: &lirien_ir::ir::Function, start: BlockId, target: BlockId) -> bool {
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(start);
@@ -628,11 +642,17 @@ fn substitute_var(s: &str, from: &str, to: &str) -> String {
     let from_chars: Vec<char> = from.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if i + from_chars.len() <= chars.len() && chars[i..i+from_chars.len()] == from_chars {
-            let before = if i > 0 { chars[i-1] } else { ' ' };
-            let after = if i + from_chars.len() < chars.len() { chars[i+from_chars.len()] } else { ' ' };
-            let is_boundary = !before.is_alphanumeric() && before != '_'
-                && !after.is_alphanumeric() && after != '_';
+        if i + from_chars.len() <= chars.len() && chars[i..i + from_chars.len()] == from_chars {
+            let before = if i > 0 { chars[i - 1] } else { ' ' };
+            let after = if i + from_chars.len() < chars.len() {
+                chars[i + from_chars.len()]
+            } else {
+                ' '
+            };
+            let is_boundary = !before.is_alphanumeric()
+                && before != '_'
+                && !after.is_alphanumeric()
+                && after != '_';
             if is_boundary {
                 result.push_str(to);
                 i += from_chars.len();

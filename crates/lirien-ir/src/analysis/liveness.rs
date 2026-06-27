@@ -21,7 +21,6 @@ pub struct LivenessAnalysisResults {
 /// Computes liveness sets backwards using fixed-point iteration. Special care is taken
 /// for Phi nodes, where their operands are treated as live only along the incoming control-flow edge.
 pub fn analyze_liveness(func: &Function) -> LivenessAnalysisResults {
-
     let mut live_in: HashMap<BlockId, HashSet<Value>> = HashMap::new();
     let mut live_out: HashMap<BlockId, HashSet<Value>> = HashMap::new();
 

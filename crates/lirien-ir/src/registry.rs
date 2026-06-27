@@ -98,4 +98,3 @@ lazy_static! {
     /// The global, thread-safe registry of compiled Lirien functions.
     pub static ref GLOBAL_REGISTRY: Mutex<Registry> = Mutex::new(Registry::new());
 }
-

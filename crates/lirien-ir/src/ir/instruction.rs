@@ -28,7 +28,6 @@ pub enum FusedExpr {
     Div(Box<FusedExpr>, Box<FusedExpr>),
 }
 
-
 #[macro_export]
 macro_rules! lirien_instructions {
     ($mac:ident) => {
@@ -902,7 +901,6 @@ impl Instruction {
         self
     }
 
-
     /// Returns the defined SSA value if this instruction defines one, or `None` if it does not.
     #[allow(unused_variables)]
     pub fn get_def(&self) -> Option<Value> {
@@ -1056,4 +1054,3 @@ macro_rules! define_visitor_methods {
 pub trait InstructionVisitor<R> {
     lirien_instructions!(define_visitor_methods);
 }
-

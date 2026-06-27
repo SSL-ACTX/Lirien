@@ -21,7 +21,6 @@ use std::collections::HashMap;
 /// It initializes argument ranges based on their annotated type width, refines them with Z3 liquid type
 /// constraints (if available), and narrows ranges through conditional branch edges.
 pub fn analyze(func: &Function) -> IntervalAnalysisResults {
-
     let mut intervals: HashMap<Value, Interval> = HashMap::new();
     let mut block_narrowing: HashMap<(Value, crate::ir::BlockId), Interval> = HashMap::new();
 
@@ -245,7 +244,9 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                             };
 
                             let high = match (si.low, si.high) {
-                                (Bound::Finite(l), Bound::Finite(h)) => Bound::Finite(l.abs().max(h.abs())),
+                                (Bound::Finite(l), Bound::Finite(h)) => {
+                                    Bound::Finite(l.abs().max(h.abs()))
+                                }
                                 (Bound::NegInf, _) | (_, Bound::PosInf) => Bound::PosInf,
                                 (Bound::Finite(l), _) => Bound::Finite(l.abs()),
                                 (_, Bound::Finite(h)) => Bound::Finite(h.abs()),

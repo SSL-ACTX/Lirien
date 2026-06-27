@@ -37,7 +37,7 @@ pub fn propagate_types(func: &mut Function) {
                         let l_ty = func.get_type(*l);
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
-                        
+
                         if current_ty != Type::Unknown {
                             if l_ty == Type::Unknown {
                                 new_types.insert(*l, current_ty.base_type().clone());
@@ -101,7 +101,8 @@ pub fn propagate_types(func: &mut Function) {
                                     _ => "".to_string(),
                                 };
                                 if !constraint.is_empty() {
-                                    new_types.insert(*d, Type::Refined(Box::new(inner_ty), constraint));
+                                    new_types
+                                        .insert(*d, Type::Refined(Box::new(inner_ty), constraint));
                                 } else {
                                     new_types.insert(*d, inner_ty);
                                 }
@@ -134,7 +135,8 @@ pub fn propagate_types(func: &mut Function) {
                                     _ => "".to_string(),
                                 };
                                 if !constraint.is_empty() {
-                                    new_types.insert(*d, Type::Refined(Box::new(inner_ty), constraint));
+                                    new_types
+                                        .insert(*d, Type::Refined(Box::new(inner_ty), constraint));
                                 } else {
                                     new_types.insert(*d, inner_ty);
                                 }
@@ -227,7 +229,9 @@ pub fn propagate_types(func: &mut Function) {
                             if let Type::Pointer(ref p_inner) = current_ty {
                                 let mut needs_downgrade = false;
                                 for val in mappings.values() {
-                                    if let Type::NullablePointer(ref incoming_inner) = func.get_type(*val) {
+                                    if let Type::NullablePointer(ref incoming_inner) =
+                                        func.get_type(*val)
+                                    {
                                         if incoming_inner == p_inner {
                                             needs_downgrade = true;
                                             break;
@@ -243,7 +247,8 @@ pub fn propagate_types(func: &mut Function) {
                                 let mut needs_downgrade = false;
                                 let mut inner_ty = None;
                                 for val in mappings.values() {
-                                    if let Type::Optional(ref incoming_inner) = func.get_type(*val) {
+                                    if let Type::Optional(ref incoming_inner) = func.get_type(*val)
+                                    {
                                         if **incoming_inner == current_ty {
                                             needs_downgrade = true;
                                             inner_ty = Some(incoming_inner.clone());
@@ -262,7 +267,10 @@ pub fn propagate_types(func: &mut Function) {
                                 let v_ty = func.get_type(*val);
                                 if v_ty == Type::Unknown {
                                     new_types.insert(*val, current_ty.clone());
-                                } else if v_ty.is_float() && current_ty.is_float() && v_ty != current_ty {
+                                } else if v_ty.is_float()
+                                    && current_ty.is_float()
+                                    && v_ty != current_ty
+                                {
                                     // Allow narrowing/widening of floats in phi
                                     new_types.insert(*val, current_ty.clone());
                                 }
@@ -291,16 +299,27 @@ pub fn propagate_types(func: &mut Function) {
                                         } else {
                                             base_ty = Type::F64;
                                         }
-                                    } else if let (Type::Pointer(ref p1) | Type::NullablePointer(ref p1), Type::Pointer(ref p2) | Type::NullablePointer(ref p2)) = (&base_ty, &b_ty) {
+                                    } else if let (
+                                        Type::Pointer(ref p1) | Type::NullablePointer(ref p1),
+                                        Type::Pointer(ref p2) | Type::NullablePointer(ref p2),
+                                    ) = (&base_ty, &b_ty)
+                                    {
                                         if p1 == p2 {
-                                            if matches!(base_ty, Type::NullablePointer(_)) || matches!(b_ty, Type::NullablePointer(_)) {
+                                            if matches!(base_ty, Type::NullablePointer(_))
+                                                || matches!(b_ty, Type::NullablePointer(_))
+                                            {
                                                 base_ty = Type::NullablePointer(p1.clone());
                                             }
                                         } else {
                                             all_base_types_match = false;
                                         }
-                                    } else if let (Type::Optional(ref p1), other) | (other, Type::Optional(ref p1)) = (&base_ty, &b_ty) {
-                                        if other == &**p1 || other == &Type::Unknown || matches!(other, Type::Optional(p2) if p1 == p2) {
+                                    } else if let (Type::Optional(ref p1), other)
+                                    | (other, Type::Optional(ref p1)) = (&base_ty, &b_ty)
+                                    {
+                                        if other == &**p1
+                                            || other == &Type::Unknown
+                                            || matches!(other, Type::Optional(p2) if p1 == p2)
+                                        {
                                             base_ty = Type::Optional(p1.clone());
                                         } else {
                                             all_base_types_match = false;
@@ -591,7 +610,9 @@ pub fn propagate_types(func: &mut Function) {
                             let payload_offset = (1 + align - 1) & !(align - 1);
                             if *offset == 0 && func.get_type(*val) == Type::Unknown {
                                 new_types.insert(*val, Type::Bool);
-                            } else if *offset == payload_offset && func.get_type(*val) == Type::Unknown {
+                            } else if *offset == payload_offset
+                                && func.get_type(*val) == Type::Unknown
+                            {
                                 new_types.insert(*val, *inner.clone());
                             }
                         }

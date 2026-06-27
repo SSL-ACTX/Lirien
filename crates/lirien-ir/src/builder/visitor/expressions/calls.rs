@@ -1,7 +1,7 @@
 use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::{push_inst, builder_error};
 use crate::ir::{InstructionKind, Type, Value};
+use crate::{builder_error, push_inst};
 use rustpython_ast as ast;
 
 impl CFGBuilder {
@@ -12,9 +12,18 @@ impl CFGBuilder {
         if let ast::Expr::Subscript(sub) = &*s.func {
             if let ast::Expr::Name(n) = &*sub.value {
                 if n.id.as_str() == "List" {
-                    let list_elem_ty = crate::builder::metadata::parse_type(&sub.slice, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
+                    let list_elem_ty = crate::builder::metadata::parse_type(
+                        &sub.slice,
+                        &self.type_aliases,
+                        &self.named_tuple_names,
+                        &self.typed_dict_names,
+                        &self.enum_names,
+                    )?;
                     let dest = self.func.next_value();
-                    push_inst!(self, InstructionKind::ListCreate(dest, list_elem_ty.clone()));
+                    push_inst!(
+                        self,
+                        InstructionKind::ListCreate(dest, list_elem_ty.clone())
+                    );
                     self.func.set_type(dest, Type::List(Box::new(list_elem_ty)));
                     return Ok(dest);
                 }
@@ -102,9 +111,7 @@ impl CFGBuilder {
                 let mut v = self.visit_expr(arg)?;
                 if i < arg_types.len() {
                     let expected_ty = &arg_types[i];
-                    if expected_ty.is_int()
-                        || expected_ty.is_float()
-                        || *expected_ty == Type::Bool
+                    if expected_ty.is_int() || expected_ty.is_float() || *expected_ty == Type::Bool
                     {
                         v = self.auto_load(v);
                     }
@@ -148,7 +155,8 @@ impl CFGBuilder {
         }
 
         // Special case for direct Ok/Err calls if return type is Result-like
-        if enum_info.is_none() && (func_name == "Ok" || func_name == "Err") && method_obj.is_none() {
+        if enum_info.is_none() && (func_name == "Ok" || func_name == "Err") && method_obj.is_none()
+        {
             let enum_name = match self.func.return_type {
                 Type::Enum(ref name) => Some(name.clone()),
                 Type::Struct(ref name) if self.func.enum_layouts.contains_key(name) => {
@@ -182,10 +190,7 @@ impl CFGBuilder {
                     if let Type::Pointer(inner) = &variant_ty {
                         // Automatic boxing
                         let ptr = self.func.next_value();
-                        push_inst!(self, InstructionKind::Alloc(
-                            ptr,
-                            (**inner).clone(),
-                        ));
+                        push_inst!(self, InstructionKind::Alloc(ptr, (**inner).clone(),));
                         self.func.set_type(ptr, variant_ty.clone());
                         push_inst!(self, InstructionKind::PointerStore(ptr, v));
                         v = ptr;
@@ -208,10 +213,7 @@ impl CFGBuilder {
                             if let Type::Pointer(inner) = expected_ty {
                                 // Automatic boxing
                                 let ptr = self.func.next_value();
-                                push_inst!(self, InstructionKind::Alloc(
-                                    ptr,
-                                    (**inner).clone(),
-                                ));
+                                push_inst!(self, InstructionKind::Alloc(ptr, (**inner).clone(),));
                                 self.func.set_type(ptr, expected_ty.clone());
                                 push_inst!(self, InstructionKind::PointerStore(ptr, v));
                                 v = ptr;
@@ -227,12 +229,10 @@ impl CFGBuilder {
                 };
 
                 let dest = self.func.next_value();
-                push_inst!(self, InstructionKind::EnumCreate(
-                    dest,
-                    enum_name.to_string(),
-                    tag_idx,
-                    payload,
-                ));
+                push_inst!(
+                    self,
+                    InstructionKind::EnumCreate(dest, enum_name.to_string(), tag_idx, payload,)
+                );
                 self.func.set_type(dest, Type::Enum(enum_name.to_string()));
                 return Ok(dest);
             }
@@ -253,14 +253,13 @@ impl CFGBuilder {
                             builder_error!(
                                 General,
                                 "Unknown variant '{}' for enum '{}'",
-                                variant_name, enum_name
+                                variant_name,
+                                enum_name
                             )
                         })?;
 
                     let dest = self.func.next_value();
-                    push_inst!(self, InstructionKind::EnumIsVariant(
-                        dest, obj, tag_idx,
-                    ));
+                    push_inst!(self, InstructionKind::EnumIsVariant(dest, obj, tag_idx,));
                     self.func.set_type(dest, Type::Bool);
                     return Ok(dest);
                 } else if method.starts_with("as_") {
@@ -273,7 +272,8 @@ impl CFGBuilder {
                             builder_error!(
                                 General,
                                 "Unknown variant '{}' for enum '{}'",
-                                variant_name, enum_name
+                                variant_name,
+                                enum_name
                             )
                         })?;
 
@@ -289,7 +289,13 @@ impl CFGBuilder {
                     "sum" => InstructionKind::TensorSum(dest, obj),
                     "max" => InstructionKind::TensorMax(dest, obj),
                     "min" => InstructionKind::TensorMin(dest, obj),
-                    _ => return Err(builder_error!(General, "Unknown Tensor method: {}", func_name)),
+                    _ => {
+                        return Err(builder_error!(
+                            General,
+                            "Unknown Tensor method: {}",
+                            func_name
+                        ))
+                    }
                 };
                 push_inst!(self, kind);
                 self.func.set_type(dest, *inner);
@@ -311,7 +317,11 @@ impl CFGBuilder {
                     }
                     return Ok(dest);
                 } else {
-                    return Err(builder_error!(General, "Unknown List method: {}", func_name));
+                    return Err(builder_error!(
+                        General,
+                        "Unknown List method: {}",
+                        func_name
+                    ));
                 }
             }
         }
@@ -322,13 +332,13 @@ impl CFGBuilder {
                 struct_args.push(self.visit_expr(arg)?);
             }
             let dest = self.func.next_value();
-            push_inst!(self, InstructionKind::StructCreate(
-                dest,
-                func_name.clone(),
-                struct_args,
-            ));
+            push_inst!(
+                self,
+                InstructionKind::StructCreate(dest, func_name.clone(), struct_args,)
+            );
             if self.named_tuple_names.contains(&func_name) {
-                self.func.set_type(dest, Type::NamedTuple(func_name.clone()));
+                self.func
+                    .set_type(dest, Type::NamedTuple(func_name.clone()));
             } else {
                 self.func.set_type(dest, Type::Struct(func_name.clone()));
             }
@@ -364,7 +374,10 @@ impl CFGBuilder {
             };
 
             let dest = self.func.next_value();
-            push_inst!(self, InstructionKind::ConstInt(dest, if matched { 1 } else { 0 }));
+            push_inst!(
+                self,
+                InstructionKind::ConstInt(dest, if matched { 1 } else { 0 })
+            );
             self.func.set_type(dest, Type::Bool);
             return Ok(dest);
         }
@@ -439,8 +452,7 @@ impl CFGBuilder {
             }
 
             // 1. Parse range
-            let (start_v, stop_v, step_v) = if let ast::Expr::Call(range_call) = &s.args[0]
-            {
+            let (start_v, stop_v, step_v) = if let ast::Expr::Call(range_call) = &s.args[0] {
                 if let ast::Expr::Name(n) = &*range_call.func {
                     if n.id.as_str() == "range" {
                         let (start, end, step) = match range_call.args.len() {
@@ -455,7 +467,12 @@ impl CFGBuilder {
                                 self.visit_expr(range_call.args[1].clone())?,
                                 Some(self.visit_expr(range_call.args[2].clone())?),
                             ),
-                            _ => return Err(builder_error!(General, "Unsupported range() signature")),
+                            _ => {
+                                return Err(builder_error!(
+                                    General,
+                                    "Unsupported range() signature"
+                                ))
+                            }
                         };
 
                         let s_v = if let Some(v) = start {
@@ -480,10 +497,16 @@ impl CFGBuilder {
                         ));
                     }
                 } else {
-                    return Err(builder_error!(General, "parallel_for first argument must be range()"));
+                    return Err(builder_error!(
+                        General,
+                        "parallel_for first argument must be range()"
+                    ));
                 }
             } else {
-                return Err(builder_error!(General, "parallel_for first argument must be range()"));
+                return Err(builder_error!(
+                    General,
+                    "parallel_for first argument must be range()"
+                ));
             };
 
             // 2. Parse lambda
@@ -537,9 +560,12 @@ impl CFGBuilder {
                 // Add ParallelFor to the original block
                 self.current_block = prev_block;
                 self.update_location(expr_offset);
-                push_inst!(self, InstructionKind::ParallelFor(
-                    index_var, start_v, stop_v, step_v, body_block, exit_block, captures,
-                ));
+                push_inst!(
+                    self,
+                    InstructionKind::ParallelFor(
+                        index_var, start_v, stop_v, step_v, body_block, exit_block, captures,
+                    )
+                );
 
                 push_inst!(self, InstructionKind::Jump(exit_block));
 
@@ -550,7 +576,10 @@ impl CFGBuilder {
                 self.func.set_type(dest, Type::Unknown);
                 return Ok(dest);
             } else {
-                return Err(builder_error!(General, "parallel_for second argument must be a lambda"));
+                return Err(builder_error!(
+                    General,
+                    "parallel_for second argument must be a lambda"
+                ));
             }
         } else if func_name == "math.sqrt" {
             if s.args.len() != 1 {
@@ -768,10 +797,7 @@ impl CFGBuilder {
             if arg_idx < arg_types.len() {
                 let expected_ty = &arg_types[arg_idx];
                 // Only auto-load if the function expects a primitive value
-                if expected_ty.is_int()
-                    || expected_ty.is_float()
-                    || *expected_ty == Type::Bool
-                {
+                if expected_ty.is_int() || expected_ty.is_float() || *expected_ty == Type::Bool {
                     v = self.auto_load(v);
                 }
             } else {
@@ -829,7 +855,13 @@ impl CFGBuilder {
 
         for (i, arg) in s.args.args.iter().enumerate() {
             let arg_ty = if let Some(ann) = &arg.def.annotation {
-                crate::builder::metadata::parse_type(ann, &self.type_aliases, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?
+                crate::builder::metadata::parse_type(
+                    ann,
+                    &self.type_aliases,
+                    &self.named_tuple_names,
+                    &self.typed_dict_names,
+                    &self.enum_names,
+                )?
             } else {
                 Type::Unknown
             };
@@ -849,17 +881,12 @@ impl CFGBuilder {
                 offset = (offset + align - 1) & !(align - 1);
 
                 let dest = lambda_builder.func.next_value();
-                push_inst!(lambda_builder, InstructionKind::StructLoad(
-                    dest,
-                    Value(0),
-                    offset,
-                ));
-                lambda_builder.func.set_type(dest, ty.clone());
-                lambda_builder.write_variable(
-                    name.0.clone(),
-                    lambda_builder.current_block,
-                    dest,
+                push_inst!(
+                    lambda_builder,
+                    InstructionKind::StructLoad(dest, Value(0), offset,)
                 );
+                lambda_builder.func.set_type(dest, ty.clone());
+                lambda_builder.write_variable(name.0.clone(), lambda_builder.current_block, dest);
 
                 offset += ty.size(&self.func.struct_layouts);
             }
@@ -882,18 +909,22 @@ impl CFGBuilder {
         // 3. Create Closure Instruction
         let dest = self.func.next_value();
         let capture_vals: Vec<Value> = captures.iter().map(|(_, v)| *v).collect();
-        push_inst!(self, InstructionKind::Lambda(
-            dest,
-            lambda_name.clone(),
-            capture_vals,
-        ));
+        push_inst!(
+            self,
+            InstructionKind::Lambda(dest, lambda_name.clone(), capture_vals,)
+        );
 
         let arg_types: Vec<Type> = (1..1 + s.args.args.len())
             .map(|i| lambda_func.get_type(Value(i)))
             .collect();
         self.func.set_type(
             dest,
-            Type::Closure(lambda_name.clone(), arg_types, Box::new(lambda_func.return_type), Some(lambda_name)),
+            Type::Closure(
+                lambda_name.clone(),
+                arg_types,
+                Box::new(lambda_func.return_type),
+                Some(lambda_name),
+            ),
         );
 
         Ok(dest)

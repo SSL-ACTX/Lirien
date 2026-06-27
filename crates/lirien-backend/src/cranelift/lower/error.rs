@@ -25,8 +25,7 @@ impl LoweringError {
                 LoweringError::InstructionNotSupported(s, Some(loc))
             }
             LoweringError::TypeMismatch {
-                expected,
-                found, ..
+                expected, found, ..
             } => LoweringError::TypeMismatch {
                 expected,
                 found,

@@ -153,13 +153,18 @@ fn lower_tensor_scalar_arith<M: Module>(
     Ok(())
 }
 
-pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> Result<(), LoweringError> {
+pub fn lower<M: Module>(
+    ctx: &mut CodegenContext<M>,
+    kind: &InstructionKind,
+) -> Result<(), LoweringError> {
     match kind {
         InstructionKind::ListCreate(dest, _elem_ty) => {
             let mut sig = ctx.module.make_signature();
             sig.returns.push(AbiParam::new(types::I64)); // list ptr
 
-            let func = ctx.module.declare_function("lirien_list_new", Linkage::Import, &sig)?;
+            let func = ctx
+                .module
+                .declare_function("lirien_list_new", Linkage::Import, &sig)?;
             let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
             let call = ctx.builder.ins().call(local_func, &[]);
             let list_ptr = ctx.builder.inst_results(call)[0];
@@ -188,9 +193,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             sig.params.push(AbiParam::new(types::I64)); // val_ptr
             sig.params.push(AbiParam::new(types::I64)); // elem_size
 
-            let func = ctx.module.declare_function("lirien_list_append", Linkage::Import, &sig)?;
+            let func = ctx
+                .module
+                .declare_function("lirien_list_append", Linkage::Import, &sig)?;
             let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
-            ctx.builder.ins().call(local_func, &[list_ptr, val_ptr, elem_size_val]);
+            ctx.builder
+                .ins()
+                .call(local_func, &[list_ptr, val_ptr, elem_size_val]);
 
             ctx.values.insert(*dest, list_ptr);
         }
@@ -200,7 +209,9 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             sig.params.push(AbiParam::new(types::I64)); // list
             sig.returns.push(AbiParam::new(types::I64)); // len
 
-            let func = ctx.module.declare_function("lirien_list_len", Linkage::Import, &sig)?;
+            let func = ctx
+                .module
+                .declare_function("lirien_list_len", Linkage::Import, &sig)?;
             let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
             let call = ctx.builder.ins().call(local_func, &[list_ptr]);
             let len_val = ctx.builder.inst_results(call)[0];
@@ -219,9 +230,14 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             sig.params.push(AbiParam::new(types::I64)); // elem_size
             sig.returns.push(AbiParam::new(types::I64)); // elem_ptr
 
-            let func = ctx.module.declare_function("lirien_list_get", Linkage::Import, &sig)?;
+            let func = ctx
+                .module
+                .declare_function("lirien_list_get", Linkage::Import, &sig)?;
             let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
-            let call = ctx.builder.ins().call(local_func, &[list_ptr, idx_val, elem_size_val]);
+            let call = ctx
+                .builder
+                .ins()
+                .call(local_func, &[list_ptr, idx_val, elem_size_val]);
             let addr = ctx.builder.inst_results(call)[0];
 
             if dest_ty.is_composite() {
@@ -257,9 +273,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             sig.params.push(AbiParam::new(types::I64)); // val_ptr
             sig.params.push(AbiParam::new(types::I64)); // elem_size
 
-            let func = ctx.module.declare_function("lirien_list_set", Linkage::Import, &sig)?;
+            let func = ctx
+                .module
+                .declare_function("lirien_list_set", Linkage::Import, &sig)?;
             let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
-            ctx.builder.ins().call(local_func, &[list_ptr, idx_val, val_ptr, elem_size_val]);
+            ctx.builder
+                .ins()
+                .call(local_func, &[list_ptr, idx_val, val_ptr, elem_size_val]);
 
             ctx.values.insert(*dest, list_ptr);
         }
@@ -420,7 +440,10 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                     .ins()
                     .stack_store(dim, target_dims_slot, (i * 8) as i32);
             }
-            let target_dims_ptr = ctx.builder.ins().stack_addr(types::I64, target_dims_slot, 0);
+            let target_dims_ptr = ctx
+                .builder
+                .ins()
+                .stack_addr(types::I64, target_dims_slot, 0);
 
             let mut sig = ctx.module.make_signature();
             sig.params.push(AbiParam::new(types::I64)); // src_ptr
@@ -494,8 +517,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
 
             ctx.builder.switch_to_block(loop_header);
             let idx = ctx.builder.block_params(loop_header)[0];
-            let cmp = ctx.builder.ins().icmp(IntCC::SignedLessThan, idx, total_size);
-            ctx.builder.ins().brif(cmp, loop_body_block, &[], loop_exit, &[]);
+            let cmp = ctx
+                .builder
+                .ins()
+                .icmp(IntCC::SignedLessThan, idx, total_size);
+            ctx.builder
+                .ins()
+                .brif(cmp, loop_body_block, &[], loop_exit, &[]);
 
             ctx.builder.switch_to_block(loop_body_block);
             let res_val = eval_fused_expr(&mut ctx.builder, &ctx.values, idx, expr);
@@ -665,7 +693,13 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                     }
                     return Ok(());
                 }
-                return Err(LoweringError::General(format!("Field offset {} (count {}) not found in NamedTuple {:?}", offset, expected_count, obj_ty), None));
+                return Err(LoweringError::General(
+                    format!(
+                        "Field offset {} (count {}) not found in NamedTuple {:?}",
+                        offset, expected_count, obj_ty
+                    ),
+                    None,
+                ));
             }
 
             let obj_ptr = get_val(&ctx.values, obj);
@@ -706,11 +740,18 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
                     let mut new_flat_vals = ctx.unpacked_values.get(obj).unwrap().clone();
                     let val_flat = super::get_all_cl_values(ctx, val);
                     assert_eq!(expected_count, val_flat.len());
-                    new_flat_vals[start_idx..(expected_count + start_idx)].copy_from_slice(&val_flat[..expected_count]);
+                    new_flat_vals[start_idx..(expected_count + start_idx)]
+                        .copy_from_slice(&val_flat[..expected_count]);
                     ctx.unpacked_values.insert(*dest, new_flat_vals);
                     return Ok(());
                 }
-                return Err(LoweringError::General(format!("Field offset {} (count {}) not found in NamedTuple {:?}", offset, expected_count, obj_ty), None));
+                return Err(LoweringError::General(
+                    format!(
+                        "Field offset {} (count {}) not found in NamedTuple {:?}",
+                        offset, expected_count, obj_ty
+                    ),
+                    None,
+                ));
             }
 
             let obj_ptr = get_val(&ctx.values, obj);
@@ -857,7 +898,12 @@ pub fn lower<M: Module>(ctx: &mut CodegenContext<M>, kind: &InstructionKind) -> 
             let ptr_val = get_val(&ctx.values, ptr);
             super::store_to_memory(ctx, *val, ptr_val, 0);
         }
-        _ => return Err(LoweringError::InstructionNotSupported(format!("{:?}", kind), None)),
+        _ => {
+            return Err(LoweringError::InstructionNotSupported(
+                format!("{:?}", kind),
+                None,
+            ))
+        }
     }
     Ok(())
 }
@@ -875,9 +921,7 @@ fn eval_fused_expr(
             let addr = builder.ins().iadd(t_ptr, offset);
             builder.ins().load(types::F32, MemFlags::new(), addr, 0)
         }
-        lirien_ir::ir::FusedExpr::Scalar(val) => {
-            values.get(val).copied().unwrap()
-        }
+        lirien_ir::ir::FusedExpr::Scalar(val) => values.get(val).copied().unwrap(),
         lirien_ir::ir::FusedExpr::Add(l, r) => {
             let lv = eval_fused_expr(builder, values, idx, l);
             let rv = eval_fused_expr(builder, values, idx, r);
@@ -900,4 +944,3 @@ fn eval_fused_expr(
         }
     }
 }
-

@@ -32,7 +32,6 @@ impl CaptureVisitor {
     }
 }
 
-
 impl Visitor for CaptureVisitor {
     fn visit_expr(&mut self, expr: ast::Expr) {
         match &expr {
@@ -80,7 +79,8 @@ impl Visitor for CaptureVisitor {
                 self.defined.insert(f.name.to_string());
 
                 // 2. Analyze inner scope
-                let inner_params: Vec<String> = f.args.args.iter().map(|a| a.def.arg.to_string()).collect();
+                let inner_params: Vec<String> =
+                    f.args.args.iter().map(|a| a.def.arg.to_string()).collect();
                 let mut inner_visitor = CaptureVisitor::new(inner_params);
                 for s in &f.body {
                     inner_visitor.visit_stmt(s.clone());
