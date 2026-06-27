@@ -507,7 +507,12 @@ pub fn assert_preconditions<
     let entry_cond = t_ctx.block_conditions.get(&t_ctx.func.entry_block).cloned();
     if let Some(path_cond) = entry_cond {
         for prec in &t_ctx.func.preconditions {
-            let z3_prec = parse_bool_expr_with_resolver(prec, &resolver)?;
+            let clean_prec = if let Some(idx) = prec.find(" :::msg::: ") {
+                &prec[..idx]
+            } else {
+                prec.as_str()
+            };
+            let z3_prec = parse_bool_expr_with_resolver(clean_prec, &resolver)?;
             let assume_prec = t_ctx.backend.bool_implies(&path_cond, &z3_prec);
             t_ctx.backend.assert(&assume_prec);
         }
@@ -537,6 +542,16 @@ pub fn verify_loop_invariants<
     };
 
     for invariant in &t_ctx.func.loop_invariants {
+        let (clean_invariant, custom_msg) =
+            if let Some(idx) = invariant.predicate.find(" :::msg::: ") {
+                (
+                    &invariant.predicate[..idx],
+                    Some(&invariant.predicate[idx + 11..]),
+                )
+            } else {
+                (invariant.predicate.as_str(), None)
+            };
+
         let header_cond = t_ctx
             .block_conditions
             .get(&invariant.header_block)
@@ -549,7 +564,7 @@ pub fn verify_loop_invariants<
             .clone();
 
         // 1. Assert the loop invariant at the loop header under header_cond
-        let z3_invariant = parse_bool_expr_with_resolver(&invariant.predicate, &resolver)?;
+        let z3_invariant = parse_bool_expr_with_resolver(clean_invariant, &resolver)?;
         let assume_invariant = t_ctx.backend.bool_implies(&header_cond, &z3_invariant);
         t_ctx.backend.assert(&assume_invariant);
 
@@ -572,7 +587,7 @@ pub fn verify_loop_invariants<
 
             if is_backedge {
                 // Back-edge: substitute Phi variables with their incoming values on this back-edge
-                let mut substituted_pred = invariant.predicate.clone();
+                let mut substituted_pred = clean_invariant.to_string();
                 for inst in &header_node.instructions {
                     if let InstructionKind::Phi(dest, incoming) = &inst.kind {
                         if let Some(next_val) = incoming.get(&pred) {
@@ -588,24 +603,26 @@ pub fn verify_loop_invariants<
                     parse_bool_expr_with_resolver(&substituted_pred, &resolver)?;
                 let violation_cond = t_ctx.backend.bool_not(&z3_invariant_next);
 
+                let msg_suffix = custom_msg.map(|m| format!(" ({})", m)).unwrap_or_default();
                 t_ctx.safety_checks.push(SafetyCheck {
                     path_cond: edge_cond,
                     violation_cond,
                     error_message: format!(
-                        "Loop invariant ({}) not preserved on back-edge from block b{}",
-                        invariant.predicate, pred.0
+                        "Loop invariant ({}){} not preserved on back-edge from block b{}",
+                        clean_invariant, msg_suffix, pred.0
                     ),
                     location: invariant.location,
                 });
             } else {
                 // Entry edge: verify the invariant holds on entry
                 let violation_cond = t_ctx.backend.bool_not(&z3_invariant);
+                let msg_suffix = custom_msg.map(|m| format!(" ({})", m)).unwrap_or_default();
                 t_ctx.safety_checks.push(SafetyCheck {
                     path_cond: edge_cond,
                     violation_cond,
                     error_message: format!(
-                        "Loop invariant ({}) may not hold on entry from block b{}",
-                        invariant.predicate, pred.0
+                        "Loop invariant ({}){} may not hold on entry from block b{}",
+                        clean_invariant, msg_suffix, pred.0
                     ),
                     location: invariant.location,
                 });

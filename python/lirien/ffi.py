@@ -1107,7 +1107,28 @@ def _extract_runtime_asserts(func: Callable, sig: inspect.Signature):
                     ast.Expression(body=lambda_node), "<assert>", "eval"
                 )
                 lambda_fn = eval(expr_code, func.__globals__)
-                preconds.append(lambda_fn)
+
+                msg_fn = None
+                if stmt.msg:
+                    msg_lambda = ast.Lambda(
+                        args=ast.arguments(
+                            posonlyargs=[],
+                            args=[ast.arg(arg=name) for name in param_names],
+                            kwonlyargs=[],
+                            kw_defaults=[],
+                            defaults=[],
+                            vararg=None,
+                            kwarg=None,
+                        ),
+                        body=stmt.msg,
+                    )
+                    ast.fix_missing_locations(msg_lambda)
+                    msg_code = compile(
+                        ast.Expression(body=msg_lambda), "<assert_msg>", "eval"
+                    )
+                    msg_fn = eval(msg_code, func.__globals__)
+
+                preconds.append((lambda_fn, msg_fn))
             else:
                 break
 
@@ -1143,7 +1164,28 @@ def _extract_runtime_asserts(func: Callable, sig: inspect.Signature):
                             ast.Expression(body=lambda_node), "<assert>", "eval"
                         )
                         lambda_fn = eval(expr_code, func.__globals__)
-                        postconds.append((lambda_fn, post_params, ret_name))
+
+                        msg_fn = None
+                        if body[i].msg:
+                            msg_lambda = ast.Lambda(
+                                args=ast.arguments(
+                                    posonlyargs=[],
+                                    args=[ast.arg(arg=name) for name in post_params],
+                                    kwonlyargs=[],
+                                    kw_defaults=[],
+                                    defaults=[],
+                                    vararg=None,
+                                    kwarg=None,
+                                ),
+                                body=body[i].msg,
+                            )
+                            ast.fix_missing_locations(msg_lambda)
+                            msg_code = compile(
+                                ast.Expression(body=msg_lambda), "<assert_msg>", "eval"
+                            )
+                            msg_fn = eval(msg_code, func.__globals__)
+
+                        postconds.append((lambda_fn, post_params, ret_name, msg_fn))
                 if hasattr(body[i], "body"):
                     scan_blocks(body[i].body)
                 if hasattr(body[i], "orelse"):
@@ -1270,8 +1312,10 @@ def _create_wrapper(
                         f"Arguments do not satisfy precondition."
                     )
             eval_locals = bound.arguments.copy()
-            for lambda_fn in assert_preconds:
+            for lambda_fn, msg_fn in assert_preconds:
                 if not lambda_fn(**eval_locals):
+                    if msg_fn:
+                        raise AssertionError(msg_fn(**eval_locals))
                     raise AssertionError("Precondition violation: assert failed.")
 
         res_val = _call_impl(*args)
@@ -1298,7 +1342,7 @@ def _create_wrapper(
                         f"Runtime Postcondition Violation for '{func.__name__}': "
                         f"Return value does not satisfy postcondition."
                     )
-            for lambda_fn, post_params, ret_name in assert_postconds:
+            for lambda_fn, post_params, ret_name, msg_fn in assert_postconds:
                 eval_locals = bound.arguments.copy()
                 if ret_name:
                     eval_locals[ret_name] = res_val
@@ -1306,6 +1350,8 @@ def _create_wrapper(
                 eval_locals["return_val"] = res_val
                 call_args = {k: eval_locals[k] for k in post_params if k in eval_locals}
                 if not lambda_fn(**call_args):
+                    if msg_fn:
+                        raise AssertionError(msg_fn(**call_args))
                     raise AssertionError("Postcondition violation: assert failed.")
 
         return res_val

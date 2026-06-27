@@ -217,22 +217,27 @@ pub fn verify_return_refinements<
                 };
 
                 for postcond in &t_ctx.func.postconditions {
+                    let (clean_post, custom_msg) = if let Some(idx) = postcond.find(" :::msg::: ") {
+                        (&postcond[..idx], Some(&postcond[idx + 11..]))
+                    } else {
+                        (postcond.as_str(), None)
+                    };
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
                         crate::refinement::parse_refinement_with_resolver(
-                            postcond,
+                            clean_post,
                             &bv_int,
                             Some(z3_bv),
                             &resolver,
                         )
                     } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
                         crate::refinement::parse_refinement_with_resolver(
-                            postcond, z3_int, None, &resolver,
+                            clean_post, z3_int, None, &resolver,
                         )
                     } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
                         crate::refinement::parse_float_refinement_with_resolver(
-                            postcond, z3_float, &resolver,
+                            clean_post, z3_float, &resolver,
                         )
                     } else {
                         continue;
@@ -248,9 +253,11 @@ pub fn verify_return_refinements<
                                 .location
                                 .map(|l| format!(" at {}", l))
                                 .unwrap_or_default();
+                            let msg_suffix =
+                                custom_msg.map(|m| format!(" ({})", m)).unwrap_or_default();
                             return Err(format!(
-                                "Postcondition violation: return value does not satisfy postcondition '{}' and may be violated on some reachable path{}.",
-                                postcond, loc_info
+                                "Postcondition violation: return value does not satisfy postcondition '{}'{} and may be violated on some reachable path{}.",
+                                clean_post, msg_suffix, loc_info
                             ));
                         }
                         t_ctx.backend.pop(1);

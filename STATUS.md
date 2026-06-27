@@ -55,6 +55,7 @@ Lirien is an experimental research compiler. It is under active development and 
 - Inductive reasoning for recursive functions
 - Interval analysis — skips Z3 solver calls for trivially provable constraints
 - Automated loop invariant synthesis — abstract interpretation to automatically derive loop invariants and entry-edge implication constraints
+- Design by Contract — native `assert` statements promoted to preconditions, postconditions, and inductively verified loop invariants
 
 ### Code Generation
 - Cranelift JIT backend — native machine code in executable memory
@@ -76,7 +77,11 @@ Lirien is an experimental research compiler. It is under active development and 
 
 ## Roadmap
 
-All currently planned core features have been implemented.
+- [x] Design by Contract (Native Assert Pattern)
+- [ ] Custom Error Messages for Native Asserts
+- [ ] Tuple/Aggregate Unpacking & Destructuring Assignment
+- [ ] Intermediate Inline Assertions (Safety Proofs)
+- [ ] Pattern Matching Destructuring
 
 ---
 

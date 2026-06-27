@@ -114,7 +114,25 @@ impl CFGBuilder {
                     &Type::Unknown,
                     &self.func.struct_layouts,
                 ) {
-                    self.func.preconditions.push(pred_str);
+                    let msg_str = if let Some(ref msg_expr) = a.msg {
+                        if let ast::Expr::Constant(ref c) = **msg_expr {
+                            if let ast::Constant::Str(ref s) = c.value {
+                                Some(s.to_string())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    let pred_to_push = if let Some(ref m) = msg_str {
+                        format!("{} :::msg::: {}", pred_str, m)
+                    } else {
+                        pred_str
+                    };
+                    self.func.preconditions.push(pred_to_push);
                 }
                 body_iter.next();
             } else {
@@ -1680,7 +1698,25 @@ fn extract_loop_invariants(
                 &Type::Unknown,
                 &builder.func.struct_layouts,
             ) {
-                invariants.push(pred_str);
+                let msg_str = if let Some(ref msg_expr) = a.msg {
+                    if let ast::Expr::Constant(ref c) = **msg_expr {
+                        if let ast::Constant::Str(ref s) = c.value {
+                            Some(s.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let pred_to_push = if let Some(ref m) = msg_str {
+                    format!("{} :::msg::: {}", pred_str, m)
+                } else {
+                    pred_str
+                };
+                invariants.push(pred_to_push);
             }
         } else if is_invariant_call(stmt) {
             if let ast::Stmt::Expr(s) = stmt {
@@ -1742,7 +1778,25 @@ fn extract_postconditions(
                     if let Ok(pred_str) =
                         expr_to_string(&renamed_expr, None, &Type::Unknown, struct_layouts)
                     {
-                        postconditions.push(pred_str);
+                        let msg_str = if let Some(ref msg_expr) = a.msg {
+                            if let ast::Expr::Constant(ref c) = **msg_expr {
+                                if let ast::Constant::Str(ref s) = c.value {
+                                    Some(s.to_string())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        let pred_to_push = if let Some(ref m) = msg_str {
+                            format!("{} :::msg::: {}", pred_str, m)
+                        } else {
+                            pred_str
+                        };
+                        postconditions.push(pred_to_push);
                     }
                 }
             }

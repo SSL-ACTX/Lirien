@@ -68,7 +68,12 @@ pub fn translate<
 
             // Assume callee postconditions hold on returned value
             for postcond in &sig.postconditions {
-                let mut substituted_post = postcond.clone();
+                let clean_post = if let Some(idx) = postcond.find(" :::msg::: ") {
+                    &postcond[..idx]
+                } else {
+                    postcond.as_str()
+                };
+                let mut substituted_post = clean_post.to_string();
                 substituted_post = substituted_post.replace("{v}", &format!("v{}", dest.0));
                 for (i, arg_val) in args.iter().enumerate() {
                     let from_name = format!("v{}", i);
@@ -300,7 +305,12 @@ pub fn verify_call_arguments<
 
                     // Verify preconditions of the callee
                     for prec in &sig.preconditions {
-                        let mut substituted_prec = prec.clone();
+                        let (clean_prec, custom_msg) = if let Some(idx) = prec.find(" :::msg::: ") {
+                            (&prec[..idx], Some(&prec[idx + 11..]))
+                        } else {
+                            (prec.as_str(), None)
+                        };
+                        let mut substituted_prec = clean_prec.to_string();
                         for (i, arg_val) in args.iter().enumerate() {
                             let from_name = format!("v{}", i);
                             let to_name = format!("v{}", arg_val.0);
@@ -329,9 +339,11 @@ pub fn verify_call_arguments<
                                     .location
                                     .map(|l| format!(" at {}", l))
                                     .unwrap_or_default();
+                                let msg_suffix =
+                                    custom_msg.map(|m| format!(" ({})", m)).unwrap_or_default();
                                 return Err(format!(
-                                    "Precondition violation for call to '{}': precondition '{}' may be violated on some reachable path{}.",
-                                    target_name, prec, loc_info
+                                    "Precondition violation for call to '{}': precondition '{}'{} may be violated on some reachable path{}.",
+                                    target_name, clean_prec, msg_suffix, loc_info
                                 ));
                             }
                             t_ctx.backend.pop(1);

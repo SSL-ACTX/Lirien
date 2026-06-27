@@ -63,6 +63,43 @@ class TestContracts(unittest.TestCase):
                     i = i + 1
                 return total
 
+    def test_custom_precondition_message_runtime(self):
+        @verify
+        def check_pos(x: i64) -> i64:
+            assert x > 0, "x must be positive"
+            return x
+
+        with self.assertRaises(AssertionError) as ctx:
+            check_pos(-5)
+        self.assertEqual(str(ctx.exception), "x must be positive")
+
+    def test_custom_postcondition_message_compile_time(self):
+        with self.assertRaises(VerificationError) as ctx:
+
+            @verify
+            def bad_add_msg(x: i64) -> i64:
+                res = x + 1
+                assert res < x, "result must be less than x"
+                return res
+
+        self.assertIn("result must be less than x", str(ctx.exception))
+
+    def test_custom_loop_invariant_message_compile_time(self):
+        with self.assertRaises(VerificationError) as ctx:
+
+            @verify
+            def bad_sum_msg(n: i64) -> i64:
+                assert n > 0
+                total = 0
+                i = 1
+                while i < n:
+                    assert i == 1, "i must remain 1"
+                    total = total + i
+                    i = i + 1
+                return total
+
+        self.assertIn("i must remain 1", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

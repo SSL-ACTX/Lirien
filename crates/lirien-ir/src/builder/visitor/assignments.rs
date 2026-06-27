@@ -217,25 +217,10 @@ impl CFGBuilder {
                 self.write_variable(root_name, self.current_block, dest_obj);
             }
             ast::Expr::Tuple(t) => {
-                let tuple_ty = self.func.get_type(value);
-                if let Type::Tuple(elt_types) = tuple_ty {
-                    if t.elts.len() != elt_types.len() {
-                        return Err(builder_error!(
-                            General,
-                            "Cannot unpack tuple of size {} into {} targets",
-                            elt_types.len(),
-                            t.elts.len()
-                        ));
-                    }
-                    for (i, target_elt) in t.elts.iter().enumerate() {
-                        let elt_val = self.func.next_value();
-                        push_inst!(self, InstructionKind::TupleExtract(elt_val, value, i));
-                        self.func.set_type(elt_val, elt_types[i].clone());
-                        self.handle_assignment_target(target_elt, elt_val)?;
-                    }
-                } else {
-                    return Err(builder_error!(General, "Cannot unpack non-tuple type"));
-                }
+                self.handle_tuple_destructuring(&t.elts, value)?;
+            }
+            ast::Expr::List(l) => {
+                self.handle_tuple_destructuring(&l.elts, value)?;
             }
             _ => {
                 return Err(builder_error!(
@@ -243,6 +228,72 @@ impl CFGBuilder {
                     "Unsupported assignment target: {:?}",
                     target
                 ))
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_tuple_destructuring(
+        &mut self,
+        elts: &[ast::Expr],
+        value: Value,
+    ) -> BuilderResult<()> {
+        let val_ty = self.func.get_type(value);
+        match val_ty {
+            Type::Tuple(elt_types) => {
+                if elts.len() != elt_types.len() {
+                    return Err(builder_error!(
+                        General,
+                        "Cannot unpack tuple of size {} into {} targets",
+                        elt_types.len(),
+                        elts.len()
+                    ));
+                }
+                for (i, target_elt) in elts.iter().enumerate() {
+                    let elt_val = self.func.next_value();
+                    push_inst!(self, InstructionKind::TupleExtract(elt_val, value, i));
+                    self.func.set_type(elt_val, elt_types[i].clone());
+                    self.handle_assignment_target(target_elt, elt_val)?;
+                }
+            }
+            Type::NamedTuple(ref name) => {
+                let fields = self
+                    .func
+                    .struct_layouts
+                    .get(name)
+                    .ok_or_else(|| {
+                        builder_error!(General, "NamedTuple layout not found for {}", name)
+                    })?
+                    .clone();
+                if elts.len() != fields.len() {
+                    return Err(builder_error!(
+                        General,
+                        "Cannot unpack NamedTuple of size {} into {} targets",
+                        fields.len(),
+                        elts.len()
+                    ));
+                }
+                for (i, target_elt) in elts.iter().enumerate() {
+                    let (field_name, field_ty) = &fields[i];
+                    let field_offset =
+                        self.get_field_offset(name, field_name).ok_or_else(|| {
+                            builder_error!(General, "Field offset not found for {}", field_name)
+                        })?;
+                    let elt_val = self.func.next_value();
+                    push_inst!(
+                        self,
+                        InstructionKind::StructLoad(elt_val, value, field_offset)
+                    );
+                    self.func.set_type(elt_val, field_ty.clone());
+                    self.handle_assignment_target(target_elt, elt_val)?;
+                }
+            }
+            _ => {
+                return Err(builder_error!(
+                    General,
+                    "Cannot unpack non-tuple type {:?}",
+                    val_ty
+                ));
             }
         }
         Ok(())

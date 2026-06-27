@@ -49,6 +49,24 @@ def identity(x: T) -> T:
     return x
 
 
+@verify
+def unpack_namedtuple(p: Point) -> i64:
+    x, y = p
+    return x + y
+
+
+@verify
+def unpack_namedtuple_list_target(p: Point) -> i64:
+    [x, y] = p
+    return x + y
+
+
+@verify
+def unpack_tuple_list_target(t: tuple[i64, i64]) -> i64:
+    [x, y] = t
+    return x + y
+
+
 class TestNamedTuple(unittest.TestCase):
     def test_add_points(self):
         p1 = Point(1, 2)
@@ -85,6 +103,21 @@ class TestNamedTuple(unittest.TestCase):
         res3d = identity(p3d)
         self.assertIsInstance(res3d, Point3D)
         self.assertEqual(res3d.z, 3.0)
+
+    def test_unpack_namedtuple(self):
+        p = Point(5, 7)
+        res = unpack_namedtuple(p)
+        self.assertEqual(res, 12)
+
+    def test_unpack_namedtuple_list_target(self):
+        p = Point(8, 9)
+        res = unpack_namedtuple_list_target(p)
+        self.assertEqual(res, 17)
+
+    def test_unpack_tuple_list_target(self):
+        t = (15, 25)
+        res = unpack_tuple_list_target(t)
+        self.assertEqual(res, 40)
 
 
 if __name__ == "__main__":
