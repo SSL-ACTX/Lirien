@@ -43,6 +43,9 @@ from .decorators import (
     verify,
     jit,
     parallel_for,
+    requires,
+    ensures,
+    invariant,
 )
 from .diagnostics import (
     get_cpu_info,
@@ -67,6 +70,9 @@ __all__ = [
     "verify",
     "jit",
     "parallel_for",
+    "requires",
+    "ensures",
+    "invariant",
     "get_cpu_info",
     "VerificationError",
     "Refined",

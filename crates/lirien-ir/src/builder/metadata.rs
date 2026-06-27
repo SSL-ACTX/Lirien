@@ -438,6 +438,15 @@ pub fn extract_refinement(
     Ok(None)
 }
 
+pub fn expr_to_string(
+    expr: &ast::Expr,
+    arg_name: Option<&str>,
+    base_ty: &Type,
+    struct_layouts: &HashMap<String, Vec<(String, Type)>>,
+) -> BuilderResult<String> {
+    Ok(expr_to_string_internal(expr, arg_name, base_ty, struct_layouts)?.0)
+}
+
 fn expr_to_string_internal(
     expr: &ast::Expr,
     arg_name: Option<&str>,

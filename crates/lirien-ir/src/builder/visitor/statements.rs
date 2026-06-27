@@ -1,9 +1,9 @@
-use crate::builder::metadata::{extract_refinement, parse_type};
+use crate::builder::metadata::{extract_refinement, parse_type, expr_to_string};
 use crate::builder::CFGBuilder;
-use crate::ir::{BlockId, InstructionKind, Type, Value};
+use crate::ir::{BlockId, InstructionKind, Type, Value, LoopInvariant};
 use rustpython_ast as ast;
 use rustpython_ast::Ranged;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::builder::error::BuilderResult;
 use crate::{push_inst, builder_error};
 
@@ -19,6 +19,7 @@ impl CFGBuilder {
                 extract_refinement(returns, &self.type_aliases, &self.func.struct_layouts, &self.named_tuple_names, &self.typed_dict_names, &self.enum_names)?;
         }
 
+        let mut param_map = HashMap::new();
         for arg in s.args.args {
             let val = self.func.next_value();
             if let Some(annotation) = &arg.def.annotation {
@@ -31,11 +32,61 @@ impl CFGBuilder {
                 }
             }
             self.write_variable(arg.def.arg.to_string(), self.current_block, val);
+            param_map.insert(arg.def.arg.to_string(), val);
         }
 
-        for stmt in s.body {
-            self.visit_stmt(stmt)?;
+        // Process function decorators for preconditions and postconditions
+        for dec in &s.decorator_list {
+            if let ast::Expr::Call(c) = dec {
+                if is_requires_decorator(&c.func) && !c.args.is_empty() {
+                    let lambda_expr = &c.args[0];
+                    let mut renamed_expr = lambda_expr.clone();
+                    rename_parameters(&mut renamed_expr, &param_map, None);
+                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                        self.func.preconditions.push(pred_str);
+                    }
+                } else if is_ensures_decorator(&c.func) && !c.args.is_empty() {
+                    let lambda_expr = &c.args[0];
+                    let mut renamed_expr = lambda_expr.clone();
+                    let ret_var_name = if let ast::Expr::Lambda(l) = lambda_expr {
+                        if !l.args.args.is_empty() {
+                            Some(l.args.args[0].def.arg.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    rename_parameters(&mut renamed_expr, &param_map, ret_var_name.as_deref());
+                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                        self.func.postconditions.push(pred_str);
+                    }
+                }
+            }
         }
+
+        // Extract postconditions from assert statements
+        let asserts_post = extract_postconditions(&s.body, &param_map, &self.func.struct_layouts);
+        self.func.postconditions.extend(asserts_post);
+
+        // Process function assert preconditions at the top
+        let mut body_iter = s.body.iter().peekable();
+        while let Some(stmt) = body_iter.peek() {
+            if let ast::Stmt::Assert(a) = stmt {
+                let mut renamed_expr = *a.test.clone();
+                rename_parameters(&mut renamed_expr, &param_map, None);
+                if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &self.func.struct_layouts) {
+                    self.func.preconditions.push(pred_str);
+                }
+                body_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        // Visit the remaining statements
+        let remaining_stmts: Vec<ast::Stmt> = body_iter.cloned().collect();
+        visit_block(self, &remaining_stmts)?;
 
         // Ensure the last block has a return if it's not terminated
         if !self.is_terminated(self.current_block) {
@@ -60,6 +111,9 @@ impl CFGBuilder {
     }
 
     pub fn visit_stmt(&mut self, stmt: ast::Stmt) -> BuilderResult<()> {
+        if is_invariant_call(&stmt) {
+            return Ok(());
+        }
         self.update_location(stmt.range().start().to_usize());
         match stmt {
             ast::Stmt::Assign(s) => {
@@ -141,13 +195,9 @@ impl CFGBuilder {
                 // Constant pruning for If
                 if let Some(val) = self.get_constant_int(cond) {
                     if val != 0 {
-                        for stmt in s.body {
-                            self.visit_stmt(stmt)?;
-                        }
+                        visit_block(self, &s.body)?;
                     } else {
-                        for stmt in s.orelse {
-                            self.visit_stmt(stmt)?;
-                        }
+                        visit_block(self, &s.orelse)?;
                     }
                     return Ok(());
                 }
@@ -187,9 +237,7 @@ impl CFGBuilder {
                     }
                 }
 
-                for stmt in s.body {
-                    self.visit_stmt(stmt)?;
-                }
+                visit_block(self, &s.body)?;
                 if !self.is_terminated(self.current_block) {
                     push_inst!(self, InstructionKind::Jump(merge_block));
                     self.link_blocks(self.current_block, merge_block);
@@ -217,9 +265,7 @@ impl CFGBuilder {
                     }
                 }
 
-                for stmt in s.orelse {
-                    self.visit_stmt(stmt)?;
-                }
+                visit_block(self, &s.orelse)?;
                 if !self.is_terminated(self.current_block) {
                     push_inst!(self, InstructionKind::Jump(merge_block));
                     self.link_blocks(self.current_block, merge_block);
@@ -240,6 +286,17 @@ impl CFGBuilder {
                 self.link_blocks(prev_block, header_block);
 
                 self.loop_stack.push((header_block, exit_block));
+
+                // Extract loop invariants before visiting the loop body
+                let predicates = extract_loop_invariants(self, &s.body, header_block)?;
+                let location = self.current_location;
+                for predicate in predicates {
+                    self.func.loop_invariants.push(LoopInvariant {
+                        header_block,
+                        predicate,
+                        location,
+                    });
+                }
 
                 self.start_block(header_block);
                 let cond = self.visit_expr(*s.test)?;
@@ -270,9 +327,18 @@ impl CFGBuilder {
                     }
                 }
 
-                for stmt in s.body {
-                    self.visit_stmt(stmt)?;
+                let mut body_iter = s.body.iter().peekable();
+                while let Some(stmt) = body_iter.peek() {
+                    if let ast::Stmt::Assert(_) = stmt {
+                        body_iter.next();
+                    } else if is_invariant_call(stmt) {
+                        body_iter.next();
+                    } else {
+                        break;
+                    }
                 }
+                let remaining: Vec<ast::Stmt> = body_iter.cloned().collect();
+                visit_block(self, &remaining)?;
                 if !self.is_terminated(self.current_block) {
                     push_inst!(self, InstructionKind::Jump(header_block));
                     self.link_blocks(self.current_block, header_block);
@@ -513,9 +579,18 @@ impl CFGBuilder {
                                     }
                                 }
 
-                                for stmt in s.body.clone() {
-                                    self.visit_stmt(stmt)?;
+                                let mut body_iter = s.body.iter().peekable();
+                                while let Some(stmt) = body_iter.peek() {
+                                    if let ast::Stmt::Assert(_) = stmt {
+                                        body_iter.next();
+                                    } else if is_invariant_call(stmt) {
+                                        body_iter.next();
+                                    } else {
+                                        break;
+                                    }
                                 }
+                                let remaining: Vec<ast::Stmt> = body_iter.cloned().collect();
+                                visit_block(self, &remaining)?;
 
                                 // If not terminated (no break/return/continue), jump to next iteration
                                 if !self.is_terminated(self.current_block) {
@@ -564,6 +639,17 @@ impl CFGBuilder {
                 self.link_blocks(prev_block, header_block);
 
                 self.loop_stack.push((increment_block, exit_block));
+
+                // Extract loop invariants before visiting the loop body
+                let predicates = extract_loop_invariants(self, &s.body, header_block)?;
+                let location = self.current_location;
+                for predicate in predicates {
+                    self.func.loop_invariants.push(LoopInvariant {
+                        header_block,
+                        predicate,
+                        location,
+                    });
+                }
 
                 self.start_block(header_block);
                 let curr_idx = self.read_variable(idx_name.clone(), header_block)?;
@@ -632,9 +718,18 @@ impl CFGBuilder {
                     }
                 }
 
-                for stmt_in_body in s.body {
-                    self.visit_stmt(stmt_in_body)?;
+                let mut body_iter = s.body.iter().peekable();
+                while let Some(stmt) = body_iter.peek() {
+                    if let ast::Stmt::Assert(_) = stmt {
+                        body_iter.next();
+                    } else if is_invariant_call(stmt) {
+                        body_iter.next();
+                    } else {
+                        break;
+                    }
                 }
+                let remaining: Vec<ast::Stmt> = body_iter.cloned().collect();
+                visit_block(self, &remaining)?;
 
                 if !self.is_terminated(self.current_block) {
                     push_inst!(self, InstructionKind::Jump(increment_block));
@@ -1208,4 +1303,298 @@ impl CFGBuilder {
         }
         None
     }
+}
+
+fn is_requires_decorator(func: &ast::Expr) -> bool {
+    match func {
+        ast::Expr::Name(n) => n.id.as_str() == "requires",
+        ast::Expr::Attribute(a) => {
+            if let ast::Expr::Name(v) = &*a.value {
+                v.id.as_str() == "verify" && a.attr.as_str() == "requires"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn is_ensures_decorator(func: &ast::Expr) -> bool {
+    match func {
+        ast::Expr::Name(n) => n.id.as_str() == "ensures",
+        ast::Expr::Attribute(a) => {
+            if let ast::Expr::Name(v) = &*a.value {
+                v.id.as_str() == "verify" && a.attr.as_str() == "ensures"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+fn is_invariant_call(stmt: &ast::Stmt) -> bool {
+    if let ast::Stmt::Expr(s) = stmt {
+        if let ast::Expr::Call(c) = &*s.value {
+            match &*c.func {
+                ast::Expr::Name(n) => return n.id.as_str() == "invariant",
+                ast::Expr::Attribute(a) => {
+                    if let ast::Expr::Name(v) = &*a.value {
+                        return v.id.as_str() == "verify" && a.attr.as_str() == "invariant";
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+fn collect_referenced_names(expr: &ast::Expr, names: &mut HashSet<String>) {
+    match expr {
+        ast::Expr::Name(n) => {
+            names.insert(n.id.to_string());
+        }
+        ast::Expr::Lambda(l) => {
+            collect_referenced_names(&l.body, names);
+            for arg in &l.args.args {
+                names.remove(arg.def.arg.as_str());
+            }
+        }
+        ast::Expr::BoolOp(b) => {
+            for val in &b.values {
+                collect_referenced_names(val, names);
+            }
+        }
+        ast::Expr::Compare(c) => {
+            collect_referenced_names(&c.left, names);
+            for comp in &c.comparators {
+                collect_referenced_names(comp, names);
+            }
+        }
+        ast::Expr::BinOp(b) => {
+            collect_referenced_names(&b.left, names);
+            collect_referenced_names(&b.right, names);
+        }
+        ast::Expr::UnaryOp(u) => {
+            collect_referenced_names(&u.operand, names);
+        }
+        ast::Expr::IfExp(i) => {
+            collect_referenced_names(&i.test, names);
+            collect_referenced_names(&i.body, names);
+            collect_referenced_names(&i.orelse, names);
+        }
+        ast::Expr::Call(c) => {
+            collect_referenced_names(&c.func, names);
+            for arg in &c.args {
+                collect_referenced_names(arg, names);
+            }
+        }
+        ast::Expr::Attribute(a) => {
+            collect_referenced_names(&a.value, names);
+        }
+        ast::Expr::Subscript(s) => {
+            collect_referenced_names(&s.value, names);
+            collect_referenced_names(&s.slice, names);
+        }
+        ast::Expr::Tuple(t) => {
+            for elt in &t.elts {
+                collect_referenced_names(elt, names);
+            }
+        }
+        ast::Expr::List(l) => {
+            for elt in &l.elts {
+                collect_referenced_names(elt, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rename_parameters(expr: &mut ast::Expr, param_map: &HashMap<String, Value>, return_var_name: Option<&str>) {
+    match expr {
+        ast::Expr::Name(n) => {
+            if let Some(ret_name) = return_var_name {
+                if n.id.as_str() == ret_name {
+                    n.id = "{v}".to_string().into();
+                    return;
+                }
+            }
+            if let Some(val) = param_map.get(n.id.as_str()) {
+                n.id = format!("v{}", val.0).into();
+            }
+        }
+        ast::Expr::Lambda(l) => {
+            let sub_ret = if return_var_name.is_none() && !l.args.args.is_empty() {
+                None
+            } else {
+                return_var_name
+            };
+            rename_parameters(&mut l.body, param_map, sub_ret);
+        }
+        ast::Expr::BoolOp(b) => {
+            for val in &mut b.values {
+                rename_parameters(val, param_map, return_var_name);
+            }
+        }
+        ast::Expr::Compare(c) => {
+            rename_parameters(&mut c.left, param_map, return_var_name);
+            for comp in &mut c.comparators {
+                rename_parameters(comp, param_map, return_var_name);
+            }
+        }
+        ast::Expr::BinOp(b) => {
+            rename_parameters(&mut b.left, param_map, return_var_name);
+            rename_parameters(&mut b.right, param_map, return_var_name);
+        }
+        ast::Expr::UnaryOp(u) => {
+            rename_parameters(&mut u.operand, param_map, return_var_name);
+        }
+        ast::Expr::IfExp(i) => {
+            rename_parameters(&mut i.test, param_map, return_var_name);
+            rename_parameters(&mut i.body, param_map, return_var_name);
+            rename_parameters(&mut i.orelse, param_map, return_var_name);
+        }
+        ast::Expr::Call(c) => {
+            rename_parameters(&mut c.func, param_map, return_var_name);
+            for arg in &mut c.args {
+                rename_parameters(arg, param_map, return_var_name);
+            }
+        }
+        ast::Expr::Attribute(a) => {
+            rename_parameters(&mut a.value, param_map, return_var_name);
+        }
+        ast::Expr::Subscript(s) => {
+            rename_parameters(&mut s.value, param_map, return_var_name);
+            rename_parameters(&mut s.slice, param_map, return_var_name);
+        }
+        ast::Expr::Tuple(t) => {
+            for elt in &mut t.elts {
+                rename_parameters(elt, param_map, return_var_name);
+            }
+        }
+        ast::Expr::List(l) => {
+            for elt in &mut l.elts {
+                rename_parameters(elt, param_map, return_var_name);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_loop_invariants(
+    builder: &mut CFGBuilder,
+    body: &[ast::Stmt],
+    header_block: BlockId,
+) -> BuilderResult<Vec<String>> {
+    let mut invariants = Vec::new();
+    let mut param_map = HashMap::new();
+    
+    for stmt in body {
+        if let ast::Stmt::Assert(a) = stmt {
+            let lambda_expr = &a.test;
+            let mut ref_names = HashSet::new();
+            collect_referenced_names(lambda_expr, &mut ref_names);
+            
+            for name in &ref_names {
+                if builder.variable_defs.contains_key(name) {
+                    let val = builder.read_variable(name.clone(), header_block)?;
+                    param_map.insert(name.clone(), val);
+                }
+            }
+            
+            let mut renamed_expr = *lambda_expr.clone();
+            rename_parameters(&mut renamed_expr, &param_map, None);
+            
+            if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &builder.func.struct_layouts) {
+                invariants.push(pred_str);
+            }
+        } else if is_invariant_call(stmt) {
+            if let ast::Stmt::Expr(s) = stmt {
+                if let ast::Expr::Call(c) = &*s.value {
+                    if !c.args.is_empty() {
+                        let lambda_expr = &c.args[0];
+                        let mut ref_names = HashSet::new();
+                        collect_referenced_names(lambda_expr, &mut ref_names);
+                        
+                        for name in &ref_names {
+                            if builder.variable_defs.contains_key(name) {
+                                let val = builder.read_variable(name.clone(), header_block)?;
+                                param_map.insert(name.clone(), val);
+                            }
+                        }
+                        
+                        let mut renamed_expr = lambda_expr.clone();
+                        rename_parameters(&mut renamed_expr, &param_map, None);
+                        
+                        if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, &builder.func.struct_layouts) {
+                            invariants.push(pred_str);
+                        }
+                    }
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    Ok(invariants)
+}
+
+fn extract_postconditions(
+    body: &[ast::Stmt],
+    param_map: &HashMap<String, Value>,
+    struct_layouts: &HashMap<String, Vec<(String, Type)>>,
+) -> Vec<String> {
+    let mut postconditions = Vec::new();
+    for i in 0..body.len() {
+        if i + 1 < body.len() {
+            if let ast::Stmt::Assert(a) = &body[i] {
+                if let ast::Stmt::Return(r) = &body[i+1] {
+                    let mut renamed_expr = *a.test.clone();
+                    let ret_var_name = if let Some(ret_val) = &r.value {
+                        if let ast::Expr::Name(n) = &**ret_val {
+                            Some(n.id.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    rename_parameters(&mut renamed_expr, param_map, ret_var_name.as_deref());
+                    if let Ok(pred_str) = expr_to_string(&renamed_expr, None, &Type::Unknown, struct_layouts) {
+                        postconditions.push(pred_str);
+                    }
+                }
+            }
+        }
+        match &body[i] {
+            ast::Stmt::If(s) => {
+                postconditions.extend(extract_postconditions(&s.body, param_map, struct_layouts));
+                postconditions.extend(extract_postconditions(&s.orelse, param_map, struct_layouts));
+            }
+            ast::Stmt::While(s) => {
+                postconditions.extend(extract_postconditions(&s.body, param_map, struct_layouts));
+            }
+            ast::Stmt::For(s) => {
+                postconditions.extend(extract_postconditions(&s.body, param_map, struct_layouts));
+            }
+            _ => {}
+        }
+    }
+    postconditions
+}
+
+fn visit_block(builder: &mut CFGBuilder, block: &[ast::Stmt]) -> BuilderResult<()> {
+    for i in 0..block.len() {
+        let stmt = &block[i];
+        if i + 1 < block.len() {
+            if let ast::Stmt::Assert(_) = stmt {
+                if let ast::Stmt::Return(_) = &block[i+1] {
+                    continue;
+                }
+            }
+        }
+        builder.visit_stmt(stmt.clone())?;
+    }
+    Ok(())
 }

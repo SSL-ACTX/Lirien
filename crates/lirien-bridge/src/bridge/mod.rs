@@ -75,6 +75,8 @@ pub fn verify_and_compile(
                 arg_refinements: entry.arg_refinements,
                 return_type: entry.return_type,
                 return_refinement: entry.return_refinement,
+                preconditions: entry.preconditions,
+                postconditions: entry.postconditions,
                 pointer: entry.pointer,
             });
             if entry.name == func_name {
@@ -175,6 +177,8 @@ pub fn verify_and_compile(
                 arg_refinements: arg_refinements.clone(),
                 return_type: return_type.clone(),
                 return_refinement: return_refinement.clone(),
+                preconditions: ssa.preconditions.clone(),
+                postconditions: ssa.postconditions.clone(),
                 pointer: code_ptr,
             });
         }
@@ -186,6 +190,8 @@ pub fn verify_and_compile(
             arg_refinements,
             return_type,
             return_refinement,
+            preconditions: ssa.preconditions.clone(),
+            postconditions: ssa.postconditions.clone(),
         });
 
         if ssa.name == func_name {

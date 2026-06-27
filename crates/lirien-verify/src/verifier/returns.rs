@@ -141,17 +141,56 @@ pub fn verify_return_refinements<
                 }
 
                 if let Some(ret_ref) = &t_ctx.func.ret_refinement {
-                    if ret_ref == "..." {
-                        continue;
+                    if ret_ref != "..." {
+                        let ty = t_ctx.func.get_type(*ret_val);
+                        let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
+                            let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
+                            crate::refinement::parse_refinement(ret_ref, &bv_int, Some(z3_bv))
+                        } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
+                            crate::refinement::parse_refinement(ret_ref, z3_int, None)
+                        } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
+                            crate::refinement::parse_float_refinement(ret_ref, z3_float)
+                        } else {
+                            continue;
+                        };
+
+                        if let Ok(expr) = res {
+                            t_ctx.backend.push();
+                            t_ctx.backend.assert(&path_cond);
+                            let __tmp = t_ctx.backend.bool_not(&expr);
+                            t_ctx.backend.assert(&__tmp);
+                            if t_ctx.backend.check()? {
+                                let loc_info = inst
+                                    .location
+                                    .map(|l| format!(" at {}", l))
+                                    .unwrap_or_default();
+                                return Err(format!(
+                                    "Return refinement violation: value of {:?} does not satisfy '{}' and may be violated on some reachable path{}.",
+                                    ret_val, ret_ref, loc_info
+                                ));
+                            }
+                            t_ctx.backend.pop(1);
+                        }
                     }
+                }
+
+                use crate::refinement::Resolver;
+                let resolver = Resolver {
+                    ints: &t_ctx.z3_ints,
+                    floats: &t_ctx.z3_floats,
+                    bvs: &t_ctx.z3_bvs,
+                    arrays: &t_ctx.z3_arrays,
+                };
+
+                for postcond in &t_ctx.func.postconditions {
                     let ty = t_ctx.func.get_type(*ret_val);
                     let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(ret_val) {
                         let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
-                        crate::refinement::parse_refinement(ret_ref, &bv_int, Some(z3_bv))
+                        crate::refinement::parse_refinement_with_resolver(postcond, &bv_int, Some(z3_bv), &resolver)
                     } else if let Some(z3_int) = t_ctx.z3_ints.get(ret_val) {
-                        crate::refinement::parse_refinement(ret_ref, z3_int, None)
+                        crate::refinement::parse_refinement_with_resolver(postcond, z3_int, None, &resolver)
                     } else if let Some(z3_float) = t_ctx.z3_floats.get(ret_val) {
-                        crate::refinement::parse_float_refinement(ret_ref, z3_float)
+                        crate::refinement::parse_float_refinement_with_resolver(postcond, z3_float, &resolver)
                     } else {
                         continue;
                     };
@@ -167,8 +206,8 @@ pub fn verify_return_refinements<
                                 .map(|l| format!(" at {}", l))
                                 .unwrap_or_default();
                             return Err(format!(
-                                "Return refinement violation: value of {:?} does not satisfy '{}' and may be violated on some reachable path{}.",
-                                ret_val, ret_ref, loc_info
+                                "Postcondition violation: return value does not satisfy postcondition '{}' and may be violated on some reachable path{}.",
+                                postcond, loc_info
                             ));
                         }
                         t_ctx.backend.pop(1);

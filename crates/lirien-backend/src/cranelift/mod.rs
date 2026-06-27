@@ -115,6 +115,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("consume_owned", consume_owned_mock as *const u8);
 
     // Link math intrinsics
+    #[allow(suspicious_runtime_symbol_definitions)]
     extern "C" {
         fn malloc(size: usize) -> *mut u8;
         fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;

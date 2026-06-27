@@ -4,9 +4,20 @@
 //! representing the compiler's Control Flow Graph (CFG) in Static Single Assignment (SSA) form.
 
 use super::instruction::Instruction;
-use super::types::{BlockId, Type, Value};
+use super::types::{BlockId, Type, Value, SourceLocation};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Represents a user-defined loop invariant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoopInvariant {
+    /// The block ID of the loop header where the invariant holds.
+    pub header_block: BlockId,
+    /// The Z3-compatible predicate string of the invariant.
+    pub predicate: String,
+    /// Optional Python source location mapping.
+    pub location: Option<SourceLocation>,
+}
 
 /// A basic block containing a contiguous sequence of instructions.
 ///
@@ -54,6 +65,12 @@ pub struct Function {
     pub struct_layouts: HashMap<String, Vec<(String, Type)>>,
     /// Memory layouts for custom enums used in this function.
     pub enum_layouts: HashMap<String, Vec<(String, Type)>>,
+    /// Function preconditions.
+    pub preconditions: Vec<String>,
+    /// Function postconditions.
+    pub postconditions: Vec<String>,
+    /// User loop invariants.
+    pub loop_invariants: Vec<LoopInvariant>,
 }
 
 impl Function {
@@ -72,6 +89,9 @@ impl Function {
             refinements: HashMap::new(),
             struct_layouts: HashMap::new(),
             enum_layouts: HashMap::new(),
+            preconditions: Vec::new(),
+            postconditions: Vec::new(),
+            loop_invariants: Vec::new(),
         }
     }
 

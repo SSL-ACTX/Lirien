@@ -23,6 +23,10 @@ pub struct SerializedSignature {
     pub return_type: Type,
     /// The refinement constraint predicate for the return value, if any.
     pub return_refinement: Option<String>,
+    /// Precondition constraint S-expressions.
+    pub preconditions: Vec<String>,
+    /// Postcondition constraint S-expressions.
+    pub postconditions: Vec<String>,
 }
 
 impl From<&FunctionSignature> for SerializedSignature {
@@ -32,6 +36,8 @@ impl From<&FunctionSignature> for SerializedSignature {
             arg_refinements: sig.arg_refinements.clone(),
             return_type: sig.return_type.clone(),
             return_refinement: sig.return_refinement.clone(),
+            preconditions: sig.preconditions.clone(),
+            postconditions: sig.postconditions.clone(),
         }
     }
 }
@@ -49,6 +55,10 @@ pub struct FunctionSignature {
     pub return_type: Type,
     /// The refinement constraint predicate for the return value, if any.
     pub return_refinement: Option<String>,
+    /// Precondition constraint S-expressions.
+    pub preconditions: Vec<String>,
+    /// Postcondition constraint S-expressions.
+    pub postconditions: Vec<String>,
     /// A raw machine code pointer to the compiled function.
     pub pointer: usize,
 }

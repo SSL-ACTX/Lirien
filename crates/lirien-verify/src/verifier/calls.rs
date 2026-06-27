@@ -17,7 +17,7 @@ pub fn translate<
     inst: &Instruction,
     path_cond: &Bool,
 ) -> Result<(), String> {
-    if let InstructionKind::Call(dest, target_name, _args) = &inst.kind {
+    if let InstructionKind::Call(dest, target_name, args) = &inst.kind {
         let registry = lirien_ir::registry::GLOBAL_REGISTRY.lock().unwrap();
 
         let sig = if target_name == &t_ctx.func.name {
@@ -37,6 +37,8 @@ pub fn translate<
                 arg_refinements,
                 return_type: t_ctx.func.return_type.clone(),
                 return_refinement: t_ctx.func.ret_refinement.clone(),
+                preconditions: t_ctx.func.preconditions.clone(),
+                postconditions: t_ctx.func.postconditions.clone(),
                 pointer: 0,
             })
         } else {
@@ -59,6 +61,34 @@ pub fn translate<
 
                 if let Ok(expr) = res {
                     // Inductive Hypothesis: Assume the function holds for smaller inputs.
+                    let __tmp = t_ctx.backend.bool_implies(path_cond, &expr);
+                    t_ctx.backend.assert(&__tmp);
+                }
+            }
+
+            // Assume callee postconditions hold on returned value
+            for postcond in &sig.postconditions {
+                let mut substituted_post = postcond.clone();
+                substituted_post = substituted_post.replace("{v}", &format!("v{}", dest.0));
+                for (i, arg_val) in args.iter().enumerate() {
+                    let from_name = format!("v{}", i);
+                    let to_name = format!("v{}", arg_val.0);
+                    substituted_post = substitute_var(&substituted_post, &from_name, &to_name);
+                }
+
+                let ty = t_ctx.func.get_type(*dest);
+                let res = if let Some(z3_bv) = t_ctx.z3_bvs.get(dest) {
+                    let bv_int = t_ctx.backend.bv_to_int(z3_bv, ty.is_signed());
+                    crate::refinement::parse_refinement(&substituted_post, &bv_int, Some(z3_bv))
+                } else if let Some(z3_int) = t_ctx.z3_ints.get(dest) {
+                    crate::refinement::parse_refinement(&substituted_post, z3_int, None)
+                } else if let Some(z3_float) = t_ctx.z3_floats.get(dest) {
+                    crate::refinement::parse_float_refinement(&substituted_post, z3_float)
+                } else {
+                    continue;
+                };
+
+                if let Ok(expr) = res {
                     let __tmp = t_ctx.backend.bool_implies(path_cond, &expr);
                     t_ctx.backend.assert(&__tmp);
                 }
@@ -101,6 +131,8 @@ pub fn verify_call_arguments<
                         arg_refinements,
                         return_type: t_ctx.func.return_type.clone(),
                         return_refinement: t_ctx.func.ret_refinement.clone(),
+                        preconditions: t_ctx.func.preconditions.clone(),
+                        postconditions: t_ctx.func.postconditions.clone(),
                         pointer: 0,
                     })
                 } else {
@@ -231,9 +263,66 @@ pub fn verify_call_arguments<
                             }
                         }
                     }
+
+                    // Verify preconditions of the callee
+                    for prec in &sig.preconditions {
+                        let mut substituted_prec = prec.clone();
+                        for (i, arg_val) in args.iter().enumerate() {
+                            let from_name = format!("v{}", i);
+                            let to_name = format!("v{}", arg_val.0);
+                            substituted_prec = substitute_var(&substituted_prec, &from_name, &to_name);
+                        }
+
+                        use crate::refinement::parse_bool_expr_with_resolver;
+                        use crate::refinement::Resolver;
+                        let resolver = Resolver {
+                            ints: &t_ctx.z3_ints,
+                            floats: &t_ctx.z3_floats,
+                            bvs: &t_ctx.z3_bvs,
+                            arrays: &t_ctx.z3_arrays,
+                        };
+
+                        if let Ok(expr) = parse_bool_expr_with_resolver(&substituted_prec, &resolver) {
+                            t_ctx.backend.push();
+                            t_ctx.backend.assert(&path_cond);
+                            let __tmp = t_ctx.backend.bool_not(&expr);
+                            t_ctx.backend.assert(&__tmp);
+                            if t_ctx.backend.check()? {
+                                let loc_info = inst.location.map(|l| format!(" at {}", l)).unwrap_or_default();
+                                return Err(format!(
+                                    "Precondition violation for call to '{}': precondition '{}' may be violated on some reachable path{}.",
+                                    target_name, prec, loc_info
+                                ));
+                            }
+                            t_ctx.backend.pop(1);
+                        }
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn substitute_var(s: &str, from: &str, to: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let from_chars: Vec<char> = from.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + from_chars.len() <= chars.len() && chars[i..i+from_chars.len()] == from_chars {
+            let before = if i > 0 { chars[i-1] } else { ' ' };
+            let after = if i + from_chars.len() < chars.len() { chars[i+from_chars.len()] } else { ' ' };
+            let is_boundary = !before.is_alphanumeric() && before != '_'
+                && !after.is_alphanumeric() && after != '_';
+            if is_boundary {
+                result.push_str(to);
+                i += from_chars.len();
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }

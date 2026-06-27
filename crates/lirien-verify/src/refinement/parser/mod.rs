@@ -29,6 +29,16 @@ pub fn parse_refinement(refinement: &str, v: &Int, v_bv: Option<&BV>) -> Result<
     booleans::parse_bool_expr(&refinement, Some(v), None, None, None, v_bv, None)
 }
 
+pub fn parse_refinement_with_resolver(
+    refinement: &str,
+    v: &Int,
+    v_bv: Option<&BV>,
+    resolver: &Resolver,
+) -> Result<Bool, String> {
+    let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
+    booleans::parse_bool_expr(&refinement, Some(v), None, None, None, v_bv, Some(resolver))
+}
+
 /// Parses a floating-point refinement constraint, substituting `{v}` with the target value representation.
 ///
 /// # Errors
@@ -36,6 +46,15 @@ pub fn parse_refinement(refinement: &str, v: &Int, v_bv: Option<&BV>) -> Result<
 pub fn parse_float_refinement(refinement: &str, v: &Float) -> Result<Bool, String> {
     let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
     booleans::parse_bool_expr(&refinement, None, None, Some(v), None, None, None)
+}
+
+pub fn parse_float_refinement_with_resolver(
+    refinement: &str,
+    v: &Float,
+    resolver: &Resolver,
+) -> Result<Bool, String> {
+    let refinement = refinement.replace("{v}", "VALUE_PLACEHOLDER");
+    booleans::parse_bool_expr(&refinement, None, None, Some(v), None, None, Some(resolver))
 }
 
 /// Parses a real number refinement constraint, substituting `{v}` with the target value representation.

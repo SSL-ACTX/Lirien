@@ -35,6 +35,8 @@ pub struct NativeCacheEntry {
     pub arg_refinements: HashMap<usize, String>,
     pub return_type: Type,
     pub return_refinement: Option<String>,
+    pub preconditions: Vec<String>,
+    pub postconditions: Vec<String>,
 }
 
 #[derive(Clone, Debug)]

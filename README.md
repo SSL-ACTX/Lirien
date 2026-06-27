@@ -99,6 +99,41 @@ def next_odd(n: BoundedOdd) -> Refined[i64, V > 0]:
     return n + 2
 ```
 
+#### Design by Contract: Preconditions, Postconditions, & Loop Invariants
+In addition to refinement types on data structures, Lirien supports standard Design-by-Contract constructs using standard Python `assert` statements. Standard Python assertions are statically promoted by the compiler to formal Z3 proofs.
+
+*   **Static Verification:** Z3 statically proves precondition asserts at all call sites, proves postcondition asserts at function return boundaries, and verifies loop invariant asserts inductively (on entry and back-edges).
+*   **Runtime Enforcement:** If verified functions are called dynamically from regular Python code, Lirien automatically enforces precondition and postcondition asserts at runtime, raising `AssertionError` on violation.
+*   **Zero Overhead:** Once Z3 formally proves these assertions, Lirien completely eliminates them from the JIT-compiled machine code.
+
+```python
+from lirien import verify, i64
+
+@verify
+def add_one(x: i64) -> i64:
+    # 1. Precondition (Assert at the top of the function)
+    assert 0 < x < 100
+    
+    res = x + 1
+    
+    # 2. Postcondition (Assert immediately preceding return)
+    assert res > x
+    return res
+
+@verify
+def sum_to_n(n: i64) -> i64:
+    assert 0 <= n < 100
+    total = 0
+    i = 0
+    while i < n:
+        # 3. Loop invariant (Assert at the top of loop body)
+        assert i >= 0
+        assert total >= 0
+        total = total + i
+        i = i + 1
+    return total
+```
+
 #### Inductive Proofs: Recursive Functions
 For recursive functions, Lirien applies inductive reasoning: it assumes the refinement holds for recursive calls and verifies that the base case and inductive step both satisfy the declared postcondition.
 
@@ -460,10 +495,24 @@ def build_list() -> List[i64]:
 ```
 
 #### Buffer Interop and Zero-Copy Slicing
-`Buffer[T]` wraps any object implementing the Python buffer protocol (including NumPy arrays). Loop indices over a `Buffer` are bounded by its declared length and verified by Z3. Slicing produces a zero-copy memory view; Z3 proves the slice is within the original buffer's bounds.
+`Buffer[T]` wraps any object implementing the Python buffer protocol (including NumPy arrays). Loop indices over a `Buffer` are bounded by its declared length and verified by Z3. Slicing (on both `Buffer` and `SizedArray`) produces a zero-copy memory view; Z3 proves the slice is within the original buffer's bounds.
+
+Lirien supports slicing with strides (e.g. `arr[start:end:step]`), including positive steps, negative steps, and reverse slicing. Z3 formally verifies all bounds checks and calculates the resulting slice size statically.
 
 ```python
-from lirien import verify, Buffer, i64, f64
+from lirien import verify, SizedArray, Buffer, i64, f64
+
+@verify
+def slice_with_step_two(arr: SizedArray[i64, 10]) -> i64:
+    # elements at indices 0, 2, 4, 6, 8 (size = 5)
+    s = arr[0:10:2]
+    return s[0] + s[1] + s[2]
+
+@verify
+def slice_reverse_step_one(arr: SizedArray[i64, 10]) -> i64:
+    # elements at 9, 8, 7, 6, 5 in reverse order (size = 5)
+    s = arr[9:4:-1]
+    return s[0] + s[1] + s[2]
 
 @verify
 def scale_vector(vec: Buffer[f64], factor: f64) -> None:

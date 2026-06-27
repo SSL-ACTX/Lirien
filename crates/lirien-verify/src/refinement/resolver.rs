@@ -48,11 +48,16 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// Resolves an integer variable from its name.
     pub fn resolve_int(&self, name: &str) -> Option<Int> {
         if let Some(stripped) = name.strip_prefix('v') {
             if let Ok(id) = stripped.parse::<usize>() {
-                return self.ints.get(&Value(id)).cloned();
+                let val = Value(id);
+                if let Some(i) = self.ints.get(&val) {
+                    return Some(i.clone());
+                }
+                if let Some(bv) = self.bvs.get(&val) {
+                    return Some(bv.to_int(true));
+                }
             }
         }
         None

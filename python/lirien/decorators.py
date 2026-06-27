@@ -876,3 +876,46 @@ def parallel_for(range_obj: range, body_fn: Callable[[int], None]):
     """
     for i in range_obj:
         body_fn(i)
+
+
+def requires(predicate: Callable) -> Callable:
+    """
+    Specifies a precondition for the JIT function using a lambda.
+    E.g., @requires(lambda x: x > 0)
+    """
+
+    def decorator(func: Callable) -> Callable:
+        if not hasattr(func, "__lirien_preconditions__"):
+            func.__lirien_preconditions__ = []
+        func.__lirien_preconditions__.append(predicate)
+        return func
+
+    return decorator
+
+
+def ensures(predicate: Callable) -> Callable:
+    """
+    Specifies a postcondition for the JIT function using a lambda.
+    E.g., @ensures(lambda res, x: res > x)
+    """
+
+    def decorator(func: Callable) -> Callable:
+        if not hasattr(func, "__lirien_postconditions__"):
+            func.__lirien_postconditions__ = []
+        func.__lirien_postconditions__.append(predicate)
+        return func
+
+    return decorator
+
+
+def invariant(predicate: Callable) -> None:
+    """
+    Specifies a loop invariant using a lambda.
+    E.g., invariant(lambda: i >= 0)
+    """
+    pass
+
+
+verify.requires = requires
+verify.ensures = ensures
+verify.invariant = invariant

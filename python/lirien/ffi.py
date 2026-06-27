@@ -1082,6 +1082,89 @@ def _get_ctypes_return_type(ret_ann: Any, type_mapping: Dict[str, str] = None) -
     return _get_ctypes_type(ret_ann_str)
 
 
+def _extract_runtime_asserts(func: Callable, sig: inspect.Signature):
+    import ast
+    import inspect
+    import textwrap
+
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+        func_def = next(
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        )
+
+        preconds = []
+        postconds = []
+        param_names = list(sig.parameters.keys())
+
+        for stmt in func_def.body:
+            if isinstance(stmt, ast.Assert):
+                lambda_node = ast.Lambda(
+                    args=ast.arguments(
+                        posonlyargs=[],
+                        args=[ast.arg(arg=name) for name in param_names],
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        defaults=[],
+                        vararg=None,
+                        kwarg=None,
+                    ),
+                    body=stmt.test,
+                )
+                ast.fix_missing_locations(lambda_node)
+                expr_code = compile(
+                    ast.Expression(body=lambda_node), "<assert>", "eval"
+                )
+                lambda_fn = eval(expr_code, func.__globals__)
+                preconds.append(lambda_fn)
+            else:
+                break
+
+        def scan_blocks(body):
+            for i in range(len(body)):
+                if i + 1 < len(body):
+                    if isinstance(body[i], ast.Assert) and isinstance(
+                        body[i + 1], ast.Return
+                    ):
+                        ret_name = None
+                        if isinstance(body[i + 1].value, ast.Name):
+                            ret_name = body[i + 1].value.id
+
+                        post_params = list(param_names)
+                        for opt in [ret_name, "res", "return_val"]:
+                            if opt and opt not in post_params:
+                                post_params.append(opt)
+
+                        lambda_node = ast.Lambda(
+                            args=ast.arguments(
+                                posonlyargs=[],
+                                args=[ast.arg(arg=name) for name in post_params],
+                                kwonlyargs=[],
+                                kw_defaults=[],
+                                defaults=[],
+                                vararg=None,
+                                kwarg=None,
+                            ),
+                            body=body[i].test,
+                        )
+                        ast.fix_missing_locations(lambda_node)
+                        expr_code = compile(
+                            ast.Expression(body=lambda_node), "<assert>", "eval"
+                        )
+                        lambda_fn = eval(expr_code, func.__globals__)
+                        postconds.append((lambda_fn, post_params, ret_name))
+                if hasattr(body[i], "body"):
+                    scan_blocks(body[i].body)
+                if hasattr(body[i], "orelse"):
+                    scan_blocks(body[i].orelse)
+
+        scan_blocks(func_def.body)
+        return preconds, postconds
+    except Exception:
+        return [], []
+
+
 def _create_wrapper(
     func: Callable,
     code_ptr: int,
@@ -1094,6 +1177,8 @@ def _create_wrapper(
     type_mapping: Dict[str, str] = None,
 ):
     """Generate the final Python wrapper that handles runtime checks and interop."""
+    assert_preconds, assert_postconds = _extract_runtime_asserts(func, sig)
+
     if (
         is_named_tuple(sig.return_annotation)
         or get_origin(sig.return_annotation) in [tuple, typing_Tuple]
@@ -1108,65 +1193,132 @@ def _create_wrapper(
     c_func = ctypes.CFUNCTYPE(c_ret, *c_args)(code_ptr)
 
     def wrapper(*args):
-        _check_runtime_refinements(sig, args, type_mapping)
+        def _call_impl(*args):
+            _check_runtime_refinements(sig, args, type_mapping)
 
-        processed_args, ret_struct, anchors, sync_backs = _prepare_runtime_args(
-            args, arg_map, c_args, is_ptr_return, TupleReturn
-        )
+            processed_args, ret_struct, anchors, sync_backs = _prepare_runtime_args(
+                args, arg_map, c_args, is_ptr_return, TupleReturn
+            )
 
-        res = c_func(*processed_args)
+            res = c_func(*processed_args)
 
-        # Sync back changes for TypedDict
-        for target_dict, struct_obj in sync_backs:
-            for field_name, _ in struct_obj._fields_:
-                target_dict[field_name] = getattr(struct_obj, field_name)
+            # Sync back changes for TypedDict
+            for target_dict, struct_obj in sync_backs:
+                for field_name, _ in struct_obj._fields_:
+                    target_dict[field_name] = getattr(struct_obj, field_name)
 
-        if (
-            is_named_tuple(sig.return_annotation)
-            or get_origin(sig.return_annotation) in [tuple, typing_Tuple]
-        ) and not is_ptr_return:
-            # Construct Tuple/NamedTuple from registers
-            flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
-            return _unflatten_values(sig.return_annotation, flattened_res)
-
-        if is_ptr_return:
-            ret_ann_str = _get_type_name(sig.return_annotation, type_mapping).lower()
-            raw_ann_str = str(sig.return_annotation).lower()
-            if is_named_tuple(sig.return_annotation) or get_origin(
-                sig.return_annotation
-            ) in [tuple, typing_Tuple]:
-                # Construct Tuple/NamedTuple
-                flattened_res = [
-                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
-                ]
+            if (
+                is_named_tuple(sig.return_annotation)
+                or get_origin(sig.return_annotation) in [tuple, typing_Tuple]
+            ) and not is_ptr_return:
+                # Construct Tuple/NamedTuple from registers
+                flattened_res = [getattr(res, f"f{i}") for i in range(len(tuple_types))]
                 return _unflatten_values(sig.return_annotation, flattened_res)
-            elif "tuple" in raw_ann_str or (
-                ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
-            ):
-                return tuple(
-                    getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
-                )
-            else:
-                is_val_opt, inner_type = _is_value_optional(sig.return_annotation)
-                if is_val_opt:
-                    if ret_struct.has_value:
-                        val_obj = ret_struct.value
-                        if getattr(inner_type, "__lirien_struct__", False):
-                            struct_inst = inner_type.__new__(inner_type)
-                            struct_inst._ctypes_obj = val_obj
-                            return struct_inst
-                        return val_obj
-                    else:
-                        return None
-                elif getattr(sig.return_annotation, "__lirien_struct__", False):
-                    struct_inst = sig.return_annotation.__new__(sig.return_annotation)
-                    struct_inst._ctypes_obj = ret_struct
-                    return struct_inst
-                else:
-                    # SIMD Return
-                    return ret_struct
 
-        return _wrap_return_value(res, sig.return_annotation, type_mapping, sig, args)
+            if is_ptr_return:
+                ret_ann_str = _get_type_name(
+                    sig.return_annotation, type_mapping
+                ).lower()
+                raw_ann_str = str(sig.return_annotation).lower()
+                if is_named_tuple(sig.return_annotation) or get_origin(
+                    sig.return_annotation
+                ) in [tuple, typing_Tuple]:
+                    # Construct Tuple/NamedTuple
+                    flattened_res = [
+                        getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                    ]
+                    return _unflatten_values(sig.return_annotation, flattened_res)
+                elif "tuple" in raw_ann_str or (
+                    ret_ann_str.startswith("(") and ret_ann_str.endswith(")")
+                ):
+                    return tuple(
+                        getattr(ret_struct, f"f{i}") for i in range(len(tuple_types))
+                    )
+                else:
+                    is_val_opt, inner_type = _is_value_optional(sig.return_annotation)
+                    if is_val_opt:
+                        if ret_struct.has_value:
+                            val_obj = ret_struct.value
+                            if getattr(inner_type, "__lirien_struct__", False):
+                                struct_inst = inner_type.__new__(inner_type)
+                                struct_inst._ctypes_obj = val_obj
+                                return struct_inst
+                            return val_obj
+                        else:
+                            return None
+                    elif getattr(sig.return_annotation, "__lirien_struct__", False):
+                        struct_inst = sig.return_annotation.__new__(
+                            sig.return_annotation
+                        )
+                        struct_inst._ctypes_obj = ret_struct
+                        return struct_inst
+                    else:
+                        # SIMD Return
+                        return ret_struct
+
+            return _wrap_return_value(
+                res, sig.return_annotation, type_mapping, sig, args
+            )
+
+        # Check preconditions
+        preconds = getattr(wrapper, "__lirien_preconditions__", []) + getattr(
+            func, "__lirien_preconditions__", []
+        )
+        if preconds or assert_preconds:
+            bound = sig.bind(*args)
+            bound.apply_defaults()
+            for prec in preconds:
+                prec_sig = inspect.signature(prec)
+                prec_args = {
+                    name: bound.arguments[name]
+                    for name in prec_sig.parameters
+                    if name in bound.arguments
+                }
+                if not prec(**prec_args):
+                    raise ValueError(
+                        f"Runtime Precondition Violation for '{func.__name__}': "
+                        f"Arguments do not satisfy precondition."
+                    )
+            eval_locals = bound.arguments.copy()
+            for lambda_fn in assert_preconds:
+                if not lambda_fn(**eval_locals):
+                    raise AssertionError("Precondition violation: assert failed.")
+
+        res_val = _call_impl(*args)
+
+        # Check postconditions
+        postconds = getattr(wrapper, "__lirien_postconditions__", []) + getattr(
+            func, "__lirien_postconditions__", []
+        )
+        if postconds or assert_postconds:
+            bound = sig.bind(*args)
+            bound.apply_defaults()
+            for post in postconds:
+                post_sig = inspect.signature(post)
+                params = list(post_sig.parameters.keys())
+                post_args = {}
+                if params:
+                    ret_name = params[0]
+                    post_args[ret_name] = res_val
+                    for name in params[1:]:
+                        if name in bound.arguments:
+                            post_args[name] = bound.arguments[name]
+                if not post(**post_args):
+                    raise ValueError(
+                        f"Runtime Postcondition Violation for '{func.__name__}': "
+                        f"Return value does not satisfy postcondition."
+                    )
+            for lambda_fn, post_params, ret_name in assert_postconds:
+                eval_locals = bound.arguments.copy()
+                if ret_name:
+                    eval_locals[ret_name] = res_val
+                eval_locals["res"] = res_val
+                eval_locals["return_val"] = res_val
+                call_args = {k: eval_locals[k] for k in post_params if k in eval_locals}
+                if not lambda_fn(**call_args):
+                    raise AssertionError("Postcondition violation: assert failed.")
+
+        return res_val
 
     print(f"[Lirien] JIT compiled '{func.__name__}' successfully.")
     wrapper.__lirien_jit__ = True

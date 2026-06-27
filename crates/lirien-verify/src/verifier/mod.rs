@@ -207,7 +207,10 @@ pub fn verify_with_context<
         tuple_mappings: HashMap::new(),
         block_conditions: HashMap::new(),
         edge_conditions: HashMap::new(),
-        has_refinements: func.ret_refinement.is_some(),
+        has_refinements: func.ret_refinement.is_some()
+            || !func.preconditions.is_empty()
+            || !func.postconditions.is_empty()
+            || !func.loop_invariants.is_empty(),
         safety_checks: Vec::new(),
     };
 
@@ -215,7 +218,11 @@ pub fn verify_with_context<
 
     cfg::assert_cfg_constraints(&mut t_ctx);
 
+    assert_preconditions(&mut t_ctx)?;
+
     translate_instructions(&mut t_ctx)?;
+
+    verify_loop_invariants(&mut t_ctx)?;
 
     intervals::assert_derived_intervals(&mut t_ctx);
 
@@ -472,4 +479,168 @@ fn translate_constraints<
     }
 
     Ok(())
+}
+
+pub fn assert_preconditions<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) -> Result<(), String> {
+    use crate::refinement::parse_bool_expr_with_resolver;
+    use crate::refinement::Resolver;
+
+    let resolver = Resolver {
+        ints: &t_ctx.z3_ints,
+        floats: &t_ctx.z3_floats,
+        bvs: &t_ctx.z3_bvs,
+        arrays: &t_ctx.z3_arrays,
+    };
+
+    let entry_cond = t_ctx.block_conditions.get(&t_ctx.func.entry_block).cloned();
+    if let Some(path_cond) = entry_cond {
+        for prec in &t_ctx.func.preconditions {
+            let z3_prec = parse_bool_expr_with_resolver(prec, &resolver)?;
+            let assume_prec = t_ctx.backend.bool_implies(&path_cond, &z3_prec);
+            t_ctx.backend.assert(&assume_prec);
+        }
+    }
+    Ok(())
+}
+
+pub fn verify_loop_invariants<
+    B: SolverBackend<
+        Bool = z3::ast::Bool,
+        Int = z3::ast::Int,
+        Float = z3::ast::Float,
+        BV = z3::ast::BV,
+        Array = z3::ast::Array,
+    >,
+>(
+    t_ctx: &mut TranslationContext<'_, B>,
+) -> Result<(), String> {
+    use crate::refinement::parse_bool_expr_with_resolver;
+    use crate::refinement::Resolver;
+
+    let resolver = Resolver {
+        ints: &t_ctx.z3_ints,
+        floats: &t_ctx.z3_floats,
+        bvs: &t_ctx.z3_bvs,
+        arrays: &t_ctx.z3_arrays,
+    };
+
+    for invariant in &t_ctx.func.loop_invariants {
+        let header_cond = t_ctx.block_conditions.get(&invariant.header_block).ok_or_else(|| {
+            format!("Block condition not found for header block {:?}", invariant.header_block)
+        })?.clone();
+
+        // 1. Assert the loop invariant at the loop header under header_cond
+        let z3_invariant = parse_bool_expr_with_resolver(&invariant.predicate, &resolver)?;
+        let assume_invariant = t_ctx.backend.bool_implies(&header_cond, &z3_invariant);
+        t_ctx.backend.assert(&assume_invariant);
+
+        // 2. Identify predecessor blocks of the loop header
+        let header_node = t_ctx.func.blocks.iter().find(|b| b.id == invariant.header_block)
+            .ok_or_else(|| "Header block not found".to_string())?;
+
+        for &pred in &header_node.predecessors {
+            let edge_cond = t_ctx.edge_conditions.get(&(pred, invariant.header_block))
+                .ok_or_else(|| "Edge condition not found".to_string())?.clone();
+
+            let is_backedge = is_reachable_block(t_ctx.func, invariant.header_block, pred);
+
+            if is_backedge {
+                // Back-edge: substitute Phi variables with their incoming values on this back-edge
+                let mut substituted_pred = invariant.predicate.clone();
+                for inst in &header_node.instructions {
+                    if let InstructionKind::Phi(dest, incoming) = &inst.kind {
+                        if let Some(next_val) = incoming.get(&pred) {
+                            let from_name = format!("v{}", dest.0);
+                            let to_name = format!("v{}", next_val.0);
+                            substituted_pred = substitute_var(&substituted_pred, &from_name, &to_name);
+                        }
+                    }
+                }
+
+                let z3_invariant_next = parse_bool_expr_with_resolver(&substituted_pred, &resolver)?;
+                let violation_cond = t_ctx.backend.bool_not(&z3_invariant_next);
+
+                t_ctx.safety_checks.push(SafetyCheck {
+                    path_cond: edge_cond,
+                    violation_cond,
+                    error_message: format!(
+                        "Loop invariant ({}) not preserved on back-edge from block b{}",
+                        invariant.predicate, pred.0
+                    ),
+                    location: invariant.location,
+                });
+            } else {
+                // Entry edge: verify the invariant holds on entry
+                let violation_cond = t_ctx.backend.bool_not(&z3_invariant);
+                t_ctx.safety_checks.push(SafetyCheck {
+                    path_cond: edge_cond,
+                    violation_cond,
+                    error_message: format!(
+                        "Loop invariant ({}) may not hold on entry from block b{}",
+                        invariant.predicate, pred.0
+                    ),
+                    location: invariant.location,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_reachable_block(
+    func: &lirien_ir::ir::Function,
+    start: BlockId,
+    target: BlockId,
+) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(start);
+    while let Some(current) = queue.pop_front() {
+        if current == target {
+            return true;
+        }
+        if !visited.insert(current) {
+            continue;
+        }
+        if let Some(block) = func.blocks.iter().find(|b| b.id == current) {
+            for &succ in &block.successors {
+                queue.push_back(succ);
+            }
+        }
+    }
+    false
+}
+
+fn substitute_var(s: &str, from: &str, to: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let from_chars: Vec<char> = from.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + from_chars.len() <= chars.len() && chars[i..i+from_chars.len()] == from_chars {
+            let before = if i > 0 { chars[i-1] } else { ' ' };
+            let after = if i + from_chars.len() < chars.len() { chars[i+from_chars.len()] } else { ' ' };
+            let is_boundary = !before.is_alphanumeric() && before != '_'
+                && !after.is_alphanumeric() && after != '_';
+            if is_boundary {
+                result.push_str(to);
+                i += from_chars.len();
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }
