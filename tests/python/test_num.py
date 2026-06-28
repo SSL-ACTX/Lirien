@@ -344,6 +344,56 @@ class TestLirienNum(unittest.TestCase):
 
         self.assertAlmostEqual(out[0], 2.5)
 
+    def test_scale(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 1.0; a[0, 1] = 2.0
+        a[1, 0] = 3.0; a[1, 1] = 4.0
+
+        num.scale(a, out, 2.5)
+
+        self.assertEqual(out[0, 0], 2.5)
+        self.assertEqual(out[0, 1], 5.0)
+        self.assertEqual(out[1, 0], 7.5)
+        self.assertEqual(out[1, 1], 10.0)
+
+    def test_bias_add(self):
+        # M = 2, N = 3
+        a = Tensor.alloc((2, 3), f32)
+        bias = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((2, 3), f32)
+
+        a[0, 0] = 1.0; a[0, 1] = 2.0; a[0, 2] = 3.0
+        a[1, 0] = 4.0; a[1, 1] = 5.0; a[1, 2] = 6.0
+
+        bias[0] = 0.5; bias[1] = 1.0; bias[2] = 1.5
+
+        num.bias_add(a, bias, out)
+
+        self.assertEqual(out[0, 0], 1.5)
+        self.assertEqual(out[0, 1], 3.0)
+        self.assertEqual(out[0, 2], 4.5)
+        self.assertEqual(out[1, 0], 4.5)
+        self.assertEqual(out[1, 1], 6.0)
+        self.assertEqual(out[1, 2], 7.5)
+
+    def test_standardize(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+
+        num.standardize(a, out, 2.0, 1.0)
+
+        self.assertAlmostEqual(out[0], -1.0)
+        self.assertAlmostEqual(out[1], 0.0)
+        self.assertAlmostEqual(out[2], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

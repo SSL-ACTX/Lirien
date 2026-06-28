@@ -227,3 +227,37 @@ def mean(a: Tensor[f32, M], out: Tensor[f32, 1], n: f32):
     for i in range(M):
         sum_val = sum_val + a[i]
     out[0] = sum_val / n
+
+
+@verify
+def scale(a: Tensor[f32, M, N], out: Tensor[f32, M, N], factor: f32):
+    """
+    Scale the tensor 'a' by a scalar 'factor' and store in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] * factor
+
+
+@verify
+def bias_add(a: Tensor[f32, M, N], bias: Tensor[f32, N], out: Tensor[f32, M, N]):
+    """
+    Add a 1D bias vector 'bias' to 'a' along the last dimension and store in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] + bias[j]
+
+
+@verify
+def standardize(a: Tensor[f32, M], out: Tensor[f32, M], mean_val: f32, std_val: f32):
+    """
+    Standardize 'a' using precomputed 'mean_val' and 'std_val'.
+    Requires 'std_val > 0.0'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert std_val > 0.0
+    for i in range(M):
+        out[i] = (a[i] - mean_val) / std_val
