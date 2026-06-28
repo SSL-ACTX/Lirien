@@ -69,6 +69,23 @@ class TestLoopVerification(unittest.TestCase):
                     idx = idx + 1
                 return idx
 
+    def test_nested_loops_with_invariants(self):
+        from lirien import Tensor, f32
+
+        @verify
+        def fill_matrix(mat: Tensor[f32, 3, 3]) -> f32:
+            for i in range(3):
+                verify.invariant(lambda: (0 <= i) and (i <= 3))
+                for j in range(3):
+                    verify.invariant(lambda: (0 <= i) and (i < 3) and (0 <= j) and (j <= 3))
+                    mat[i, j] = 1.0
+            return 1.0
+
+        mat = Tensor.alloc((3, 3), f32)
+        self.assertEqual(fill_matrix(mat), 1.0)
+        self.assertEqual(mat[0, 0], 1.0)
+        self.assertEqual(mat[2, 2], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

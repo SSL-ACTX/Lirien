@@ -387,7 +387,9 @@ impl CFGBuilder {
 
                 self.loop_stack.push((header_block, exit_block));
 
-                // Extract loop invariants before visiting the loop body
+                self.start_block(header_block);
+
+                // Extract loop invariants after starting the header block
                 let predicates = extract_loop_invariants(self, &s.body, header_block)?;
                 let location = self.current_location;
                 for predicate in predicates {
@@ -398,7 +400,6 @@ impl CFGBuilder {
                     });
                 }
 
-                self.start_block(header_block);
                 let cond = self.visit_expr(*s.test)?;
                 push_inst!(self, InstructionKind::Branch(cond, body_block, exit_block));
                 self.link_blocks(header_block, body_block);
@@ -593,9 +594,10 @@ impl CFGBuilder {
                     };
 
                 // UNROLLING LOGIC
-                let start_const = self.get_constant_int(start_val);
-                let end_const = self.get_constant_int(end_val);
-                let step_const = self.get_constant_int(step_val);
+                let has_invariants = has_loop_invariants(&s.body);
+                let start_const = if has_invariants { None } else { self.get_constant_int(start_val) };
+                let end_const = if has_invariants { None } else { self.get_constant_int(end_val) };
+                let step_const = if has_invariants { None } else { self.get_constant_int(step_val) };
 
                 if let (Some(start_c), Some(end_c), Some(step_c)) =
                     (start_const, end_const, step_const)
@@ -788,7 +790,10 @@ impl CFGBuilder {
 
                 self.loop_stack.push((increment_block, exit_block));
 
-                // Extract loop invariants before visiting the loop body
+                self.start_block(header_block);
+                let curr_idx = self.read_variable(idx_name.clone(), header_block)?;
+
+                // Extract loop invariants after starting the header block and defining the loop index
                 let predicates = extract_loop_invariants(self, &s.body, header_block)?;
                 let location = self.current_location;
                 for predicate in predicates {
@@ -798,9 +803,6 @@ impl CFGBuilder {
                         location,
                     });
                 }
-
-                self.start_block(header_block);
-                let curr_idx = self.read_variable(idx_name.clone(), header_block)?;
                 let cond = self.func.next_value();
 
                 // Determine if we should use SLt or SGt based on step if constant
@@ -1702,6 +1704,22 @@ fn is_invariant_call(stmt: &ast::Stmt) -> bool {
                 }
                 _ => {}
             }
+        }
+    }
+    false
+}
+
+fn is_loop_invariant(stmt: &ast::Stmt) -> bool {
+    if let ast::Stmt::Assert(a) = stmt {
+        return matches!(&*a.test, ast::Expr::Lambda(_));
+    }
+    is_invariant_call(stmt)
+}
+
+fn has_loop_invariants(body: &[ast::Stmt]) -> bool {
+    for stmt in body {
+        if is_loop_invariant(stmt) {
+            return true;
         }
     }
     false

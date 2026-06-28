@@ -55,7 +55,7 @@ class MonomorphizedFunction:
         struct_layouts,
         class_name=None,
         method_name=None,
-        timeout=5000,
+        timeout=30000,
         enum_layouts=None,
         named_tuple_layouts=None,
         typed_dict_layouts=None,
@@ -481,7 +481,7 @@ class OverloadedFunction:
         struct_layouts,
         class_name=None,
         method_name=None,
-        timeout=5000,
+        timeout=30000,
         verify=True,
     ):
         self.func = func
@@ -675,7 +675,7 @@ class OverloadedFunction:
 def verify(
     strict: bool = True,
     log_level: str = None,
-    timeout: int = 5000,
+    timeout: int = 30000,
     verify: bool = True,
     _struct_layouts: dict = None,
     _enum_layouts: dict = None,
@@ -689,7 +689,7 @@ def verify(
 
     :param strict: If True, raises VerificationError on failure. If False, falls back to Python.
     :param log_level: Override LILA_LOG level (e.g., 'info', 'debug', 'warn').
-    :param timeout: Verification timeout in milliseconds (default 5000).
+    :param timeout: Verification timeout in milliseconds (default 30000).
     :param verify: If True, performs Z3 verification. If False, JITs directly without verification.
     """
     if _is_verification_disabled():
@@ -835,7 +835,7 @@ def verify(
 def jit(
     strict: bool = True,
     log_level: str = None,
-    timeout: int = 5000,
+    timeout: int = 30000,
 ) -> Callable:
     """
     Decorator to compile a function directly to native machine code via Cranelift,

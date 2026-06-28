@@ -141,11 +141,15 @@ fn get_counterexample_string<B: SolverBackend>(
     t_ctx: &TranslationContext<'_, B>,
 ) -> String {
     let mut parts = Vec::new();
-    for i in 1..t_ctx.func.arg_count {
+    for i in 1..t_ctx.func.value_count {
         let val = Value(i);
-        let name = t_ctx.func.arg_names.get(i)
-            .cloned()
-            .unwrap_or_else(|| format!("arg{}", i - 1));
+        let name = if i < t_ctx.func.arg_count {
+            t_ctx.func.arg_names.get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("arg{}", i - 1))
+        } else {
+            format!("v{}", i)
+        };
         
         if let Some(bv_val) = t_ctx.z3_bvs.get(&val) {
             if let Some(s) = t_ctx.backend.eval_bv(bv_val) {
@@ -257,9 +261,9 @@ pub fn verify_with_context<
 
     assert_preconditions(&mut t_ctx)?;
 
-    translate_instructions(&mut t_ctx)?;
-
     verify_loop_invariants(&mut t_ctx)?;
+
+    translate_instructions(&mut t_ctx)?;
 
     intervals::assert_derived_intervals(&mut t_ctx);
 
@@ -632,6 +636,7 @@ pub fn verify_loop_invariants<
             .clone();
 
         // 1. Assert the loop invariant at the loop header under header_cond
+        tracing::info!(target: "lirien::verify", "Verifying loop invariant: {}", clean_invariant);
         let z3_invariant = parse_bool_expr_with_resolver(clean_invariant, &resolver)?;
         let assume_invariant = t_ctx.backend.bool_implies(&header_cond, &z3_invariant);
         t_ctx.backend.assert(&assume_invariant);
