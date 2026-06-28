@@ -566,6 +566,81 @@ class TestLirienNum(unittest.TestCase):
         self.assertAlmostEqual(out[1], 0.0, places=5)
         self.assertAlmostEqual(out[2], 1.0 / std_val, places=5)
 
+    def test_hardsigmoid(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = -4.0
+        a[0, 1] = 0.0
+        a[1, 0] = 3.0
+        a[1, 1] = -1.5
+
+        num.hardsigmoid(a, out)
+
+        self.assertAlmostEqual(out[0, 0], 0.0)
+        self.assertAlmostEqual(out[0, 1], 0.5)
+        self.assertAlmostEqual(out[1, 0], 1.0)
+        self.assertAlmostEqual(out[1, 1], 0.25)
+
+    def test_hardswish(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = -4.0
+        a[0, 1] = 0.0
+        a[1, 0] = 3.0
+        a[1, 1] = -1.5
+
+        num.hardswish(a, out)
+
+        self.assertAlmostEqual(out[0, 0], 0.0)
+        self.assertAlmostEqual(out[0, 1], 0.0)
+        self.assertAlmostEqual(out[1, 0], 3.0)
+        self.assertAlmostEqual(out[1, 1], -0.375)
+
+    def test_elu(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 1.0
+        a[0, 1] = -1.0
+        a[1, 0] = 0.0
+        a[1, 1] = -2.0
+
+        num.elu(a, out, 1.0)
+
+        self.assertAlmostEqual(out[0, 0], 1.0)
+        self.assertAlmostEqual(out[0, 1], math.exp(-1.0) - 1.0, places=5)
+        self.assertAlmostEqual(out[1, 0], 0.0)
+        self.assertAlmostEqual(out[1, 1], math.exp(-2.0) - 1.0, places=5)
+
+    def test_selu(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 1.0
+        a[0, 1] = -1.0
+        a[1, 0] = 0.0
+        a[1, 1] = -2.0
+
+        num.selu(a, out)
+
+        scale = 1.0507009873554804934193349852946
+        alpha = 1.6732632423543772848170429916717
+
+        self.assertAlmostEqual(out[0, 0], scale * 1.0, places=5)
+        self.assertAlmostEqual(
+            out[0, 1], scale * alpha * (math.exp(-1.0) - 1.0), places=5
+        )
+        self.assertAlmostEqual(out[1, 0], 0.0, places=5)
+        self.assertAlmostEqual(
+            out[1, 1], scale * alpha * (math.exp(-2.0) - 1.0), places=5
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

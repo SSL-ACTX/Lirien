@@ -389,6 +389,73 @@ def layer_norm(
 
 
 @verify
+def hardsigmoid(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise Hard Sigmoid activation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j] + 3.0
+            if val < 0.0:
+                out[i, j] = 0.0
+            elif val > 6.0:
+                out[i, j] = 1.0
+            else:
+                out[i, j] = val / 6.0
+
+
+@verify
+def hardswish(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise Hard Swish activation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            h_sig = val + 3.0
+            if h_sig < 0.0:
+                out[i, j] = 0.0
+            elif h_sig > 6.0:
+                out[i, j] = val
+            else:
+                out[i, j] = val * (h_sig / 6.0)
+
+
+@verify
+def elu(a: Tensor[f32, M, N], out: Tensor[f32, M, N], alpha: f32):
+    """
+    Apply element-wise Exponential Linear Unit (ELU) activation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            if val > 0.0:
+                out[i, j] = val
+            else:
+                out[i, j] = alpha * (math.exp(val) - 1.0)
+
+
+@verify
+def selu(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise Scaled Exponential Linear Unit (SELU) activation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    scale = 1.0507009873554804934193349852946
+    alpha = 1.6732632423543772848170429916717
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            if val > 0.0:
+                out[i, j] = scale * val
+            else:
+                out[i, j] = scale * alpha * (math.exp(val) - 1.0)
+
+
+@verify
 def matvec(matrix: Tensor[f32, M, N], vector: Tensor[f32, N], out: Tensor[f32, M]):
     """
     Matrix-vector multiplication, storing the result in 'out'.
