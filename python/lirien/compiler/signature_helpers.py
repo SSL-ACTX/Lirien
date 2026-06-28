@@ -5,7 +5,6 @@ import ctypes
 from typing import (
     Any,
     Callable,
-    Dict,
     Tuple,
     TypeVar,
     TypeVarTuple,
@@ -34,7 +33,7 @@ def is_typed_dict(cls):
     return hasattr(cls, "__annotations__") and hasattr(cls, "__total__")
 
 
-def _get_refinement_parts(ann: Any) -> Tuple[Any, Any]:
+def _get_refinement_parts(ann: Any) -> tuple[Any, Any]:
     """
     Extract (base_type, predicate) from a refinement type annotation.
     Supports both Refined[T, pred] and PEP 593 Annotated[T, pred] refinement format.
@@ -117,7 +116,7 @@ def _is_box_type(ann: Any) -> bool:
     return False
 
 
-def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
+def _get_type_name(ty: Any, type_mapping: dict[str, Any] = None) -> str:
     """Consistently convert a Python-side type to its Lirien IR string representation."""
     if getattr(ty, "__lirien_specialized__", False):
         return ty.__name__
@@ -335,11 +334,11 @@ def _get_type_name(ty: Any, type_mapping: Dict[str, Any] = None) -> str:
 
 def _discover_types(
     func: Callable,
-    initial_struct_layouts: Dict,
-    type_mapping: Dict[str, Any] = None,
-    initial_enum_layouts: Dict = None,
-    initial_typed_dict_layouts: Dict = None,
-) -> Tuple[Dict, Dict, Dict, Dict]:
+    initial_struct_layouts: dict,
+    type_mapping: dict[str, Any] = None,
+    initial_enum_layouts: dict = None,
+    initial_typed_dict_layouts: dict = None,
+) -> tuple[dict, dict, dict, dict]:
     """Scan for struct layouts, enum layouts, and type aliases referenced in the function's scope."""
     struct_layouts = initial_struct_layouts.copy() if initial_struct_layouts else {}
     enum_layouts = initial_enum_layouts.copy() if initial_enum_layouts else {}

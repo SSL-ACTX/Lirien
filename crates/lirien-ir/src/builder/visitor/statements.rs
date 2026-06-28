@@ -223,6 +223,25 @@ impl CFGBuilder {
                 }
                 Ok(())
             }
+            ast::Stmt::Assert(s) => {
+                let test_val = self.visit_expr(*s.test)?;
+                let test_val = self.auto_load(test_val);
+                let msg_str = if let Some(ref msg_expr) = s.msg {
+                    if let ast::Expr::Constant(ref c) = **msg_expr {
+                        if let ast::Constant::Str(ref string) = c.value {
+                            Some(string.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                push_inst!(self, InstructionKind::Assert(test_val, msg_str));
+                Ok(())
+            }
             ast::Stmt::Return(s) => {
                 let mut val = if let Some(expr) = s.value {
                     let v = self.visit_expr(*expr)?;
@@ -883,18 +902,16 @@ impl CFGBuilder {
                 Ok(())
             }
             ast::Stmt::Match(s) => {
-                let subject_val = self.visit_expr(*s.subject)?;
+                let subject_val = self.visit_expr(*s.subject.clone())?;
                 let subject_ty = self.func.get_type(subject_val);
+
+                if !matches!(subject_ty, Type::Enum(_)) {
+                    return self.compile_non_enum_match(s, subject_val);
+                }
 
                 let enum_name = match subject_ty {
                     Type::Enum(name) => name,
-                    _ => {
-                        return Err(builder_error!(
-                            UnsupportedStatement,
-                            "match statement currently only supported for Enums, found {:?}",
-                            subject_ty
-                        ));
-                    }
+                    _ => unreachable!(),
                 };
 
                 let exit_block = self.create_block();
@@ -1449,6 +1466,59 @@ impl CFGBuilder {
                     _ => Err(builder_error!(General, "Cannot destructure type {:?}", ty)),
                 }
             }
+            ast::Pattern::MatchSequence(p) => {
+                let ty = self.func.get_type(val);
+                if let Type::Tuple(ref types) = ty {
+                    if p.patterns.len() != types.len() {
+                        return Err(builder_error!(
+                            General,
+                            "Tuple has {} elements, but pattern has {}",
+                            types.len(),
+                            p.patterns.len()
+                        ));
+                    }
+                    for (i, sub_pattern) in p.patterns.iter().enumerate() {
+                        let elt_val = self.func.next_value();
+                        push_inst!(self, InstructionKind::TupleExtract(elt_val, val, i));
+                        self.func.set_type(elt_val, types[i].clone());
+                        self.handle_nested_pattern(sub_pattern, elt_val, block)?;
+                    }
+                    Ok(())
+                } else if let Type::NamedTuple(ref name) = ty {
+                    let fields = self.func.struct_layouts.get(name).cloned().ok_or_else(|| {
+                        builder_error!(General, "Unknown NamedTuple layout for '{}'", name)
+                    })?;
+                    if p.patterns.len() != fields.len() {
+                        return Err(builder_error!(
+                            General,
+                            "NamedTuple has {} fields, but pattern has {}",
+                            fields.len(),
+                            p.patterns.len()
+                        ));
+                    }
+                    for (i, sub_pattern) in p.patterns.iter().enumerate() {
+                        let (field_name, field_ty) = &fields[i];
+                        let field_offset =
+                            self.get_field_offset(name, field_name).ok_or_else(|| {
+                                builder_error!(General, "Field offset not found for {}", field_name)
+                            })?;
+                        let elt_val = self.func.next_value();
+                        push_inst!(
+                            self,
+                            InstructionKind::StructLoad(elt_val, val, field_offset)
+                        );
+                        self.func.set_type(elt_val, field_ty.clone());
+                        self.handle_nested_pattern(sub_pattern, elt_val, block)?;
+                    }
+                    Ok(())
+                } else {
+                    Err(builder_error!(
+                        General,
+                        "Sequence pattern expected Tuple or NamedTuple, found {:?}",
+                        ty
+                    ))
+                }
+            }
             ast::Pattern::MatchValue(_) => Err(builder_error!(
                 UnsupportedStatement,
                 "Literal matching not yet supported in nested patterns"
@@ -1459,6 +1529,67 @@ impl CFGBuilder {
                 pattern
             )),
         }
+    }
+
+    fn compile_non_enum_match(
+        &mut self,
+        s: ast::StmtMatch,
+        subject_val: Value,
+    ) -> BuilderResult<()> {
+        let exit_block = self.create_block();
+        let start_block = self.current_block;
+
+        let mut current_chain_block = start_block;
+
+        for (i, case) in s.cases.iter().enumerate() {
+            let body_block = self.create_block();
+            let next_in_chain = if i < s.cases.len() - 1 {
+                self.create_block()
+            } else {
+                exit_block
+            };
+
+            self.start_block(current_chain_block);
+
+            // 1. Destructure pattern if applicable
+            self.handle_nested_pattern(&case.pattern, subject_val, current_chain_block)?;
+
+            // 2. Guard check
+            if let Some(guard_expr) = &case.guard {
+                let cond = self.visit_expr(*guard_expr.clone())?;
+                let cond = self.auto_load(cond);
+                push_inst!(
+                    self,
+                    InstructionKind::Branch(cond, body_block, next_in_chain)
+                );
+                self.link_blocks(current_chain_block, body_block);
+                self.link_blocks(current_chain_block, next_in_chain);
+            } else {
+                push_inst!(self, InstructionKind::Jump(body_block));
+                self.link_blocks(current_chain_block, body_block);
+            }
+            self.seal_block(current_chain_block)?;
+
+            // 3. Visit body
+            self.start_block(body_block);
+            self.seal_block(body_block)?;
+            for stmt in &case.body {
+                self.visit_stmt(stmt.clone())?;
+            }
+            if !self.is_terminated(self.current_block) {
+                push_inst!(self, InstructionKind::Jump(exit_block));
+                self.link_blocks(self.current_block, exit_block);
+            }
+            self.seal_block(body_block)?;
+
+            if i < s.cases.len() - 1 {
+                current_chain_block = next_in_chain;
+            }
+        }
+
+        self.start_block(exit_block);
+        self.seal_block(exit_block)?;
+        Ok(())
     }
 
     fn get_none_comparison(&self, test: &ast::Expr) -> Option<(String, bool)> {

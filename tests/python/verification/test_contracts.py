@@ -100,6 +100,28 @@ class TestContracts(unittest.TestCase):
 
         self.assertIn("i must remain 1", str(ctx.exception))
 
+    def test_intermediate_assert_success(self):
+        @verify
+        def math_op(x: i64) -> i64:
+            assert x > 10
+            y = x * 2
+            assert y > 20, "y must be greater than 20"
+            return y
+
+        self.assertEqual(math_op(11), 22)
+
+    def test_intermediate_assert_failure(self):
+        with self.assertRaises(VerificationError) as ctx:
+
+            @verify
+            def bad_math_op(x: i64) -> i64:
+                assert x > 10
+                y = x * 2
+                assert y > 30, "y must be greater than 30"
+                return y
+
+        self.assertIn("y must be greater than 30", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

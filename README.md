@@ -111,24 +111,24 @@ from lirien import verify, i64
 
 @verify
 def add_one(x: i64) -> i64:
-    # 1. Precondition (Assert at the top of the function)
-    assert 0 < x < 100
+    # 1. Precondition with custom error message
+    assert 0 < x < 100, "x must be between 0 and 100"
     
     res = x + 1
     
-    # 2. Postcondition (Assert immediately preceding return)
-    assert res > x
+    # 2. Postcondition with custom error message
+    assert res > x, "result must be greater than input"
     return res
 
 @verify
 def sum_to_n(n: i64) -> i64:
-    assert 0 <= n < 100
+    assert 0 <= n < 100, "n must be non-negative and less than 100"
     total = 0
     i = 0
     while i < n:
-        # 3. Loop invariant (Assert at the top of loop body)
-        assert i >= 0
-        assert total >= 0
+        # 3. Loop invariant with custom error message
+        assert i >= 0, "loop index cannot be negative"
+        assert total >= 0, "running total cannot be negative"
         total = total + i
         i = i + 1
     return total
@@ -434,11 +434,47 @@ def safe_div(a: i64, b: i64) -> Result[i64, i64]:
     return Ok(a // b)
 ```
 
-#### Tuples and NamedTuples: Register Flattening
-Standard `Tuple` and `NamedTuple` types are recursively flattened into their primitive constituents for parameter passing and return values. Tuples of up to 16 bytes (2 registers) are passed entirely in registers. Larger aggregates use a return-by-pointer (SRet) convention but remain flattened as individual arguments.
+#### Pattern Matching Destructuring
+Lirien supports Python 3.10's `match` statement for destructuring structural types like standard `tuple`, `NamedTuple`, and `@struct`. Matching is compiled into sequential conditional jumps on struct field offsets. Match cases can also specify guards, which are statically verified by Z3.
 
 ```python
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
+from lirien import verify, struct, i64
+
+class Point(NamedTuple):
+    x: i64
+    y: i64
+
+@struct
+class Point3D:
+    x: i64
+    y: i64
+    z: i64
+
+@verify
+def match_tuple(t: tuple[i64, i64]) -> i64:
+    match t:
+        case (x, y) if x > y:
+            return x - y
+        case (x, y):
+            return y - x
+
+@verify
+def match_struct(p: Point3D) -> i64:
+    match p:
+        case Point3D(x, y, z) if x > y:
+            return x
+        case Point3D(x, y, z) if y > z:
+            return y
+        case Point3D(x, y, z):
+            return z
+```
+
+#### Tuples and NamedTuples: Register Flattening
+Standard `tuple` and `NamedTuple` types are recursively flattened into their primitive constituents for parameter passing and return values. Tuples of up to 16 bytes (2 registers) are passed entirely in registers. Larger aggregates use a return-by-pointer (SRet) convention but remain flattened as individual arguments.
+
+```python
+from typing import NamedTuple
 from lirien import verify, i64
 
 class Point(NamedTuple):
@@ -446,8 +482,8 @@ class Point(NamedTuple):
     y: i64
 
 @verify
-def scale_nested(data: Tuple[Point, i64]) -> Point:
-    p, factor = data
+def scale_nested(data: tuple[Point, i64]) -> Point:
+    [p, factor] = data
     return Point(p.x * factor, p.y * factor)
 
 # At the ABI level: three i64 inputs (x, y, factor), two i64 outputs (new_x, new_y).
@@ -686,7 +722,7 @@ graph TD
 | **Generics** | Monomorphization via `TypeVar`; rank polymorphism via `TypeVarTuple` |
 | **Const generics** | Integer `TypeVar` dimensions with symbolic arithmetic (`N + 1`) |
 | **Callable types** | `FnPointer`, `Closure`, `Callable` |
-| **Aggregate types** | `@struct`, `@value`, `Tuple`, `NamedTuple`, `@adt`, `Box`, `SizedArray`, `Buffer`, `Tensor`, `List` |
+| **Aggregate types** | `@struct`, `@value`, `tuple`, `NamedTuple`, `@adt`, `Box`, `SizedArray`, `Buffer`, `Tensor`, `List` |
 | **Concurrency** | `parallel_for` on raw memory buffers (no GIL) |
 | **SMT solver** | Z3 v4.12+ — bitvector, floating-point, and array theories |
 | **JIT backend** | Cranelift 0.100+ |

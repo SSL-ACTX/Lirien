@@ -249,6 +249,7 @@ fn lower_instruction_internal<M: Module>(
             ctx.tensor_dims.insert(*dest, vec![m, k]);
             Ok(())
         }
+        InstructionKind::Assert(_, _) => Ok(()),
         InstructionKind::Nop() => Ok(()),
     }
 }

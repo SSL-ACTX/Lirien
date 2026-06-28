@@ -1,12 +1,12 @@
 import inspect
 import ast
 import textwrap
-from typing import Callable, Tuple, TypeVar, TypeVarTuple, get_origin, get_args
+from typing import Callable, TypeVar, TypeVarTuple, get_origin, get_args
 
 
 def _prepare_source_and_name(
     func: Callable, class_name: str = None, method_name: str = None
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """Extract and dedent source code, handling method name overrides and AST adjustments."""
     source = textwrap.dedent(inspect.getsource(func))
     target_func_name = method_name if method_name else func.__name__

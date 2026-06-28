@@ -99,6 +99,19 @@ class TestLists(unittest.TestCase):
         self.assertEqual(lst[0], 1.5)
         self.assertEqual(lst[1], 3.5)
 
+    def test_list_pep585_alias(self):
+        @verify
+        def build_and_get_list_pep585() -> list[i64]:
+            l = list[i64]()
+            l.append(42)
+            l.append(100)
+            return l
+
+        lst = build_and_get_list_pep585()
+        self.assertEqual(len(lst), 2)
+        self.assertEqual(lst[0], 42)
+        self.assertEqual(lst[1], 100)
+
 
 if __name__ == "__main__":
     unittest.main()

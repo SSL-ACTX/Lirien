@@ -749,6 +749,17 @@ impl fmt::Display for Instruction {
                     captures_str.join(", ")
                 )
             }
+            InstructionKind::Assert(test, msg) => {
+                let msg_suffix = msg
+                    .as_ref()
+                    .map(|m| format!(" (msg: \"{}\")", m))
+                    .unwrap_or_default();
+                write!(
+                    f,
+                    "  assert {}{}{}{}",
+                    test, msg_suffix, loc_str, constraints_str
+                )
+            }
             InstructionKind::Nop() => write!(f, "  nop{}{}", loc_str, constraints_str),
         }
     }

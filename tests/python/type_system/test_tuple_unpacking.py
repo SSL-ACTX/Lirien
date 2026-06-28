@@ -1,10 +1,9 @@
 import unittest
-from typing import Tuple
 from lirien import verify, i64
 
 
 @verify
-def get_point() -> Tuple[i64, i64]:
+def get_point() -> tuple[i64, i64]:
     return 10, 20
 
 

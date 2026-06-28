@@ -1,29 +1,28 @@
 import unittest
-from typing import Tuple
 from lirien import verify, i64
 
 
 @verify
 def add_nested_tuples(
-    t1: Tuple[Tuple[i64, i64], i64], t2: Tuple[Tuple[i64, i64], i64]
-) -> Tuple[Tuple[i64, i64], i64]:
+    t1: tuple[tuple[i64, i64], i64], t2: tuple[tuple[i64, i64], i64]
+) -> tuple[tuple[i64, i64], i64]:
     ((x1, y1), z1) = t1
     ((x2, y2), z2) = t2
     return ((x1 + x2, y1 + y2), z1 + z2)
 
 
 @verify
-def identity_nested(t: Tuple[Tuple[i64, i64], i64]) -> Tuple[Tuple[i64, i64], i64]:
+def identity_nested(t: tuple[tuple[i64, i64], i64]) -> tuple[tuple[i64, i64], i64]:
     return t
 
 
 @verify
-def add_tuples_2(t1: Tuple[i64, i64], t2: Tuple[i64, i64]) -> Tuple[i64, i64]:
+def add_tuples_2(t1: tuple[i64, i64], t2: tuple[i64, i64]) -> tuple[i64, i64]:
     return (t1[0] + t2[0], t1[1] + t2[1])
 
 
 @verify
-def nested_destructuring(t: Tuple[Tuple[i64, i64], i64]) -> i64:
+def nested_destructuring(t: tuple[tuple[i64, i64], i64]) -> i64:
     ((x, y), z) = t
     return x + y + z
 

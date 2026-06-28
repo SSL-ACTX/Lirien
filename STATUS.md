@@ -31,6 +31,7 @@ Lirien is an experimental research compiler. It is under active development and 
 - `typing.overload` multiple dispatch — per-signature machine-code specialization
 - `typing.Literal` loop unrolling — compile-time integer constants with exact Z3 induction values
 - `TypedDict` zero-cost struct layout — string key access compiled to byte offsets
+- Sequence/tuple and class/struct pattern matching destructuring
 - Non-pointer value-type optionals (`T | None` / `Optional[T]`) using inline tagged layout (has_value tag + value)
 
 ### Memory & Data Structures
@@ -56,6 +57,7 @@ Lirien is an experimental research compiler. It is under active development and 
 - Interval analysis — skips Z3 solver calls for trivially provable constraints
 - Automated loop invariant synthesis — abstract interpretation to automatically derive loop invariants and entry-edge implication constraints
 - Design by Contract — native `assert` statements promoted to preconditions, postconditions, and inductively verified loop invariants
+- Static safety proof verification of intermediate inline `assert` statements
 
 ### Code Generation
 - Cranelift JIT backend — native machine code in executable memory
@@ -78,10 +80,10 @@ Lirien is an experimental research compiler. It is under active development and 
 ## Roadmap
 
 - [x] Design by Contract (Native Assert Pattern)
-- [ ] Custom Error Messages for Native Asserts
-- [ ] Tuple/Aggregate Unpacking & Destructuring Assignment
-- [ ] Intermediate Inline Assertions (Safety Proofs)
-- [ ] Pattern Matching Destructuring
+- [x] Custom Error Messages for Native Asserts
+- [x] Tuple/Aggregate Unpacking & Destructuring Assignment
+- [x] Intermediate Inline Assertions (Safety Proofs)
+- [x] Pattern Matching Destructuring
 
 ---
 

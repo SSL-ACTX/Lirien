@@ -1,5 +1,4 @@
 import unittest
-from typing import Tuple
 from lirien import verify, i64, struct
 
 
@@ -12,7 +11,7 @@ class Point:
 @struct
 class Nested:
     p: Point
-    t: Tuple[i64, i64]
+    t: tuple[i64, i64]
     val: i64
 
 

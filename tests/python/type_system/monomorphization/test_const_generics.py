@@ -1,13 +1,12 @@
 import unittest
 from lirien import verify, i64, f32, Tensor, SizedArray, TypeVar
-from typing import Tuple
 
 M = TypeVar("M")
 N = TypeVar("N")
 
 
 @verify
-def get_tensor_dims(x: Tensor[f32, M, N]) -> Tuple[i64, i64]:
+def get_tensor_dims(x: Tensor[f32, M, N]) -> tuple[i64, i64]:
     return M, N
 
 

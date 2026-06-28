@@ -8,10 +8,10 @@ impl CFGBuilder {
     pub(crate) fn visit_call(&mut self, s: ast::ExprCall) -> BuilderResult<Value> {
         let expr_offset = s.range.start().to_usize();
 
-        // Check for List constructor (e.g. List[i64]())
+        // Check for List constructor (e.g. List[i64]() or list[i64]())
         if let ast::Expr::Subscript(sub) = &*s.func {
             if let ast::Expr::Name(n) = &*sub.value {
-                if n.id.as_str() == "List" {
+                if n.id.as_str() == "List" || n.id.as_str() == "list" {
                     let list_elem_ty = crate::builder::metadata::parse_type(
                         &sub.slice,
                         &self.type_aliases,

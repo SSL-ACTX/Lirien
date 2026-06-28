@@ -1,7 +1,7 @@
 import os
 import threading
 from contextlib import contextmanager
-from typing import Dict, Tuple
+
 
 from . import lirien_bridge
 
@@ -37,7 +37,7 @@ def _is_verification_disabled() -> bool:
 
 
 @contextmanager
-def tracing(config: Dict[str, str]):
+def tracing(config: dict[str, str]):
     """
     Context manager to temporarily configure granular tracing for specific Lirien components.
     """
@@ -56,14 +56,14 @@ def tracing(config: Dict[str, str]):
         configure_tracing(merged)
 
 
-def configure_tracing(config: Dict[str, str]):
+def configure_tracing(config: dict[str, str]):
     """
     Configure granular tracing for Lirien components.
     """
     lirien_bridge.configure_tracing(config)
 
 
-def get_cpu_info() -> Dict[str, str]:
+def get_cpu_info() -> dict[str, str]:
     """
     Get information about the host CPU architecture and enabled SIMD features.
     """
@@ -118,7 +118,7 @@ def format_verification_error(func_name: str, source: str, error: str) -> str:
     return f"Lirien Verification Failed for '{func_name}': {error}"
 
 
-def _setup_logging(log_level: str) -> Tuple[str, str]:
+def _setup_logging(log_level: str) -> tuple[str, str]:
     """Override LILA_LOG level and return (log_level, old_log_level) for restoration."""
     if log_level:
         old_log = os.environ.get("LILA_LOG", "info")

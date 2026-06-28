@@ -399,6 +399,27 @@ fn translate_instructions<
                 InstructionKind::IndirectCall(..)
                 | InstructionKind::Lambda(..)
                 | InstructionKind::Return(..) => {}
+                InstructionKind::Assert(test, msg) => {
+                    if let Some(z3_cond) = t_ctx.z3_bvs.get(test).cloned() {
+                        let bit_width = t_ctx.func.get_type(*test).int_bit_width().unwrap_or(1);
+                        let one = t_ctx.backend.bv_from_i64(1, bit_width);
+                        let cond_is_true = t_ctx.backend.bv_eq(&z3_cond, &one);
+                        let violation_cond = t_ctx.backend.bool_not(&cond_is_true);
+                        let err_msg = if let Some(ref m) = msg {
+                            format!("Assertion violation: {}", m)
+                        } else {
+                            "Assertion violation: assert failed.".to_string()
+                        };
+                        t_ctx.safety_checks.push(SafetyCheck {
+                            path_cond: path_cond.clone(),
+                            violation_cond,
+                            error_message: err_msg,
+                            location: inst.location,
+                        });
+                        let assume_cond = t_ctx.backend.bool_implies(&path_cond, &cond_is_true);
+                        t_ctx.backend.assert(&assume_cond);
+                    }
+                }
                 InstructionKind::ParallelFor(
                     index_var,
                     start,

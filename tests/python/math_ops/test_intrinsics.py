@@ -1,16 +1,15 @@
 import unittest
-from typing import Tuple
 import math
 from lirien import verify, i64, f64, Refined
 
 
 @verify
-def get_coords() -> Tuple[i64, i64]:
+def get_coords() -> tuple[i64, i64]:
     return 10, 20
 
 
 @verify
-def swap(x: i64, y: i64) -> Tuple[i64, i64]:
+def swap(x: i64, y: i64) -> tuple[i64, i64]:
     return y, x
 
 

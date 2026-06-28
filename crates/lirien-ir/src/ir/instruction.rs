@@ -836,6 +836,13 @@ macro_rules! lirien_instructions {
                 side_effects: false,
                 category: Arithmetic
             },
+            Assert(test: Value, msg: Option<String>) {
+                display: "assert {} (msg: {:?})",
+                def: None,
+                uses: [*test],
+                side_effects: true,
+                category: Arithmetic
+            },
             Nop() {
                 display: "nop",
                 def: None,

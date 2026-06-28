@@ -222,9 +222,12 @@ def _map_ctypes_arguments(
         ) or "tensor" in ann_str
 
         is_ptr_wrapper = False
-        if isinstance(origin, type) and issubclass(
-            origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor, List)
-        ):
+        if (
+            isinstance(origin, type)
+            and issubclass(
+                origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor, List)
+            )
+        ) or origin is list:
             is_ptr_wrapper = True
 
         # Check for Protocol (duck typing)

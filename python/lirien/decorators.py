@@ -4,7 +4,6 @@ from typing import (
     Callable,
     TypeVar,
     Any,
-    Dict,
     Tuple,
     get_origin,
     get_args,
@@ -80,7 +79,7 @@ class MonomorphizedFunction:
         self.__lirien_jit__ = True
 
     def _match_typevars(
-        self, annotation: Any, val: Any, mapping: Dict[str, Any], param_name: str = None
+        self, annotation: Any, val: Any, mapping: dict[str, Any], param_name: str = None
     ):
         """Recursively match TypeVars and Protocols in the annotation against the runtime value."""
         # 1. Base case: annotation is a TypeVar
