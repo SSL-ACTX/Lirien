@@ -182,3 +182,48 @@ def max_pool2d_2x2(image: Tensor[f32, H, W], out: Tensor[f32, OH, OW]):
                 max_val = v11
 
             out[i, j] = max_val
+
+
+@verify
+def avg_pool2d_2x2(image: Tensor[f32, H, W], out: Tensor[f32, OH, OW]):
+    """
+    2x2 Average Pooling with stride 2.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(OH):
+        for j in range(OW):
+            v00 = image[i * 2, j * 2]
+            v01 = image[i * 2, j * 2 + 1]
+            v10 = image[i * 2 + 1, j * 2]
+            v11 = image[i * 2 + 1, j * 2 + 1]
+            out[i, j] = (v00 + v01 + v10 + v11) * 0.25
+
+
+@verify
+def clip(a: Tensor[f32, M, N], out: Tensor[f32, M, N], min_val: f32, max_val: f32):
+    """
+    Clip the values in 'a' to [min_val, max_val] and store in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            if val < min_val:
+                out[i, j] = min_val
+            elif val > max_val:
+                out[i, j] = max_val
+            else:
+                out[i, j] = val
+
+
+@verify
+def mean(a: Tensor[f32, M], out: Tensor[f32, 1], n: f32):
+    """
+    Compute the mean of 'a' and store in 'out[0]'.
+    Requires precondition 'n > 0.0' to guarantee division safety.
+    """
+    assert n > 0.0
+    sum_val: f32 = 0.0
+    for i in range(M):
+        sum_val = sum_val + a[i]
+    out[0] = sum_val / n

@@ -132,15 +132,22 @@ class TestLirienNum(unittest.TestCase):
 
         # a = [[1, 2, 3],
         #      [4, 5, 6]]
-        a[0, 0] = 1.0; a[0, 1] = 2.0; a[0, 2] = 3.0
-        a[1, 0] = 4.0; a[1, 1] = 5.0; a[1, 2] = 6.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[0, 2] = 3.0
+        a[1, 0] = 4.0
+        a[1, 1] = 5.0
+        a[1, 2] = 6.0
 
         # b = [[7, 8],
         #      [9, 10],
         #      [11, 12]]
-        b[0, 0] = 7.0; b[0, 1] = 8.0
-        b[1, 0] = 9.0; b[1, 1] = 10.0
-        b[2, 0] = 11.0; b[2, 1] = 12.0
+        b[0, 0] = 7.0
+        b[0, 1] = 8.0
+        b[1, 0] = 9.0
+        b[1, 1] = 10.0
+        b[2, 0] = 11.0
+        b[2, 1] = 12.0
 
         num.matmul(a, b, out)
 
@@ -175,11 +182,15 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((2, 2), f32)
 
-        a[0, 0] = 1.0; a[0, 1] = 2.0
-        a[1, 0] = 3.0; a[1, 1] = 4.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[1, 0] = 3.0
+        a[1, 1] = 4.0
 
-        b[0, 0] = 5.0; b[0, 1] = 6.0
-        b[1, 0] = 7.0; b[1, 1] = 8.0
+        b[0, 0] = 5.0
+        b[0, 1] = 6.0
+        b[1, 0] = 7.0
+        b[1, 1] = 8.0
 
         num.add(a, b, out)
 
@@ -194,11 +205,15 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((2, 2), f32)
 
-        a[0, 0] = 5.0; a[0, 1] = 6.0
-        a[1, 0] = 7.0; a[1, 1] = 8.0
+        a[0, 0] = 5.0
+        a[0, 1] = 6.0
+        a[1, 0] = 7.0
+        a[1, 1] = 8.0
 
-        b[0, 0] = 1.0; b[0, 1] = 2.0
-        b[1, 0] = 3.0; b[1, 1] = 4.0
+        b[0, 0] = 1.0
+        b[0, 1] = 2.0
+        b[1, 0] = 3.0
+        b[1, 1] = 4.0
 
         num.sub(a, b, out)
 
@@ -213,11 +228,15 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((2, 2), f32)
 
-        a[0, 0] = 1.0; a[0, 1] = 2.0
-        a[1, 0] = 3.0; a[1, 1] = 4.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[1, 0] = 3.0
+        a[1, 1] = 4.0
 
-        b[0, 0] = 5.0; b[0, 1] = 6.0
-        b[1, 0] = 7.0; b[1, 1] = 8.0
+        b[0, 0] = 5.0
+        b[0, 1] = 6.0
+        b[1, 0] = 7.0
+        b[1, 1] = 8.0
 
         num.mul(a, b, out)
 
@@ -232,10 +251,22 @@ class TestLirienNum(unittest.TestCase):
         out = Tensor.alloc((2, 2), f32)
 
         val_list = [
-            1.0, 2.0, 5.0, 6.0,
-            3.0, 4.0, 7.0, 8.0,
-            9.0, 10.0, 13.0, 14.0,
-            11.0, 12.0, 15.0, 16.0
+            1.0,
+            2.0,
+            5.0,
+            6.0,
+            3.0,
+            4.0,
+            7.0,
+            8.0,
+            9.0,
+            10.0,
+            13.0,
+            14.0,
+            11.0,
+            12.0,
+            15.0,
+            16.0,
         ]
         for i in range(4):
             for j in range(4):
@@ -247,6 +278,71 @@ class TestLirienNum(unittest.TestCase):
         self.assertEqual(out[0, 1], 8.0)
         self.assertEqual(out[1, 0], 12.0)
         self.assertEqual(out[1, 1], 16.0)
+
+    def test_avg_pool2d_2x2(self):
+        # H = 4, W = 4, OH = 2, OW = 2
+        image = Tensor.alloc((4, 4), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        val_list = [
+            1.0,
+            2.0,
+            5.0,
+            6.0,
+            3.0,
+            4.0,
+            7.0,
+            8.0,
+            9.0,
+            10.0,
+            13.0,
+            14.0,
+            11.0,
+            12.0,
+            15.0,
+            16.0,
+        ]
+        for i in range(4):
+            for j in range(4):
+                image[i, j] = val_list[i * 4 + j]
+
+        num.avg_pool2d_2x2(image, out)
+
+        self.assertAlmostEqual(out[0, 0], 2.5)
+        self.assertAlmostEqual(out[0, 1], 6.5)
+        self.assertAlmostEqual(out[1, 0], 10.5)
+        self.assertAlmostEqual(out[1, 1], 14.5)
+
+    def test_clip(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = -1.5
+        a[0, 1] = 0.5
+        a[1, 0] = 2.5
+        a[1, 1] = 1.0
+
+        num.clip(a, out, 0.0, 2.0)
+
+        self.assertEqual(out[0, 0], 0.0)
+        self.assertEqual(out[0, 1], 0.5)
+        self.assertEqual(out[1, 0], 2.0)
+        self.assertEqual(out[1, 1], 1.0)
+
+    def test_mean(self):
+        # M = 4
+        a = Tensor.alloc((4,), f32)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+        a[3] = 4.0
+
+        num.mean(a, out, 4.0)
+
+        self.assertAlmostEqual(out[0], 2.5)
 
 
 if __name__ == "__main__":
