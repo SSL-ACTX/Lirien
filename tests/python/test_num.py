@@ -1181,6 +1181,87 @@ class TestLirienNum(unittest.TestCase):
         self.assertAlmostEqual(res0[0], (1.0 - mean) * inv_std, places=5)
         self.assertAlmostEqual(res1[3], (8.0 - mean) * inv_std, places=5)
 
+    def test_max_pool2d_generic(self):
+        # 3x3 input, 2x2 output, kernel=2, stride=1
+        image = Tensor.alloc((3, 3), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        image[0, 0] = 1.0
+        image[0, 1] = 3.0
+        image[0, 2] = 2.0
+        image[1, 0] = 4.0
+        image[1, 1] = 2.0
+        image[1, 2] = 5.0
+        image[2, 0] = 0.0
+        image[2, 1] = 1.0
+        image[2, 2] = 3.0
+
+        num.max_pool2d(image, out, 2, 2, 1, 1)
+
+        self.assertEqual(out[0, 0], 4.0)
+        self.assertEqual(out[0, 1], 5.0)
+        self.assertEqual(out[1, 0], 4.0)
+        self.assertEqual(out[1, 1], 5.0)
+
+    def test_avg_pool2d_generic(self):
+        # 3x3 input, 2x2 output, kernel=2, stride=1
+        image = Tensor.alloc((3, 3), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        image[0, 0] = 1.0
+        image[0, 1] = 3.0
+        image[0, 2] = 2.0
+        image[1, 0] = 4.0
+        image[1, 1] = 2.0
+        image[1, 2] = 5.0
+        image[2, 0] = 0.0
+        image[2, 1] = 1.0
+        image[2, 2] = 3.0
+
+        num.avg_pool2d(image, out, 2, 2, 1, 1)
+
+        self.assertAlmostEqual(out[0, 0], 2.5, places=5)
+        self.assertAlmostEqual(out[0, 1], 3.0, places=5)
+        self.assertAlmostEqual(out[1, 0], 1.75, places=5)
+        self.assertAlmostEqual(out[1, 1], 2.75, places=5)
+
+    def test_convolve2d_padded(self):
+        # 2x2 input, 2x2 output, 2x2 kernel, stride=1, padding=1
+        image = Tensor.alloc((2, 2), f32)
+        kernel = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        image[0, 0] = 1.0
+        image[0, 1] = 2.0
+        image[1, 0] = 3.0
+        image[1, 1] = 4.0
+
+        kernel[0, 0] = 1.0
+        kernel[0, 1] = 1.0
+        kernel[1, 0] = 1.0
+        kernel[1, 1] = 1.0
+
+        num.convolve2d_padded(image, kernel, out, 1, 1, 1, 1)
+
+        self.assertAlmostEqual(out[0, 0], 1.0, places=5)
+
+    def test_resize_nearest(self):
+        # 2x2 input, 3x3 output, scaling factor = 0.5
+        image = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((3, 3), f32)
+
+        image[0, 0] = 10.0
+        image[0, 1] = 20.0
+        image[1, 0] = 30.0
+        image[1, 1] = 40.0
+
+        num.resize_nearest(image, out, 0.5, 0.5)
+
+        self.assertEqual(out[0, 0], 10.0)
+        self.assertEqual(out[0, 2], 20.0)
+        self.assertEqual(out[2, 0], 30.0)
+        self.assertEqual(out[2, 2], 40.0)
+
 
 if __name__ == "__main__":
     unittest.main()

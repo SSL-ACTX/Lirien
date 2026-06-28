@@ -1,5 +1,5 @@
 import math
-from lirien import verify, f32, Tensor, TypeVar, f32x4
+from lirien import verify, f32, Tensor, TypeVar, f32x4, i64, jit
 
 # Dimension TypeVars
 B = TypeVar("B")
@@ -12,6 +12,10 @@ KH = TypeVar("KH")
 KW = TypeVar("KW")
 OH = TypeVar("OH")
 OW = TypeVar("OW")
+SH = TypeVar("SH")
+SW = TypeVar("SW")
+PH = TypeVar("PH")
+PW = TypeVar("PW")
 
 
 @verify
@@ -938,3 +942,161 @@ def layer_norm_simd(
 
     for i in range(M):
         out[i] = (a[i] - mean_val) * inv_std * gamma[i] + beta[i]
+
+
+@jit
+def max_pool2d(
+    image: Tensor[f32, H, W],
+    out: Tensor[f32, OH, OW],
+    kernel_h: i64,
+    kernel_w: i64,
+    stride_h: i64,
+    stride_w: i64,
+):
+    """
+    Generic 2D Max Pooling with arbitrary kernel size and stride.
+
+    Safety model: @jit (runtime-enforced via assert).
+    Full Z3 formal verification is impractical here because Lirien fully
+    unrolls all 4 nested loops (OH*OW*KH*KW blocks) in the SSA IR, producing
+    a CFG too large for the solver to reason about in bounded time.
+    The boundary assertions below fire at call time, giving the same
+    runtime safety guarantee as PyTorch/NumPy.
+    """
+    assert kernel_h > 0
+    assert kernel_w > 0
+    assert stride_h > 0
+    assert stride_w > 0
+    assert (OH - 1) * stride_h + kernel_h <= H
+    assert (OW - 1) * stride_w + kernel_w <= W
+
+    for i in range(OH):
+        for j in range(OW):
+            h_start = i * stride_h
+            w_start = j * stride_w
+
+            max_val = image[h_start, w_start]
+            for kh in range(kernel_h):
+                for kw in range(kernel_w):
+                    val = image[h_start + kh, w_start + kw]
+                    if val > max_val:
+                        max_val = val
+            out[i, j] = max_val
+
+
+@jit
+def avg_pool2d(
+    image: Tensor[f32, H, W],
+    out: Tensor[f32, OH, OW],
+    kernel_h: i64,
+    kernel_w: i64,
+    stride_h: i64,
+    stride_w: i64,
+):
+    """
+    Generic 2D Average Pooling with arbitrary kernel size and stride.
+
+    Safety model: @jit (runtime-enforced via assert).
+    Same rationale as max_pool2d: 4 nested loops produce a CFG that
+    exceeds Z3's tractable search space at verification time.
+    """
+    assert kernel_h > 0
+    assert kernel_w > 0
+    assert stride_h > 0
+    assert stride_w > 0
+    assert (OH - 1) * stride_h + kernel_h <= H
+    assert (OW - 1) * stride_w + kernel_w <= W
+
+    for i in range(OH):
+        for j in range(OW):
+            h_start = i * stride_h
+            w_start = j * stride_w
+
+            sum_val: f32 = 0.0
+            for kh in range(kernel_h):
+                for kw in range(kernel_w):
+                    sum_val = sum_val + image[h_start + kh, w_start + kw]
+
+            denom = f32(kernel_h * kernel_w)
+            assert denom > 0.0
+            out[i, j] = sum_val / denom
+
+
+@jit
+def convolve2d_padded(
+    image: Tensor[f32, H, W],
+    kernel: Tensor[f32, KH, KW],
+    out: Tensor[f32, OH, OW],
+    stride_h: i64,
+    stride_w: i64,
+    pad_h: i64,
+    pad_w: i64,
+):
+    """
+    Generic 2D Convolution with arbitrary stride and zero-padding.
+
+    Safety model: @jit (runtime-enforced via assert + branch guards).
+    The 4-level nested loop produces a SSA CFG that is too large for Z3
+    to discharge within a bounded timeout. Safety is guaranteed structurally
+    by the flow-sensitive im_h/im_w bounds checks inside the loop body,
+    which prevent any out-of-bounds access at runtime.
+    """
+    assert stride_h > 0
+    assert stride_w > 0
+    assert pad_h >= 0
+    assert pad_w >= 0
+
+    for i in range(OH):
+        for j in range(OW):
+            sum_val: f32 = 0.0
+            for kh in range(KH):
+                for kw in range(KW):
+                    im_h = i * stride_h + kh - pad_h
+                    im_w = j * stride_w + kw - pad_w
+
+                    if im_h >= 0:
+                        if im_h < H:
+                            if im_w >= 0:
+                                if im_w < W:
+                                    sum_val = (
+                                        sum_val + image[im_h, im_w] * kernel[kh, kw]
+                                    )
+            out[i, j] = sum_val
+
+
+@jit
+def resize_nearest(
+    image: Tensor[f32, H, W],
+    out: Tensor[f32, OH, OW],
+    scale_h: f32,
+    scale_w: f32,
+):
+    """
+    Nearest-neighbor image resizing with arbitrary float scaling factors.
+
+    Safety model: @jit (runtime-enforced via assert + branch guards).
+    The float-to-int index computation combined with the nested loop CFG
+    exceeds Z3's tractable search space. Safety is guaranteed structurally
+    by the src_h/src_w bounds checks, which prevent out-of-bounds access.
+    """
+    assert scale_h > 0.0
+    assert scale_w > 0.0
+
+    for i in range(OH):
+        for j in range(OW):
+            src_h = int(f32(i) * scale_h)
+            src_w = int(f32(j) * scale_w)
+
+            if src_h >= 0:
+                if src_h < H:
+                    if src_w >= 0:
+                        if src_w < W:
+                            out[i, j] = image[src_h, src_w]
+                        else:
+                            out[i, j] = 0.0
+                    else:
+                        out[i, j] = 0.0
+                else:
+                    out[i, j] = 0.0
+            else:
+                out[i, j] = 0.0
