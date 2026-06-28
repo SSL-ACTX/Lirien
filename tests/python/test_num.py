@@ -124,6 +124,70 @@ class TestLirienNum(unittest.TestCase):
         self.assertEqual(out[1, 0], 24.0)
         self.assertEqual(out[1, 1], 28.0)
 
+    def test_matmul(self):
+        # M = 2, N = 3, K = 2
+        a = Tensor.alloc((2, 3), f32)
+        b = Tensor.alloc((3, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        # a = [[1, 2, 3],
+        #      [4, 5, 6]]
+        a[0, 0] = 1.0; a[0, 1] = 2.0; a[0, 2] = 3.0
+        a[1, 0] = 4.0; a[1, 1] = 5.0; a[1, 2] = 6.0
+
+        # b = [[7, 8],
+        #      [9, 10],
+        #      [11, 12]]
+        b[0, 0] = 7.0; b[0, 1] = 8.0
+        b[1, 0] = 9.0; b[1, 1] = 10.0
+        b[2, 0] = 11.0; b[2, 1] = 12.0
+
+        num.matmul(a, b, out)
+
+        # out[0, 0] = 1*7 + 2*9 + 3*11 = 7 + 18 + 33 = 58.0
+        # out[0, 1] = 1*8 + 2*10 + 3*12 = 8 + 20 + 36 = 64.0
+        # out[1, 0] = 4*7 + 5*9 + 6*11 = 28 + 45 + 66 = 139.0
+        # out[1, 1] = 4*8 + 5*10 + 6*12 = 32 + 50 + 72 = 154.0
+        self.assertEqual(out[0, 0], 58.0)
+        self.assertEqual(out[0, 1], 64.0)
+        self.assertEqual(out[1, 0], 139.0)
+        self.assertEqual(out[1, 1], 154.0)
+
+    def test_softmax(self):
+        # N = 3
+        a = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+
+        num.softmax(a, out)
+
+        sum_exp = math.exp(1.0) + math.exp(2.0) + math.exp(3.0)
+        self.assertAlmostEqual(out[0], math.exp(1.0) / sum_exp)
+        self.assertAlmostEqual(out[1], math.exp(2.0) / sum_exp)
+        self.assertAlmostEqual(out[2], math.exp(3.0) / sum_exp)
+
+    def test_add(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        b = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 1.0; a[0, 1] = 2.0
+        a[1, 0] = 3.0; a[1, 1] = 4.0
+
+        b[0, 0] = 5.0; b[0, 1] = 6.0
+        b[1, 0] = 7.0; b[1, 1] = 8.0
+
+        num.add(a, b, out)
+
+        self.assertEqual(out[0, 0], 6.0)
+        self.assertEqual(out[0, 1], 8.0)
+        self.assertEqual(out[1, 0], 10.0)
+        self.assertEqual(out[1, 1], 12.0)
+
 
 if __name__ == "__main__":
     unittest.main()

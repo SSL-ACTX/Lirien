@@ -96,3 +96,41 @@ def convolve2d(
                 for kj in range(KW):
                     sum_val = sum_val + image[i + ki, j + kj] * kernel[ki, kj]
             out[i, j] = sum_val
+
+
+@verify
+def matmul(a: Tensor[f32, M, N], b: Tensor[f32, N, K], out: Tensor[f32, M, K]):
+    """
+    Matrix multiplication of 'a' and 'b', storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(K):
+            sum_val: f32 = 0.0
+            for l in range(N):
+                sum_val = sum_val + a[i, l] * b[l, j]
+            out[i, j] = sum_val
+
+
+@verify
+def softmax(a: Tensor[f32, M], out: Tensor[f32, M]):
+    """
+    Apply Softmax activation to 1D tensor 'a', storing the result in 'out'.
+    Statically verified by Z3 to be division-by-zero safe and memory-safe.
+    """
+    sum_exp: f32 = 0.0
+    for i in range(M):
+        sum_exp = sum_exp + math.exp(a[i])
+    for i in range(M):
+        out[i] = math.exp(a[i]) / sum_exp
+
+
+@verify
+def add(a: Tensor[f32, M, N], b: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Element-wise addition of 'a' and 'b', storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] + b[i, j]
