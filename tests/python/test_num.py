@@ -188,6 +188,66 @@ class TestLirienNum(unittest.TestCase):
         self.assertEqual(out[1, 0], 10.0)
         self.assertEqual(out[1, 1], 12.0)
 
+    def test_sub(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        b = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 5.0; a[0, 1] = 6.0
+        a[1, 0] = 7.0; a[1, 1] = 8.0
+
+        b[0, 0] = 1.0; b[0, 1] = 2.0
+        b[1, 0] = 3.0; b[1, 1] = 4.0
+
+        num.sub(a, b, out)
+
+        self.assertEqual(out[0, 0], 4.0)
+        self.assertEqual(out[0, 1], 4.0)
+        self.assertEqual(out[1, 0], 4.0)
+        self.assertEqual(out[1, 1], 4.0)
+
+    def test_mul(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        b = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 1.0; a[0, 1] = 2.0
+        a[1, 0] = 3.0; a[1, 1] = 4.0
+
+        b[0, 0] = 5.0; b[0, 1] = 6.0
+        b[1, 0] = 7.0; b[1, 1] = 8.0
+
+        num.mul(a, b, out)
+
+        self.assertEqual(out[0, 0], 5.0)
+        self.assertEqual(out[0, 1], 12.0)
+        self.assertEqual(out[1, 0], 21.0)
+        self.assertEqual(out[1, 1], 32.0)
+
+    def test_max_pool2d_2x2(self):
+        # H = 4, W = 4, OH = 2, OW = 2
+        image = Tensor.alloc((4, 4), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        val_list = [
+            1.0, 2.0, 5.0, 6.0,
+            3.0, 4.0, 7.0, 8.0,
+            9.0, 10.0, 13.0, 14.0,
+            11.0, 12.0, 15.0, 16.0
+        ]
+        for i in range(4):
+            for j in range(4):
+                image[i, j] = val_list[i * 4 + j]
+
+        num.max_pool2d_2x2(image, out)
+
+        self.assertEqual(out[0, 0], 4.0)
+        self.assertEqual(out[0, 1], 8.0)
+        self.assertEqual(out[1, 0], 12.0)
+        self.assertEqual(out[1, 1], 16.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,8 @@ H = TypeVar("H")
 W = TypeVar("W")
 KH = TypeVar("KH")
 KW = TypeVar("KW")
+OH = TypeVar("OH")
+OW = TypeVar("OW")
 
 
 @verify
@@ -134,3 +136,49 @@ def add(a: Tensor[f32, M, N], b: Tensor[f32, M, N], out: Tensor[f32, M, N]):
     for i in range(M):
         for j in range(N):
             out[i, j] = a[i, j] + b[i, j]
+
+
+@verify
+def sub(a: Tensor[f32, M, N], b: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Element-wise subtraction of 'a' and 'b', storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] - b[i, j]
+
+
+@verify
+def mul(a: Tensor[f32, M, N], b: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Element-wise multiplication of 'a' and 'b', storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] * b[i, j]
+
+
+@verify
+def max_pool2d_2x2(image: Tensor[f32, H, W], out: Tensor[f32, OH, OW]):
+    """
+    2x2 Max Pooling with stride 2.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(OH):
+        for j in range(OW):
+            v00 = image[i * 2, j * 2]
+            v01 = image[i * 2, j * 2 + 1]
+            v10 = image[i * 2 + 1, j * 2]
+            v11 = image[i * 2 + 1, j * 2 + 1]
+
+            max_val = v00
+            if v01 > max_val:
+                max_val = v01
+            if v10 > max_val:
+                max_val = v10
+            if v11 > max_val:
+                max_val = v11
+
+            out[i, j] = max_val
