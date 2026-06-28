@@ -12,7 +12,7 @@ pub fn lower<M: Module>(
     args: &[SsaValue],
 ) -> Result<(), LoweringError> {
     let fn_ty = ctx.ssa_func.get_type(fn_ptr);
-    let (arg_types, ret_ty, is_closure) = match fn_ty {
+    let (mut arg_types, ret_ty, is_closure) = match fn_ty {
         SsaType::FnPointer(ref args, ref ret, _) => (args.clone(), (**ret).clone(), false),
         SsaType::Closure(_, ref args, ref ret, _) => (args.clone(), (**ret).clone(), true),
         _ => {
@@ -24,6 +24,9 @@ pub fn lower<M: Module>(
             (fallback_args, SsaType::I64, false)
         }
     };
+
+    // Prepend exception pointer type to arg_types (since all JIT functions have it as the first parameter)
+    arg_types.insert(0, SsaType::Pointer(Box::new(SsaType::I64)));
 
     let (sig, is_sret, is_register_composite_ret) =
         super::build_cranelift_signature(ctx.ssa_func, &arg_types, &ret_ty, is_closure, ctx.module);

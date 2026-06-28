@@ -45,6 +45,8 @@ pub struct CFGBuilder {
     pub sealed_blocks: HashSet<BlockId>,
     /// Active loop block tracking for break and continue statements: (header, exit).
     pub loop_stack: Vec<(BlockId, BlockId)>,
+    /// Active try block exception handler dispatch blocks.
+    pub try_stack: Vec<BlockId>,
     /// Collected lambda helper functions compiled from the AST.
     pub lambdas: Vec<Function>,
 }
@@ -296,6 +298,7 @@ impl CFGBuilder {
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
             lambdas: Vec::new(),
         };
 
@@ -460,6 +463,21 @@ impl CFGBuilder {
         }
     }
 
+    pub fn insert_instruction_before_terminator(
+        &mut self,
+        block_id: BlockId,
+        kind: InstructionKind,
+    ) -> &mut Instruction {
+        if let Some(block) = self.func.blocks.iter_mut().find(|b| b.id == block_id) {
+            let inst = Instruction::new(kind, self.current_location);
+            let pos = block.instructions.len().saturating_sub(1);
+            block.instructions.insert(pos, inst);
+            &mut block.instructions[pos]
+        } else {
+            panic!("Block {} not found", block_id);
+        }
+    }
+
     pub fn create_block(&mut self) -> BlockId {
         let id = self.func.next_block();
         self.func.blocks.push(BasicBlock {
@@ -519,6 +537,7 @@ impl CFGBuilder {
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
             lambdas: Vec::new(),
         };
 

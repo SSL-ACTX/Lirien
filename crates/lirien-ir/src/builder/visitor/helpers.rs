@@ -1,8 +1,96 @@
+use crate::builder::error::BuilderResult;
 use crate::builder::CFGBuilder;
-use crate::ir::{InstructionKind, SourceLocation, Value};
+use crate::ir::{InstructionKind, SourceLocation, Type, Value};
 use crate::push_inst;
 
 impl CFGBuilder {
+    pub(crate) fn dummy_value(&mut self, ty: &Type) -> BuilderResult<Value> {
+        let val = self.func.next_value();
+        match ty {
+            Type::I64
+            | Type::I32
+            | Type::I16
+            | Type::I8
+            | Type::U64
+            | Type::U32
+            | Type::U16
+            | Type::U8 => {
+                push_inst!(self, InstructionKind::ConstInt(val, 0));
+            }
+            Type::F64 | Type::F32 => {
+                push_inst!(self, InstructionKind::ConstFloat(val, 0.0));
+            }
+            Type::Bool => {
+                let zero = self.func.next_value();
+                push_inst!(self, InstructionKind::ConstInt(zero, 0));
+                self.func.set_type(zero, Type::I64);
+                push_inst!(self, InstructionKind::Ne(val, zero, zero)); // false
+            }
+            Type::Pointer(_)
+            | Type::NullablePointer(_)
+            | Type::Optional(_)
+            | Type::List(_)
+            | Type::Buffer(_)
+            | Type::Tensor(_, _)
+            | Type::Array(_, _) => {
+                push_inst!(self, InstructionKind::ConstInt(val, 0)); // null pointer / 0
+            }
+            _ => {
+                push_inst!(self, InstructionKind::ConstInt(val, 0));
+            }
+        }
+        self.func.set_type(val, ty.clone());
+        Ok(val)
+    }
+
+    pub(crate) fn check_and_propagate_exception(&mut self) -> BuilderResult<()> {
+        let exc_ptr = Value(0);
+        let exc_val = self.func.next_value();
+        push_inst!(self, InstructionKind::PointerLoad(exc_val, exc_ptr));
+        self.func.set_type(exc_val, Type::I64);
+
+        let zero = self.func.next_value();
+        push_inst!(self, InstructionKind::ConstInt(zero, 0));
+        self.func.set_type(zero, Type::I64);
+
+        let has_exc = self.func.next_value();
+        push_inst!(self, InstructionKind::Ne(has_exc, exc_val, zero));
+        self.func.set_type(has_exc, Type::Bool);
+
+        let next_block = self.create_block();
+        let handler_block = if let Some(&handler) = self.try_stack.last() {
+            handler
+        } else {
+            let ret_block = self.create_block();
+            let prev_block = self.current_block;
+
+            self.start_block(ret_block);
+            let ret_val = if self.func.return_type != Type::Unknown
+                && self.func.return_type != Type::Tuple(vec![])
+            {
+                Some(self.dummy_value(&self.func.return_type.clone())?)
+            } else {
+                None
+            };
+            push_inst!(self, InstructionKind::Return(ret_val));
+            self.seal_block(ret_block)?;
+
+            self.current_block = prev_block;
+            ret_block
+        };
+
+        push_inst!(
+            self,
+            InstructionKind::Branch(has_exc, handler_block, next_block)
+        );
+        self.link_blocks(self.current_block, handler_block);
+        self.link_blocks(self.current_block, next_block);
+
+        self.seal_block(next_block)?;
+        self.start_block(next_block);
+        Ok(())
+    }
+
     pub(super) fn get_constant_int(&self, val: Value) -> Option<i64> {
         // Check if the type system already knows this is a literal
         if let Some(crate::ir::Type::Literal(_, v)) = self.func.value_types.get(&val) {

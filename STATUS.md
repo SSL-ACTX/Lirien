@@ -84,6 +84,16 @@ Lirien is an experimental research compiler. It is under active development and 
 - [x] Tuple/Aggregate Unpacking & Destructuring Assignment
 - [x] Intermediate Inline Assertions (Safety Proofs)
 - [x] Pattern Matching Destructuring
+- [ ] Python Parity & Language Expressiveness
+  - [x] List Comprehensions (`[x * 2 for x in l]`)
+  - [ ] Exception Handling (`try` / `except` / `raise`)
+  - [ ] Native String Type (`str`)
+- [ ] Advanced Code Generation & Optimization
+  - [ ] Ahead-of-Time (AOT) Compilation to Shared Libraries
+  - [ ] Auto-Vectorization (SIMD)
+  - [ ] Bounded Loop Unrolling & Peeling
+- [ ] Verification & SMT Enhancements
+  - [ ] Counterexample-Guided Debugging (SMT model extraction)
 
 ---
 

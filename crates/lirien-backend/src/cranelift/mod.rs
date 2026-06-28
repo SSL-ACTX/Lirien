@@ -439,8 +439,17 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     let mut ctx = module.make_context();
     let mut func_ctx = FunctionBuilderContext::new();
 
+    let is_closure = ssa_func.arg_count > 1
+        && matches!(
+            ssa_func.get_type(SsaValue(1)),
+            lirien_ir::ir::Type::Struct(ref name) if name == "ClosureEnv"
+        );
+
     let mut arg_types = Vec::new();
     for i in 0..ssa_func.arg_count {
+        if is_closure && i == 1 {
+            continue;
+        }
         arg_types.push(ssa_func.get_type(SsaValue(i)));
     }
 
@@ -448,7 +457,7 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         ssa_func,
         &arg_types,
         &ssa_func.return_type,
-        false,
+        is_closure,
         &module,
     );
 
@@ -609,8 +618,20 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
             if block_id == ssa_func.entry_block {
                 // 4.1. Initialize arguments in the entry block
                 let mut p_idx = param_idx; // SRet already handled
+                let cl_ctx_param = if is_closure {
+                    let ptr = cg_ctx.builder.block_params(entry_block)[p_idx];
+                    p_idx += 1;
+                    Some(ptr)
+                } else {
+                    None
+                };
+
                 for i in 0..ssa_func.arg_count {
                     let val = SsaValue(i);
+                    if is_closure && i == 1 {
+                        cg_ctx.values.insert(val, cl_ctx_param.unwrap());
+                        continue;
+                    }
                     let ty = ssa_func.get_type(val);
                     match ty {
                         SsaType::Buffer(_) => {

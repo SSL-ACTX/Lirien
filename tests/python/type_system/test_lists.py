@@ -112,6 +112,47 @@ class TestLists(unittest.TestCase):
         self.assertEqual(lst[0], 42)
         self.assertEqual(lst[1], 100)
 
+    def test_list_comprehension_range(self):
+        @verify
+        def comp_range(n: i64) -> list[i64]:
+            return [x * 2 for x in range(n)]
+
+        lst = comp_range(5)
+        self.assertEqual(len(lst), 5)
+        self.assertEqual(lst[0], 0)
+        self.assertEqual(lst[1], 2)
+        self.assertEqual(lst[2], 4)
+        self.assertEqual(lst[3], 6)
+        self.assertEqual(lst[4], 8)
+
+    def test_list_comprehension_list(self):
+        @verify
+        def comp_list(l: list[i64]) -> list[i64]:
+            return [x + 1 for x in l]
+
+        l = List[i64]()
+        l.append(10)
+        l.append(20)
+        lst = comp_list(l)
+        self.assertEqual(len(lst), 2)
+        self.assertEqual(lst[0], 11)
+        self.assertEqual(lst[1], 21)
+
+    def test_list_comprehension_filter(self):
+        @verify
+        def comp_filter(l: list[i64]) -> list[i64]:
+            return [x for x in l if x > 10]
+
+        l = List[i64]()
+        l.append(5)
+        l.append(15)
+        l.append(8)
+        l.append(20)
+        lst = comp_filter(l)
+        self.assertEqual(len(lst), 2)
+        self.assertEqual(lst[0], 15)
+        self.assertEqual(lst[1], 20)
+
 
 if __name__ == "__main__":
     unittest.main()

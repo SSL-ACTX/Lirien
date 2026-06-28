@@ -124,20 +124,27 @@ impl CFGBuilder {
             let dest = self.func.next_value();
             self.update_location(expr_offset);
 
+            let exc_ptr = Value(0);
+
             if let Some(target) = static_target {
                 // If it's a Closure, we must pass the context pointer as the first argument.
                 if let Type::Closure(..) = fn_ty {
-                    let mut call_args = vec![fn_val];
+                    let mut call_args = vec![exc_ptr, fn_val];
                     call_args.extend(args);
                     push_inst!(self, InstructionKind::Call(dest, target, call_args));
                 } else {
-                    push_inst!(self, InstructionKind::Call(dest, target, args));
+                    let mut call_args = vec![exc_ptr];
+                    call_args.extend(args);
+                    push_inst!(self, InstructionKind::Call(dest, target, call_args));
                 }
             } else {
-                push_inst!(self, InstructionKind::IndirectCall(dest, fn_val, args));
+                let mut call_args = vec![exc_ptr];
+                call_args.extend(args);
+                push_inst!(self, InstructionKind::IndirectCall(dest, fn_val, call_args));
             }
 
             self.func.set_type(dest, ret_ty);
+            self.check_and_propagate_exception()?;
             return Ok(dest);
         }
 
@@ -809,8 +816,15 @@ impl CFGBuilder {
 
         let dest = self.func.next_value();
         self.update_location(expr_offset);
-        push_inst!(self, InstructionKind::Call(dest, func_name.clone(), args));
+        let exc_ptr = Value(0);
+        let mut call_args = vec![exc_ptr];
+        call_args.extend(args);
+        push_inst!(
+            self,
+            InstructionKind::Call(dest, func_name.clone(), call_args)
+        );
         self.func.set_type(dest, ret_ty);
+        self.check_and_propagate_exception()?;
         Ok(dest)
     }
 
@@ -846,12 +860,16 @@ impl CFGBuilder {
 
         // Define arguments in lambda
         // arg0 is always ctx_ptr
-        lambda_builder.func.arg_count = 1 + s.args.args.len();
+        lambda_builder.func.arg_count = 2 + s.args.args.len();
         lambda_builder.func.value_count = lambda_builder.func.arg_count;
         lambda_builder
             .func
             .value_types
-            .insert(Value(0), Type::Struct("ClosureEnv".to_string())); // ctx_ptr
+            .insert(Value(0), Type::Pointer(Box::new(Type::I64))); // _exc_ptr
+        lambda_builder
+            .func
+            .value_types
+            .insert(Value(1), Type::Struct("ClosureEnv".to_string())); // ctx_ptr
 
         for (i, arg) in s.args.args.iter().enumerate() {
             let arg_ty = if let Some(ann) = &arg.def.annotation {
@@ -865,11 +883,11 @@ impl CFGBuilder {
             } else {
                 Type::Unknown
             };
-            lambda_builder.func.value_types.insert(Value(i + 1), arg_ty);
+            lambda_builder.func.value_types.insert(Value(i + 2), arg_ty);
             lambda_builder.write_variable(
                 arg.def.arg.to_string(),
                 lambda_builder.current_block,
-                Value(i + 1),
+                Value(i + 2),
             );
         }
 
@@ -883,7 +901,7 @@ impl CFGBuilder {
                 let dest = lambda_builder.func.next_value();
                 push_inst!(
                     lambda_builder,
-                    InstructionKind::StructLoad(dest, Value(0), offset,)
+                    InstructionKind::StructLoad(dest, Value(1), offset,)
                 );
                 lambda_builder.func.set_type(dest, ty.clone());
                 lambda_builder.write_variable(name.0.clone(), lambda_builder.current_block, dest);
@@ -896,6 +914,35 @@ impl CFGBuilder {
         let ret_val = lambda_builder.visit_expr(*s.body)?;
         push_inst!(lambda_builder, InstructionKind::Return(Some(ret_val)));
         lambda_builder.func.return_type = lambda_builder.func.get_type(ret_val);
+
+        let ret_ty = lambda_builder.func.return_type.clone();
+        if ret_ty != Type::Unknown && ret_ty != Type::Tuple(vec![]) {
+            let block_ids: Vec<crate::ir::BlockId> = lambda_builder
+                .func
+                .blocks
+                .iter()
+                .filter(|b| {
+                    b.instructions.last().map_or(false, |inst| {
+                        matches!(inst.kind, InstructionKind::Return(None))
+                    })
+                })
+                .map(|b| b.id)
+                .collect();
+
+            for bid in block_ids {
+                let prev_block = lambda_builder.current_block;
+                lambda_builder.current_block = bid;
+
+                if let Some(block) = lambda_builder.func.blocks.iter_mut().find(|b| b.id == bid) {
+                    block.instructions.pop();
+                }
+
+                let dummy = lambda_builder.dummy_value(&ret_ty)?;
+                push_inst!(lambda_builder, InstructionKind::Return(Some(dummy)));
+
+                lambda_builder.current_block = prev_block;
+            }
+        }
 
         // Optimization for lambda
         crate::optimization::optimize(&mut lambda_builder.func);
@@ -914,7 +961,7 @@ impl CFGBuilder {
             InstructionKind::Lambda(dest, lambda_name.clone(), capture_vals,)
         );
 
-        let arg_types: Vec<Type> = (1..1 + s.args.args.len())
+        let arg_types: Vec<Type> = (2..2 + s.args.args.len())
             .map(|i| lambda_func.get_type(Value(i)))
             .collect();
         self.func.set_type(

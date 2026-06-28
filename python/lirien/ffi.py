@@ -164,7 +164,7 @@ def _map_ctypes_arguments(
     sig: inspect.Signature, class_name: str = None, type_mapping: dict[str, str] = None
 ) -> tuple[list[Any], list[Any]]:
     """Map Python function parameters to ctypes types and tracking info."""
-    c_args = []
+    c_args = [ctypes.c_void_p]
     arg_map = []  # List of (type, c_idx, [metadata])
 
     for i, param in enumerate(sig.parameters.values()):
@@ -575,6 +575,8 @@ def _create_jit_wrapper(
     if is_closure:
         c_args.append(ctypes.c_void_p)  # ctx_ptr
 
+    c_args.append(ctypes.c_void_p)  # exc_ptr
+
     for i, ty in enumerate(arg_types):
         ty_str = _get_type_name(ty, type_mapping).lower()
         if "buffer" in ty_str:
@@ -659,7 +661,17 @@ def _create_jit_wrapper(
             insert_idx = 1 if is_ptr_return else 0
             processed_args.insert(insert_idx, code_ptr)
 
+        exc_status = ctypes.c_int64(0)
+        exc_idx = 0
+        if is_ptr_return:
+            exc_idx += 1
+        if is_closure:
+            exc_idx += 1
+        processed_args.insert(exc_idx, ctypes.byref(exc_status))
+
         res = c_func(*processed_args)
+        if exc_status.value != 0:
+            _raise_python_exception(exc_status.value)
 
         # Sync back changes for TypedDict
         for target_dict, struct_obj in sync_backs:
@@ -1235,7 +1247,12 @@ def _create_wrapper(
                 args, arg_map, c_args, is_ptr_return, TupleReturn
             )
 
+            exc_status = ctypes.c_int64(0)
+            exc_idx = 1 if is_ptr_return else 0
+            processed_args.insert(exc_idx, ctypes.byref(exc_status))
             res = c_func(*processed_args)
+            if exc_status.value != 0:
+                _raise_python_exception(exc_status.value)
 
             # Sync back changes for TypedDict
             for target_dict, struct_obj in sync_backs:
@@ -1365,3 +1382,18 @@ def _create_wrapper(
     wrapper.__name__ = func.__name__
     wrapper.__lirien_closure__ = False
     return wrapper
+
+
+def _raise_python_exception(exc_id: int):
+    if exc_id == 1:
+        raise ValueError("Lirien JIT: ValueError")
+    elif exc_id == 2:
+        raise TypeError("Lirien JIT: TypeError")
+    elif exc_id == 3:
+        raise IndexError("Lirien JIT: IndexError")
+    elif exc_id == 4:
+        raise RuntimeError("Lirien JIT: RuntimeError")
+    elif exc_id == 5:
+        raise ZeroDivisionError("Lirien JIT: ZeroDivisionError")
+    else:
+        raise RuntimeError(f"Lirien JIT: Unknown exception ID {exc_id}")

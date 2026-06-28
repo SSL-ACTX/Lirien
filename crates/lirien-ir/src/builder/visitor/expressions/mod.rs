@@ -27,6 +27,7 @@ impl CFGBuilder {
             ast::Expr::Tuple(t) => self.visit_tuple(t),
             ast::Expr::Call(s) => self.visit_call(s),
             ast::Expr::Lambda(s) => self.visit_lambda(s),
+            ast::Expr::ListComp(s) => self.visit_listcomp(s),
             _ => Err(builder_error!(
                 General,
                 "Expression type {:?} not yet supported",
@@ -443,5 +444,275 @@ impl CFGBuilder {
         }
 
         Ok(kind)
+    }
+
+    pub(crate) fn visit_listcomp(&mut self, s: ast::ExprListComp) -> BuilderResult<Value> {
+        if s.generators.len() != 1 {
+            return Err(builder_error!(
+                UnsupportedStatement,
+                "List comprehensions with multiple generators are not yet supported"
+            ));
+        }
+
+        let gen = &s.generators[0];
+        if gen.is_async {
+            return Err(builder_error!(
+                UnsupportedStatement,
+                "Async list comprehensions are not supported"
+            ));
+        }
+
+        let target_name = match &gen.target {
+            ast::Expr::Name(n) => n.id.to_string(),
+            _ => {
+                return Err(builder_error!(
+                    UnsupportedStatement,
+                    "List comprehension target must be a simple variable name"
+                ))
+            }
+        };
+
+        // 1. Determine if iter is range(...)
+        let mut is_range = false;
+        let mut range_start = None;
+        let mut range_end = None;
+        let mut range_step = None;
+
+        if let ast::Expr::Call(range_call) = &gen.iter {
+            if let ast::Expr::Name(n) = &*range_call.func {
+                if n.id.as_str() == "range" {
+                    is_range = true;
+                    match range_call.args.len() {
+                        1 => {
+                            range_end = Some(self.visit_expr(range_call.args[0].clone())?);
+                        }
+                        2 => {
+                            range_start = Some(self.visit_expr(range_call.args[0].clone())?);
+                            range_end = Some(self.visit_expr(range_call.args[1].clone())?);
+                        }
+                        3 => {
+                            range_start = Some(self.visit_expr(range_call.args[0].clone())?);
+                            range_end = Some(self.visit_expr(range_call.args[1].clone())?);
+                            range_step = Some(self.visit_expr(range_call.args[2].clone())?);
+                        }
+                        _ => return Err(builder_error!(General, "Unsupported range() signature")),
+                    }
+                }
+            }
+        }
+
+        let prev_block = self.current_block;
+
+        // Resolve range start/step values if it is a range
+        let mut st_v = None;
+        let mut target_ty = Type::I64;
+        let mut iter_val = None;
+        let mut iter_ty = Type::Unknown;
+        let mut len_val = None;
+        let mut idx_var_name = String::new();
+
+        if is_range {
+            let start_val = if let Some(v) = range_start {
+                v
+            } else {
+                let zero = self.func.next_value();
+                push_inst!(self, InstructionKind::ConstInt(zero, 0));
+                self.func.set_type(zero, Type::I64);
+                zero
+            };
+
+            let step_val = if let Some(v) = range_step {
+                v
+            } else {
+                let one = self.func.next_value();
+                push_inst!(self, InstructionKind::ConstInt(one, 1));
+                self.func.set_type(one, Type::I64);
+                one
+            };
+            st_v = Some(step_val);
+
+            self.write_variable(target_name.clone(), prev_block, start_val);
+        } else {
+            // It's a collection
+            let v = self.visit_expr(gen.iter.clone())?;
+            let v = self.auto_load(v);
+            iter_val = Some(v);
+            iter_ty = self.func.get_type(v);
+
+            target_ty = match &iter_ty {
+                Type::List(inner)
+                | Type::Array(inner, _)
+                | Type::Buffer(inner)
+                | Type::Tensor(inner, _) => (**inner).clone(),
+                _ => {
+                    return Err(builder_error!(
+                        General,
+                        "List comprehension iterable must be a collection or range(), found {:?}",
+                        iter_ty
+                    ))
+                }
+            };
+
+            // Get length of the collection
+            let l_val = self.func.next_value();
+            let len_inst = match &iter_ty {
+                Type::List(_) => InstructionKind::ListLen(l_val, v),
+                Type::Buffer(_) => InstructionKind::BufferLen(l_val, v),
+                Type::Array(_, Some(size)) => InstructionKind::ConstInt(l_val, *size as i64),
+                _ => unreachable!(),
+            };
+            push_inst!(self, len_inst);
+            self.func.set_type(l_val, Type::I64);
+            len_val = Some(l_val);
+
+            // Initialize index to 0
+            let idx_val = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(idx_val, 0));
+            self.func.set_type(idx_val, Type::I64);
+
+            idx_var_name = format!("_comp_idx_{}", self.func.value_count);
+            self.write_variable(idx_var_name.clone(), prev_block, idx_val);
+        }
+
+        // Initialize the empty list (element type is unknown yet)
+        let list_val = self.func.next_value();
+        self.func.set_type(list_val, Type::Unknown);
+
+        let list_var_name = format!("_comp_list_{}", self.func.value_count);
+        self.write_variable(list_var_name.clone(), prev_block, list_val);
+
+        // Setup blocks
+        let header_block = self.create_block();
+        let body_block = self.create_block();
+        let latch_block = self.create_block();
+        let exit_block = self.create_block();
+
+        push_inst!(self, InstructionKind::Jump(header_block));
+        self.link_blocks(prev_block, header_block);
+
+        // --- Header Block ---
+        self.start_block(header_block);
+        let curr_idx = if is_range {
+            self.read_variable(target_name.clone(), header_block)?
+        } else {
+            self.read_variable(idx_var_name.clone(), header_block)?
+        };
+
+        let limit_val = if is_range {
+            range_end.unwrap()
+        } else {
+            len_val.unwrap()
+        };
+
+        let cond = self.func.next_value();
+        push_inst!(self, InstructionKind::SLt(cond, curr_idx, limit_val));
+        self.func.set_type(cond, Type::Bool);
+
+        push_inst!(self, InstructionKind::Branch(cond, body_block, exit_block));
+        self.link_blocks(header_block, body_block);
+        self.link_blocks(header_block, exit_block);
+
+        // --- Body Block ---
+        self.seal_block(body_block)?;
+        self.start_block(body_block);
+
+        let target_val = if is_range {
+            curr_idx
+        } else {
+            let loaded_val = self.func.next_value();
+            let load_inst = match &iter_ty {
+                Type::List(_) => InstructionKind::ListLoad(loaded_val, iter_val.unwrap(), curr_idx),
+                Type::Buffer(_) => {
+                    InstructionKind::BufferLoad(loaded_val, iter_val.unwrap(), curr_idx)
+                }
+                Type::Array(_, _) => {
+                    InstructionKind::ArrayLoad(loaded_val, iter_val.unwrap(), curr_idx)
+                }
+                _ => unreachable!(),
+            };
+            push_inst!(self, load_inst);
+            self.func.set_type(loaded_val, target_ty.clone());
+            loaded_val
+        };
+
+        self.write_variable(target_name.clone(), body_block, target_val);
+
+        // Handle filters (ifs)
+        let mut current_body_block = body_block;
+        for filter_expr in &gen.ifs {
+            let pass_block = self.create_block();
+            let filter_cond = self.visit_expr(filter_expr.clone())?;
+            let filter_cond = self.auto_load(filter_cond);
+
+            push_inst!(
+                self,
+                InstructionKind::Branch(filter_cond, pass_block, latch_block)
+            );
+            self.link_blocks(current_body_block, pass_block);
+            self.link_blocks(current_body_block, latch_block);
+
+            self.seal_block(pass_block)?;
+            self.start_block(pass_block);
+            current_body_block = pass_block;
+        }
+
+        // Evaluate elt
+        let elt_val = self.visit_expr((*s.elt).clone())?;
+        let elt_val = self.auto_load(elt_val);
+        let elt_ty = self.func.get_type(elt_val);
+
+        // Append to list
+        let curr_list = self.read_variable(list_var_name.clone(), current_body_block)?;
+        let next_list_val = self.func.next_value();
+        push_inst!(
+            self,
+            InstructionKind::ListAppend(next_list_val, curr_list, elt_val)
+        );
+        self.func
+            .set_type(next_list_val, Type::List(Box::new(elt_ty.clone())));
+        self.write_variable(list_var_name.clone(), current_body_block, next_list_val);
+
+        push_inst!(self, InstructionKind::Jump(latch_block));
+        self.link_blocks(current_body_block, latch_block);
+
+        // --- Latch Block ---
+        self.seal_block(latch_block)?;
+        self.start_block(latch_block);
+
+        if is_range {
+            let curr_val = self.read_variable(target_name.clone(), latch_block)?;
+            let next_val = self.func.next_value();
+            let step_v = st_v.unwrap();
+            push_inst!(self, InstructionKind::Add(next_val, curr_val, step_v));
+            self.func.set_type(next_val, Type::I64);
+            self.write_variable(target_name.clone(), latch_block, next_val);
+        } else {
+            let curr_val = self.read_variable(idx_var_name.clone(), latch_block)?;
+            let next_val = self.func.next_value();
+            let one = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(one, 1));
+            self.func.set_type(one, Type::I64);
+            push_inst!(self, InstructionKind::Add(next_val, curr_val, one));
+            self.func.set_type(next_val, Type::I64);
+            self.write_variable(idx_var_name.clone(), latch_block, next_val);
+        }
+
+        push_inst!(self, InstructionKind::Jump(header_block));
+        self.link_blocks(latch_block, header_block);
+
+        // --- Exit Block ---
+        self.seal_block(header_block)?;
+        self.start_block(exit_block);
+
+        // Insert ListCreate in prev_block now that we know elt_ty
+        self.insert_instruction_before_terminator(
+            prev_block,
+            InstructionKind::ListCreate(list_val, elt_ty.clone()),
+        );
+        self.func.set_type(list_val, Type::List(Box::new(elt_ty)));
+
+        let final_list_val = self.read_variable(list_var_name, exit_block)?;
+        self.seal_block(exit_block)?;
+        Ok(final_list_val)
     }
 }
