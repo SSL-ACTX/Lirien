@@ -1137,6 +1137,51 @@ class TestLirienNum(unittest.TestCase):
         self.assertAlmostEqual(out[1, 0, 0], 18.0, places=5)
         self.assertAlmostEqual(out[1, 0, 1], 22.0, places=5)
 
+    def test_rms_norm_simd(self):
+        a = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((2,), f32x4)
+
+        a[0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[1] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        num.rms_norm_simd(a, out, 1e-5, 8.0)
+
+        # Reference
+        rms = math.sqrt(204.0 / 8.0 + 1e-5)
+        inv_rms = 1.0 / rms
+
+        res0 = out[0]
+        res1 = out[1]
+        self.assertAlmostEqual(res0[0], 1.0 * inv_rms, places=5)
+        self.assertAlmostEqual(res1[3], 8.0 * inv_rms, places=5)
+
+    def test_layer_norm_simd(self):
+        a = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((2,), f32x4)
+        gamma = Tensor.alloc((2,), f32x4)
+        beta = Tensor.alloc((2,), f32x4)
+
+        a[0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[1] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        gamma[0] = f32x4(1.0, 1.0, 1.0, 1.0)
+        gamma[1] = f32x4(1.0, 1.0, 1.0, 1.0)
+        beta[0] = f32x4(0.0, 0.0, 0.0, 0.0)
+        beta[1] = f32x4(0.0, 0.0, 0.0, 0.0)
+
+        num.layer_norm_simd(a, out, gamma, beta, 1e-5, 8.0)
+
+        # Reference
+        mean = 4.5
+        std = math.sqrt(5.25 + 1e-5)
+        inv_std = 1.0 / std
+
+        res0 = out[0]
+        res1 = out[1]
+        self.assertAlmostEqual(res0[0], (1.0 - mean) * inv_std, places=5)
+        self.assertAlmostEqual(res1[3], (8.0 - mean) * inv_std, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()
+

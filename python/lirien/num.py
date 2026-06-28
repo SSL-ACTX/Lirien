@@ -875,3 +875,67 @@ def bmm_simd(
                 for k in range(K):
                     acc = acc + a[batch, i, k] * b[batch, k, j]
                 out[batch, i, j] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
+def rms_norm_simd(
+    a: Tensor[f32x4, M],
+    out: Tensor[f32x4, M],
+    epsilon: f32,
+    n: f32,
+):
+    """
+    SIMD-accelerated RMSNorm.
+    Requires 'epsilon > 0.0' and 'n > 0.0' (where n is float(M * 4)).
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    assert n > 0.0
+    acc = a[0] - a[0]  # Initialize zero vector
+    for i in range(M):
+        acc = acc + a[i] * a[i]
+    sum_sq = acc[0] + acc[1] + acc[2] + acc[3]
+    rms = math.sqrt(abs(sum_sq / n) + epsilon)
+    assert rms > 0.0
+    inv_rms = 1.0 / rms
+    for i in range(M):
+        out[i] = a[i] * inv_rms
+
+
+@verify
+def layer_norm_simd(
+    a: Tensor[f32x4, M],
+    out: Tensor[f32x4, M],
+    gamma: Tensor[f32x4, M],
+    beta: Tensor[f32x4, M],
+    epsilon: f32,
+    n: f32,
+):
+    """
+    SIMD-accelerated Layer Normalization.
+    Requires 'epsilon > 0.0' and 'n > 0.0' (where n is float(M * 4)).
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    assert n > 0.0
+
+    sum_vec = a[0] - a[0]
+    sum_sq_vec = a[0] - a[0]
+    for i in range(M):
+        val = a[i]
+        sum_vec = sum_vec + val
+        sum_sq_vec = sum_sq_vec + val * val
+
+    sum_val = sum_vec[0] + sum_vec[1] + sum_vec[2] + sum_vec[3]
+    sum_sq = sum_sq_vec[0] + sum_sq_vec[1] + sum_sq_vec[2] + sum_sq_vec[3]
+
+    mean_val = sum_val / n
+    var_val = sum_sq / n - mean_val * mean_val
+
+    std_val = math.sqrt(abs(var_val) + epsilon)
+    assert std_val > 0.0
+    inv_std = 1.0 / std_val
+
+    for i in range(M):
+        out[i] = (a[i] - mean_val) * inv_std * gamma[i] + beta[i]
+
