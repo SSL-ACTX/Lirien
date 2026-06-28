@@ -840,7 +840,7 @@ pub fn translate<
                         }
                     }
                     InstructionKind::FSqrt(_, _) => {
-                        if let Some(z3_src) = ctx.z3_floats.get(s_val) {
+                        if let Some(z3_src) = ctx.z3_floats.get(s_val).cloned() {
                             let ty = ctx.func.get_type(*s_val);
                             let zero = if ty.is_float32() {
                                 ctx.backend.float_from_f32(0.0)
@@ -857,13 +857,22 @@ pub fn translate<
                             };
 
                             if !is_safe {
-                                let __tmp = ctx.backend.float_lt(z3_src, &zero);
+                                let __tmp = ctx.backend.float_lt(&z3_src, &zero);
                                 ctx.check_safety(
                                     path_cond,
                                     &__tmp,
                                     format!("Potential sqrt of negative number at v{}", dest.0),
                                     inst.location,
                                 )?;
+                            }
+
+                            // Axiom: If src > 0, then dest > 0
+                            if let Some(z3_dest) = ctx.z3_floats.get(dest) {
+                                let src_gt_zero = ctx.backend.float_gt(&z3_src, &zero);
+                                let dest_gt_zero = ctx.backend.float_gt(z3_dest, &zero);
+                                let axiom = ctx.backend.bool_implies(&src_gt_zero, &dest_gt_zero);
+                                let __tmp = ctx.backend.bool_implies(path_cond, &axiom);
+                                ctx.backend.assert(&__tmp);
                             }
                         }
                     }

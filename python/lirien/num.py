@@ -264,6 +264,66 @@ def standardize(a: Tensor[f32, M], out: Tensor[f32, M], mean_val: f32, std_val: 
 
 
 @verify
+def l2_normalize(a: Tensor[f32, M], out: Tensor[f32, M], epsilon: f32):
+    """
+    L2 normalize a 1D vector 'a', storing the result in 'out'.
+    Requires 'epsilon > 0.0'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    sum_sq: f32 = 0.0
+    for i in range(M):
+        sum_sq = sum_sq + a[i] * a[i]
+    divisor = math.sqrt(abs(sum_sq) + epsilon)
+    assert divisor > 0.0
+    for i in range(M):
+        out[i] = a[i] / divisor
+
+
+@verify
+def l1_normalize(a: Tensor[f32, M], out: Tensor[f32, M], epsilon: f32):
+    """
+    L1 normalize a 1D vector 'a', storing the result in 'out'.
+    Requires 'epsilon > 0.0'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    sum_abs: f32 = 0.0
+    for i in range(M):
+        sum_abs = sum_abs + abs(a[i])
+    divisor = sum_abs + epsilon
+    assert divisor > 0.0
+    for i in range(M):
+        out[i] = a[i] / divisor
+
+
+@verify
+def cosine_similarity(
+    a: Tensor[f32, M],
+    b: Tensor[f32, M],
+    out: Tensor[f32, 1],
+    epsilon: f32,
+):
+    """
+    Compute the cosine similarity of 'a' and 'b', storing in 'out[0]'.
+    Requires 'epsilon > 0.0'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    dot_val: f32 = 0.0
+    norm_a_sq: f32 = 0.0
+    norm_b_sq: f32 = 0.0
+    for i in range(M):
+        dot_val = dot_val + a[i] * b[i]
+        norm_a_sq = norm_a_sq + a[i] * a[i]
+        norm_b_sq = norm_b_sq + b[i] * b[i]
+
+    denom = math.sqrt(abs(norm_a_sq)) * math.sqrt(abs(norm_b_sq)) + epsilon
+    assert denom > 0.0
+    out[0] = dot_val / denom
+
+
+@verify
 def matvec(matrix: Tensor[f32, M, N], vector: Tensor[f32, N], out: Tensor[f32, M]):
     """
     Matrix-vector multiplication, storing the result in 'out'.

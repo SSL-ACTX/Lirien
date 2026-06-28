@@ -349,8 +349,10 @@ class TestLirienNum(unittest.TestCase):
         a = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((2, 2), f32)
 
-        a[0, 0] = 1.0; a[0, 1] = 2.0
-        a[1, 0] = 3.0; a[1, 1] = 4.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[1, 0] = 3.0
+        a[1, 1] = 4.0
 
         num.scale(a, out, 2.5)
 
@@ -365,10 +367,16 @@ class TestLirienNum(unittest.TestCase):
         bias = Tensor.alloc((3,), f32)
         out = Tensor.alloc((2, 3), f32)
 
-        a[0, 0] = 1.0; a[0, 1] = 2.0; a[0, 2] = 3.0
-        a[1, 0] = 4.0; a[1, 1] = 5.0; a[1, 2] = 6.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[0, 2] = 3.0
+        a[1, 0] = 4.0
+        a[1, 1] = 5.0
+        a[1, 2] = 6.0
 
-        bias[0] = 0.5; bias[1] = 1.0; bias[2] = 1.5
+        bias[0] = 0.5
+        bias[1] = 1.0
+        bias[2] = 1.5
 
         num.bias_add(a, bias, out)
 
@@ -400,8 +408,12 @@ class TestLirienNum(unittest.TestCase):
         vector = Tensor.alloc((3,), f32)
         out = Tensor.alloc((2,), f32)
 
-        matrix[0, 0] = 1.0; matrix[0, 1] = 2.0; matrix[0, 2] = 3.0
-        matrix[1, 0] = 4.0; matrix[1, 1] = 5.0; matrix[1, 2] = 6.0
+        matrix[0, 0] = 1.0
+        matrix[0, 1] = 2.0
+        matrix[0, 2] = 3.0
+        matrix[1, 0] = 4.0
+        matrix[1, 1] = 5.0
+        matrix[1, 2] = 6.0
 
         vector[0] = 2.0
         vector[1] = 1.0
@@ -418,8 +430,11 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((2,), f32)
         out = Tensor.alloc((3, 2), f32)
 
-        a[0] = 1.0; a[1] = 2.0; a[2] = 3.0
-        b[0] = 4.0; b[1] = 5.0
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+        b[0] = 4.0
+        b[1] = 5.0
 
         num.outer(a, b, out)
 
@@ -436,12 +451,63 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((3,), f32)
         out = Tensor.alloc((1,), f32)
 
-        a[0] = 1.0; a[1] = 2.0; a[2] = 3.0
-        b[0] = 4.0; b[1] = 5.0; b[2] = 6.0
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+        b[0] = 4.0
+        b[1] = 5.0
+        b[2] = 6.0
 
         num.dot(a, b, out)
 
         self.assertEqual(out[0], 32.0)
+
+    def test_l2_normalize(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 3.0
+        a[1] = 4.0
+        a[2] = 0.0
+
+        num.l2_normalize(a, out, 1e-9)
+
+        self.assertAlmostEqual(out[0], 0.6)
+        self.assertAlmostEqual(out[1], 0.8)
+        self.assertAlmostEqual(out[2], 0.0)
+
+    def test_l1_normalize(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 1.0
+        a[1] = -2.0
+        a[2] = 1.0
+
+        num.l1_normalize(a, out, 1e-9)
+
+        self.assertAlmostEqual(out[0], 0.25)
+        self.assertAlmostEqual(out[1], -0.5)
+        self.assertAlmostEqual(out[2], 0.25)
+
+    def test_cosine_similarity(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        b = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+        b[0] = 2.0
+        b[1] = 4.0
+        b[2] = 6.0
+
+        num.cosine_similarity(a, b, out, 1e-9)
+
+        self.assertAlmostEqual(out[0], 1.0, places=5)
 
 
 if __name__ == "__main__":
