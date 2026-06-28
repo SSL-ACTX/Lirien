@@ -37,6 +37,38 @@ pub fn lower<M: Module>(
         ctx.values.insert(*dest, res_final);
     }
 
+    fn lower_str_cmp<M: Module>(
+        ctx: &mut CodegenContext<M>,
+        dest: &lirien_ir::ir::Value,
+        lhs: &lirien_ir::ir::Value,
+        rhs: &lirien_ir::ir::Value,
+        negate: bool,
+    ) -> Result<(), LoweringError> {
+        let lhs_ptr = get_val(&ctx.values, lhs);
+        let rhs_ptr = get_val(&ctx.values, rhs);
+
+        let mut sig = ctx.module.make_signature();
+        sig.params.push(AbiParam::new(types::I64)); // lhs
+        sig.params.push(AbiParam::new(types::I64)); // rhs
+        sig.returns.push(AbiParam::new(types::I8)); // result bool
+
+        let func = ctx.module.declare_function(
+            "lirien_str_compare",
+            cranelift_module::Linkage::Import,
+            &sig,
+        )?;
+        let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+        let call = ctx.builder.ins().call(local_func, &[lhs_ptr, rhs_ptr]);
+        let mut res_val = ctx.builder.inst_results(call)[0];
+
+        if negate {
+            res_val = ctx.builder.ins().bxor_imm(res_val, 1);
+        }
+
+        ctx.values.insert(*dest, res_val);
+        Ok(())
+    }
+
     match kind {
         InstructionKind::Add(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, iadd),
         InstructionKind::Sub(dest, lhs, rhs) => bin_op!(dest, lhs, rhs, isub),
@@ -145,10 +177,20 @@ pub fn lower<M: Module>(
             ctx.values.insert(*dest, res);
         }
         InstructionKind::Eq(dest, lhs, rhs) => {
-            lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::Equal)
+            let l_ty = ctx.ssa_func.get_type(*lhs);
+            if l_ty == Type::Str {
+                lower_str_cmp(ctx, dest, lhs, rhs, false)?;
+            } else {
+                lower_cmp(ctx, dest, lhs, rhs, IntCC::Equal, FloatCC::Equal);
+            }
         }
         InstructionKind::Ne(dest, lhs, rhs) => {
-            lower_cmp(ctx, dest, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual)
+            let l_ty = ctx.ssa_func.get_type(*lhs);
+            if l_ty == Type::Str {
+                lower_str_cmp(ctx, dest, lhs, rhs, true)?;
+            } else {
+                lower_cmp(ctx, dest, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual);
+            }
         }
         InstructionKind::SLt(dest, lhs, rhs) => lower_cmp(
             ctx,

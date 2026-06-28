@@ -444,6 +444,11 @@ impl CFGBuilder {
                 push_inst!(self, InstructionKind::ListLen(dest, arg));
                 self.func.set_type(dest, Type::I64);
                 return Ok(dest);
+            } else if ty == Type::Str {
+                let dest = self.func.next_value();
+                push_inst!(self, InstructionKind::StrLen(dest, arg));
+                self.func.set_type(dest, Type::I64);
+                return Ok(dest);
             } else if let Type::Array(_, Some(size)) = ty {
                 let dest = self.func.next_value();
                 push_inst!(self, InstructionKind::ConstInt(dest, size as i64));
@@ -922,9 +927,9 @@ impl CFGBuilder {
                 .blocks
                 .iter()
                 .filter(|b| {
-                    b.instructions.last().map_or(false, |inst| {
-                        matches!(inst.kind, InstructionKind::Return(None))
-                    })
+                    b.instructions
+                        .last()
+                        .is_some_and(|inst| matches!(inst.kind, InstructionKind::Return(None)))
                 })
                 .map(|b| b.id)
                 .collect();

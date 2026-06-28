@@ -1,4 +1,4 @@
-# Lirien — Project Status
+# Lirien — Project Roadmap
 
 Lirien is an experimental research compiler. It is under active development and is not production-ready. This document tracks the current implementation status and planned work.
 
@@ -33,6 +33,7 @@ Lirien is an experimental research compiler. It is under active development and 
 - `TypedDict` zero-cost struct layout — string key access compiled to byte offsets
 - Sequence/tuple and class/struct pattern matching destructuring
 - Non-pointer value-type optionals (`T | None` / `Optional[T]`) using inline tagged layout (has_value tag + value)
+- Native string type (`str`) with length, concatenation, equality, indexing, slicing, and Z3-verified bounds checking
 
 ### Memory & Data Structures
 - `@struct` / `@value` — flat, C-ABI-compatible layouts with inlined nested structs
@@ -86,8 +87,8 @@ Lirien is an experimental research compiler. It is under active development and 
 - [x] Pattern Matching Destructuring
 - [ ] Python Parity & Language Expressiveness
   - [x] List Comprehensions (`[x * 2 for x in l]`)
-  - [ ] Exception Handling (`try` / `except` / `raise`)
-  - [ ] Native String Type (`str`)
+  - [x] Exception Handling (`try` / `except` / `raise`)
+  - [x] Native String Type (`str`)
 - [ ] Advanced Code Generation & Optimization
   - [ ] Ahead-of-Time (AOT) Compilation to Shared Libraries
   - [ ] Auto-Vectorization (SIMD)

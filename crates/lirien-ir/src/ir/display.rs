@@ -35,6 +35,7 @@ impl fmt::Display for Type {
             },
             Type::Buffer(t) => write!(f, "Buffer<{}>", t),
             Type::List(t) => write!(f, "List<{}>", t),
+            Type::Str => write!(f, "str"),
             Type::Tensor(t, dims) => write!(f, "Tensor<{}, {}>", t, dims.join(", ")),
             Type::Struct(name) => write!(f, "Struct<{}>", name),
             Type::TypedDict(name) => write!(f, "TypedDict<{}>", name),
@@ -400,6 +401,11 @@ impl fmt::Display for Instruction {
                 "  {} = const_float {}{}{}",
                 d, v, loc_str, constraints_str
             ),
+            InstructionKind::ConstStr(d, v) => write!(
+                f,
+                "  {} = const_str {:?}{}{}",
+                d, v, loc_str, constraints_str
+            ),
             InstructionKind::Assign(d, s) => {
                 write!(f, "  {} = assign {}{}{}", d, s, loc_str, constraints_str)
             }
@@ -692,6 +698,37 @@ impl fmt::Display for Instruction {
                     f,
                     "  {} = list_store {}[{}] <- {}{}{}",
                     d, list, idx, val, loc_str, constraints_str
+                )
+            }
+            InstructionKind::StrLen(d, s) => {
+                write!(f, "  {} = strlen {}{}{}", d, s, loc_str, constraints_str)
+            }
+            InstructionKind::StrConcat(d, lhs, rhs) => {
+                write!(
+                    f,
+                    "  {} = strconcat {}, {}{}{}",
+                    d, lhs, rhs, loc_str, constraints_str
+                )
+            }
+            InstructionKind::StrCompare(d, lhs, rhs) => {
+                write!(
+                    f,
+                    "  {} = strcompare {}, {}{}{}",
+                    d, lhs, rhs, loc_str, constraints_str
+                )
+            }
+            InstructionKind::StrIndex(d, s, idx) => {
+                write!(
+                    f,
+                    "  {} = strindex {}[{}]{}{}",
+                    d, s, idx, loc_str, constraints_str
+                )
+            }
+            InstructionKind::StrSlice(d, s, start, end) => {
+                write!(
+                    f,
+                    "  {} = strslice {}[{}:{}]{}{}",
+                    d, s, start, end, loc_str, constraints_str
                 )
             }
             InstructionKind::Alloc(d, t) => {

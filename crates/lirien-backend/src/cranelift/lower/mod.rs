@@ -60,6 +60,27 @@ fn lower_instruction_internal<M: Module>(
             ctx.values.insert(*dest, res);
             Ok(())
         }
+        InstructionKind::ConstStr(dest, val) => {
+            let bytes = val.as_bytes().to_vec();
+            let len = bytes.len();
+            let data_ptr = bytes.as_ptr();
+            std::mem::forget(bytes);
+
+            #[repr(C)]
+            struct StringHeader {
+                data: *const u8,
+                len: usize,
+            }
+            let header = Box::new(StringHeader {
+                data: data_ptr,
+                len,
+            });
+            let header_ptr = Box::into_raw(header) as usize;
+
+            let res = ctx.builder.ins().iconst(types::I64, header_ptr as i64);
+            ctx.values.insert(*dest, res);
+            Ok(())
+        }
         InstructionKind::Assign(dest, src) => {
             let ty = ctx.ssa_func.get_type(*dest);
             if let lirien_ir::ir::Type::NamedTuple(_) = ty {
@@ -148,7 +169,12 @@ fn lower_instruction_internal<M: Module>(
         | InstructionKind::Match(_, _, _, _)
         | InstructionKind::Return(_) => control_flow::lower(ctx, &inst.kind, current_ssa_block),
 
-        InstructionKind::ArrayLoad(_, _, _)
+        InstructionKind::StrLen(_, _)
+        | InstructionKind::StrConcat(_, _, _)
+        | InstructionKind::StrCompare(_, _, _)
+        | InstructionKind::StrIndex(_, _, _)
+        | InstructionKind::StrSlice(_, _, _, _)
+        | InstructionKind::ArrayLoad(_, _, _)
         | InstructionKind::ArrayStore(_, _, _, _, _)
         | InstructionKind::ArraySlice(_, _, _, _)
         | InstructionKind::BufferLoad(_, _, _)

@@ -46,6 +46,7 @@ pub fn parse_type(
                 "i16x8" => Ok(Type::I16X8),
                 "u16x8" => Ok(Type::U16X8),
                 "bool" => Ok(Type::Bool),
+                "str" => Ok(Type::Str),
                 "None" | "none" => Ok(Type::Unknown),
                 _ => {
                     if named_tuple_names.contains(n.id.as_str()) {
@@ -80,6 +81,7 @@ pub fn parse_type(
             "i16x8" => Ok(Type::I16X8),
             "u16x8" => Ok(Type::U16X8),
             "bool" => Ok(Type::Bool),
+            "str" => Ok(Type::Str),
             "None" | "none" => Ok(Type::Unknown),
             "Buffer" | "buffer" => Ok(Type::Buffer(Box::new(Type::I64))),
             _ => {

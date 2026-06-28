@@ -163,6 +163,16 @@ impl CFGBuilder {
                         }
                     }
                     _ => {
+                        if arr_ty == Type::Str {
+                            if let ast::Expr::Slice(slice_node) = &*s.slice {
+                                return self.visit_string_slice(arr, slice_node, dest);
+                            }
+                            let mut idx = self.visit_expr(*s.slice)?;
+                            idx = self.auto_load(idx);
+                            push_inst!(self, InstructionKind::StrIndex(dest, arr, idx));
+                            self.func.set_type(dest, Type::Str);
+                            return Ok(dest);
+                        }
                         if let ast::Expr::Slice(slice_node) = &*s.slice {
                             return self.visit_array_slice(arr, slice_node, dest);
                         }
@@ -326,6 +336,37 @@ impl CFGBuilder {
         }
 
         self.func.set_type(dest, Type::Array(inner_ty, new_size));
+        Ok(dest)
+    }
+
+    pub(crate) fn visit_string_slice(
+        &mut self,
+        arr: Value,
+        slice: &ast::ExprSlice,
+        dest: Value,
+    ) -> BuilderResult<Value> {
+        let lower = if let Some(l) = &slice.lower {
+            let v = self.visit_expr(*l.clone())?;
+            self.auto_load(v)
+        } else {
+            let v = self.func.next_value();
+            push_inst!(self, InstructionKind::ConstInt(v, 0));
+            self.func.set_type(v, Type::I64);
+            v
+        };
+
+        let upper = if let Some(u) = &slice.upper {
+            let v = self.visit_expr(*u.clone())?;
+            self.auto_load(v)
+        } else {
+            let len_v = self.func.next_value();
+            push_inst!(self, InstructionKind::StrLen(len_v, arr));
+            self.func.set_type(len_v, Type::I64);
+            len_v
+        };
+
+        push_inst!(self, InstructionKind::StrSlice(dest, arr, lower, upper));
+        self.func.set_type(dest, Type::Str);
         Ok(dest)
     }
 }

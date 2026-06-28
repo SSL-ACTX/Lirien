@@ -65,4 +65,5 @@ TYPE_MAP = {
     "pointer": ctypes.c_void_p,
     "nullable": ctypes.c_void_p,
     "optional": ctypes.c_void_p,
+    "str": ctypes.c_void_p,
 }

@@ -59,6 +59,7 @@ pub fn translate_type(ty: &SsaType) -> types::Type {
         SsaType::Array(_, _)
         | SsaType::Buffer(_)
         | SsaType::List(_)
+        | SsaType::Str
         | SsaType::Tensor(_, _)
         | SsaType::Struct(_)
         | SsaType::TypedDict(_)
@@ -327,6 +328,119 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
         }))
     }
 
+    #[repr(C)]
+    struct StringHeader {
+        data: *const u8,
+        len: usize,
+    }
+
+    extern "C" fn lirien_str_concat(
+        lhs: *const StringHeader,
+        rhs: *const StringHeader,
+    ) -> *mut StringHeader {
+        unsafe {
+            tracing::debug!(target: "lirien::jit", "lirien_str_concat: lhs={:?}, rhs={:?}", lhs, rhs);
+            if lhs.is_null() || rhs.is_null() {
+                panic!("Null pointer in lirien_str_concat");
+            }
+            let lhs = &*lhs;
+            let rhs = &*rhs;
+            tracing::debug!(target: "lirien::jit", "lirien_str_concat: lhs.len={}, lhs.data={:?}, rhs.len={}, rhs.data={:?}", lhs.len, lhs.data, rhs.len, rhs.data);
+            let new_len = lhs.len + rhs.len;
+            let new_data = if new_len > 0 {
+                let layout = std::alloc::Layout::from_size_align(new_len, 1).unwrap();
+                let ptr = std::alloc::alloc(layout);
+                if ptr.is_null() {
+                    panic!("Out of memory in lirien_str_concat");
+                }
+                std::ptr::copy_nonoverlapping(lhs.data, ptr, lhs.len);
+                std::ptr::copy_nonoverlapping(rhs.data, ptr.add(lhs.len), rhs.len);
+                ptr
+            } else {
+                std::ptr::null()
+            };
+            let header = Box::new(StringHeader {
+                data: new_data,
+                len: new_len,
+            });
+            Box::into_raw(header)
+        }
+    }
+
+    extern "C" fn lirien_str_compare(lhs: *const StringHeader, rhs: *const StringHeader) -> bool {
+        unsafe {
+            let lhs = &*lhs;
+            let rhs = &*rhs;
+            if lhs.len != rhs.len {
+                return false;
+            }
+            if lhs.len == 0 {
+                return true;
+            }
+            let slice_lhs = std::slice::from_raw_parts(lhs.data, lhs.len);
+            let slice_rhs = std::slice::from_raw_parts(rhs.data, rhs.len);
+            slice_lhs == slice_rhs
+        }
+    }
+
+    extern "C" fn lirien_str_index(s: *const StringHeader, index: usize) -> *mut StringHeader {
+        unsafe {
+            let s = &*s;
+            if index >= s.len {
+                panic!(
+                    "Index out of bounds in lirien_str_index: {} >= {}",
+                    index, s.len
+                );
+            }
+            let byte_val = *s.data.add(index);
+            let data_ptr = std::alloc::alloc(std::alloc::Layout::from_size_align(1, 1).unwrap());
+            if data_ptr.is_null() {
+                panic!("Out of memory in lirien_str_index");
+            }
+            *data_ptr = byte_val;
+            let header = Box::new(StringHeader {
+                data: data_ptr,
+                len: 1,
+            });
+            Box::into_raw(header)
+        }
+    }
+
+    extern "C" fn lirien_str_slice(
+        s: *const StringHeader,
+        start: isize,
+        end: isize,
+    ) -> *mut StringHeader {
+        unsafe {
+            let s = &*s;
+            let len = s.len as isize;
+            let mut start = if start < 0 { start + len } else { start };
+            let mut end = if end < 0 { end + len } else { end };
+            start = start.clamp(0, len);
+            end = end.clamp(0, len);
+            if end < start {
+                end = start;
+            }
+            let slice_len = (end - start) as usize;
+            let new_data = if slice_len > 0 {
+                let ptr =
+                    std::alloc::alloc(std::alloc::Layout::from_size_align(slice_len, 1).unwrap());
+                if ptr.is_null() {
+                    panic!("Out of memory in lirien_str_slice");
+                }
+                std::ptr::copy_nonoverlapping(s.data.offset(start), ptr, slice_len);
+                ptr
+            } else {
+                std::ptr::null()
+            };
+            let header = Box::new(StringHeader {
+                data: new_data,
+                len: slice_len,
+            });
+            Box::into_raw(header)
+        }
+    }
+
     extern "C" fn lirien_list_append(list: *mut ListHeader, item_ptr: *const u8, elem_size: usize) {
         unsafe {
             let list = &mut *list;
@@ -434,6 +548,10 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
     jit_builder.symbol("lirien_list_len", lirien_list_len as *const u8);
     jit_builder.symbol("lirien_list_get", lirien_list_get as *const u8);
     jit_builder.symbol("lirien_list_set", lirien_list_set as *const u8);
+    jit_builder.symbol("lirien_str_concat", lirien_str_concat as *const u8);
+    jit_builder.symbol("lirien_str_compare", lirien_str_compare as *const u8);
+    jit_builder.symbol("lirien_str_index", lirien_str_index as *const u8);
+    jit_builder.symbol("lirien_str_slice", lirien_str_slice as *const u8);
 
     let mut module = JITModule::new(jit_builder);
     let mut ctx = module.make_context();

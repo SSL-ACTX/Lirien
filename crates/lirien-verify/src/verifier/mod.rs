@@ -350,7 +350,13 @@ fn translate_instructions<
                 | InstructionKind::Phi(..) => {
                     control_flow::translate(t_ctx, inst, &path_cond, block.id)?;
                 }
-                InstructionKind::ArrayLoad(..)
+                InstructionKind::ConstStr(..)
+                | InstructionKind::StrLen(..)
+                | InstructionKind::StrConcat(..)
+                | InstructionKind::StrCompare(..)
+                | InstructionKind::StrIndex(..)
+                | InstructionKind::StrSlice(..)
+                | InstructionKind::ArrayLoad(..)
                 | InstructionKind::ArrayStore(..)
                 | InstructionKind::ArraySlice(..)
                 | InstructionKind::BufferLoad(..)

@@ -217,6 +217,87 @@ pub fn lower<M: Module>(
             let len_val = ctx.builder.inst_results(call)[0];
             ctx.values.insert(*dest, len_val);
         }
+        InstructionKind::StrLen(dest, string) => {
+            let str_ptr = get_val(&ctx.values, string);
+            let len_val = ctx
+                .builder
+                .ins()
+                .load(types::I64, MemFlags::new(), str_ptr, 8);
+            ctx.values.insert(*dest, len_val);
+        }
+        InstructionKind::StrConcat(dest, lhs, rhs) => {
+            let lhs_ptr = get_val(&ctx.values, lhs);
+            let rhs_ptr = get_val(&ctx.values, rhs);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // lhs
+            sig.params.push(AbiParam::new(types::I64)); // rhs
+            sig.returns.push(AbiParam::new(types::I64)); // result ptr
+
+            let func = ctx
+                .module
+                .declare_function("lirien_str_concat", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[lhs_ptr, rhs_ptr]);
+            let res_val = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res_val);
+        }
+        InstructionKind::StrCompare(dest, lhs, rhs) => {
+            let lhs_ptr = get_val(&ctx.values, lhs);
+            let rhs_ptr = get_val(&ctx.values, rhs);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // lhs
+            sig.params.push(AbiParam::new(types::I64)); // rhs
+            sig.returns.push(AbiParam::new(types::I8)); // result bool
+
+            let func = ctx
+                .module
+                .declare_function("lirien_str_compare", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[lhs_ptr, rhs_ptr]);
+            let res_val = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res_val);
+        }
+        InstructionKind::StrIndex(dest, string, index) => {
+            let str_ptr = get_val(&ctx.values, string);
+            let idx_val = get_val(&ctx.values, index);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // str
+            sig.params.push(AbiParam::new(types::I64)); // index
+            sig.returns.push(AbiParam::new(types::I64)); // result ptr
+
+            let func = ctx
+                .module
+                .declare_function("lirien_str_index", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx.builder.ins().call(local_func, &[str_ptr, idx_val]);
+            let res_val = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res_val);
+        }
+        InstructionKind::StrSlice(dest, string, start, end) => {
+            let str_ptr = get_val(&ctx.values, string);
+            let start_val = get_val(&ctx.values, start);
+            let end_val = get_val(&ctx.values, end);
+
+            let mut sig = ctx.module.make_signature();
+            sig.params.push(AbiParam::new(types::I64)); // str
+            sig.params.push(AbiParam::new(types::I64)); // start
+            sig.params.push(AbiParam::new(types::I64)); // end
+            sig.returns.push(AbiParam::new(types::I64)); // result ptr
+
+            let func = ctx
+                .module
+                .declare_function("lirien_str_slice", Linkage::Import, &sig)?;
+            let local_func = ctx.module.declare_func_in_func(func, ctx.builder.func);
+            let call = ctx
+                .builder
+                .ins()
+                .call(local_func, &[str_ptr, start_val, end_val]);
+            let res_val = ctx.builder.inst_results(call)[0];
+            ctx.values.insert(*dest, res_val);
+        }
         InstructionKind::ListLoad(dest, list, index) => {
             let list_ptr = get_val(&ctx.values, list);
             let idx_val = get_val(&ctx.values, index);

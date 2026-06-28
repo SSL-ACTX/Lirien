@@ -86,6 +86,8 @@ pub enum Type {
     Refined(Box<Type>, String),
     /// A literal type carrying a concrete compile-time value.
     Literal(Box<Type>, i64),
+    /// Native string type.
+    Str,
     /// Unknown or unresolved type.
     Unknown,
 }
@@ -184,6 +186,7 @@ impl Type {
         match self {
             Type::Buffer(_)
             | Type::List(_)
+            | Type::Str
             | Type::Array(_, _)
             | Type::Pointer(_)
             | Type::NullablePointer(_)
@@ -254,9 +257,9 @@ impl Type {
             | Type::U16X8 => 16,
             Type::FnPointer(..) | Type::Closure(..) => 8,
             Type::Array(inner, Some(s)) => s * inner.size(struct_layouts),
-            Type::Array(_, None) => 8, // Pointer to array
-            Type::Buffer(_) => 16,     // Fat Pointer: (ptr, len)
-            Type::List(_) => 8,        // Pointer to list header struct
+            Type::Array(_, None) => 8,      // Pointer to array
+            Type::Buffer(_) => 16,          // Fat Pointer: (ptr, len)
+            Type::List(_) | Type::Str => 8, // Pointer to list/string header struct
             Type::Struct(name) | Type::TypedDict(name) | Type::NamedTuple(name) => {
                 if let Some(fields) = struct_layouts.get(name) {
                     let mut offset = 0;

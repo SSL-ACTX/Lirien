@@ -29,11 +29,9 @@ impl CFGBuilder {
                 push_inst!(self, InstructionKind::ConstInt(val, 0));
                 self.func.set_type(val, Type::I64);
             }
-            ast::Constant::Str(_) => {
-                // String constants are currently only used for metadata/specialization
-                // but might appear in the AST. We treat them as a no-op or placeholder.
-                push_inst!(self, InstructionKind::Nop());
-                self.func.set_type(val, Type::Unknown);
+            ast::Constant::Str(s) => {
+                push_inst!(self, InstructionKind::ConstStr(val, s.to_string()));
+                self.func.set_type(val, Type::Str);
             }
             _ => {
                 return Err(builder_error!(

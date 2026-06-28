@@ -1312,9 +1312,9 @@ impl CFGBuilder {
                 .blocks
                 .iter()
                 .filter(|b| {
-                    b.instructions.last().map_or(false, |inst| {
-                        matches!(inst.kind, InstructionKind::Return(None))
-                    })
+                    b.instructions
+                        .last()
+                        .is_some_and(|inst| matches!(inst.kind, InstructionKind::Return(None)))
                 })
                 .map(|b| b.id)
                 .collect();

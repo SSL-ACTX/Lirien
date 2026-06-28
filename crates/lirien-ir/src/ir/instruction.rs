@@ -589,6 +589,48 @@ macro_rules! lirien_instructions {
                 side_effects: true,
                 category: Memory
             },
+            ConstStr(dest: Value, val: String) {
+                display: "{} = const_str {:?}",
+                def: Some(*dest),
+                uses: [],
+                side_effects: false,
+                category: Constant
+            },
+            StrLen(dest: Value, string: Value) {
+                display: "{} = strlen {}",
+                def: Some(*dest),
+                uses: [*string],
+                side_effects: false,
+                category: Memory
+            },
+            StrConcat(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = strconcat {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Memory
+            },
+            StrCompare(dest: Value, lhs: Value, rhs: Value) {
+                display: "{} = strcompare {}, {}",
+                def: Some(*dest),
+                uses: [*lhs, *rhs],
+                side_effects: false,
+                category: Memory
+            },
+            StrIndex(dest: Value, string: Value, index: Value) {
+                display: "{} = strindex {}[{}]",
+                def: Some(*dest),
+                uses: [*string, *index],
+                side_effects: false,
+                category: Memory
+            },
+            StrSlice(dest: Value, string: Value, start: Value, end: Value) {
+                display: "{} = strslice {}[{}:{}]",
+                def: Some(*dest),
+                uses: [*string, *start, *end],
+                side_effects: false,
+                category: Memory
+            },
             TensorLoad(dest: Value, tensor: Value, indices: Vec<Value>) {
                 display: "{} = tload {}[...] ",
                 def: Some(*dest),

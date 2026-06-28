@@ -36,7 +36,6 @@ The result is a compiler that can statically guarantee the absence of certain cl
 - **Monomorphization:** Generic functions (via `TypeVar`) are lazily specialized per concrete type at the call site.
 - **SIMD Types:** Direct access to 128-bit CPU vector registers (`f32x4`, `f64x2`, `i8x16`, `i16x8`, `i32x4`, `i64x2`, `u8x16`, `u16x8`).
 - **Loop Unrolling via `Literal`:** `typing.Literal`-typed integer parameters are treated as compile-time constants, enabling full CFG-level loop unrolling with exact Z3 induction values.
-- **AOT IR Caching:** Verified SSA IR is serialized to disk (`.lirien_cache/`). On a cache hit, AST parsing and Z3 verification are skipped entirely.
 
 ## Table of Contents
 - [Core Concepts & Examples](#core-concepts--examples)
@@ -289,9 +288,6 @@ def unrolled_sum(limit: Literal[5]) -> i64:
     return total
 ```
 
-#### AOT IR Caching
-The `@verify` decorator hashes the function's source text, the memory layouts of its parameter types, and the current compiler version. If a matching `.lir` binary exists in `.lirien_cache/`, the function is loaded directly into Cranelift for code generation, skipping AST parsing and Z3 verification entirely.
-
 #### SIMD Execution
 Lirien exposes 128-bit CPU vector registers as first-class types. Arithmetic on these types lowers to single native SIMD instructions. Scalar literals are automatically broadcast ("splatted") to all lanes.
 
@@ -432,6 +428,24 @@ def safe_div(a: i64, b: i64) -> Result[i64, i64]:
     if b == 0:
         return Err(0)
     return Ok(a // b)
+```
+
+#### Native String Type (`str`)
+Lirien provides a native `str` type representing heap-allocated UTF-8 string data. Strings are represented as pointers to a C-compatible header containing the character buffer pointer and a 64-bit length. The compiler supports string length (`len()`), concatenation (`+`), equality (`==`, `!=`), indexing, and slicing. String index and slice boundaries are formally verified by Z3 at compile time.
+
+```python
+from lirien import verify, i64, Refined, V
+
+@verify
+def greet(name: str) -> str:
+    return "Hello, " + name
+
+@verify
+def get_char(s: str, idx: i64) -> str:
+    # Z3 proves the index is in bounds [0, len(s) - 1]
+    if idx >= 0 and idx < len(s):
+        return s[idx]
+    return ""
 ```
 
 #### Pattern Matching Destructuring
@@ -776,7 +790,7 @@ To maintain sound verification, Lirien restricts the subset of Python it accepts
 
 ### Roadmap
 
-All currently planned core features have been implemented.
+All currently planned core features have been implemented. See [ROADMAP.md](ROADMAP.md) for details.
 
 ---
 

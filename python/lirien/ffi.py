@@ -19,6 +19,10 @@ from .compiler import (
 )
 
 
+class StringHeader(ctypes.Structure):
+    _fields_ = [("data", ctypes.c_void_p), ("len", ctypes.c_uint64)]
+
+
 def _get_ctypes_type(ann_str: str) -> Any:
     """Map a type name string to a ctypes type."""
     # Prioritize specific Lirien types to avoid 'float' matching 'float32'
@@ -223,11 +227,16 @@ def _map_ctypes_arguments(
 
         is_ptr_wrapper = False
         if (
-            isinstance(origin, type)
-            and issubclass(
-                origin, (SizedArray, Closure, FnPointer, Callable, Box, Tensor, List)
+            (
+                isinstance(origin, type)
+                and issubclass(
+                    origin,
+                    (SizedArray, Closure, FnPointer, Callable, Box, Tensor, List),
+                )
             )
-        ) or origin is list:
+            or origin is list
+            or origin is str
+        ):
             is_ptr_wrapper = True
 
         # Check for Protocol (duck typing)
@@ -819,6 +828,14 @@ def _prepare_runtime_args(
                     c_val = OptStruct(has_value=True, value=val_obj)
                 processed_args.append(ctypes.c_void_p(ctypes.addressof(c_val)))
                 anchors.append(c_val)
+            elif isinstance(arg, str):
+                bytes_val = arg.encode("utf-8")
+                data_ptr = ctypes.cast(
+                    ctypes.c_char_p(bytes_val), ctypes.c_void_p
+                ).value
+                header = StringHeader(data=data_ptr, len=len(bytes_val))
+                processed_args.append(ctypes.c_void_p(ctypes.addressof(header)))
+                anchors.extend([header, bytes_val])
             elif hasattr(arg, "__lirien_ptr__"):
                 processed_args.append(ctypes.c_void_p(arg.__lirien_ptr__))
             elif hasattr(arg, "_ctypes_obj"):
@@ -935,6 +952,21 @@ def _wrap_return_value(
 
     actual_ann = getattr(ret_ann, "base_type", ret_ann)
     origin = get_origin(actual_ann) or actual_ann
+
+    is_str = actual_ann is str or ret_ann is str or ret_ann == "str"
+    if is_str:
+        import ctypes
+
+        ptr_val = res
+        if not isinstance(ptr_val, int):
+            ptr_val = ctypes.cast(ptr_val, ctypes.c_void_p).value
+        if not ptr_val:
+            return ""
+        header = StringHeader.from_address(ptr_val)
+        if not header.data or header.len == 0:
+            return ""
+        buf = (ctypes.c_char * header.len).from_address(header.data)
+        return buf.raw.decode("utf-8")
 
     is_list = (
         isinstance(origin, type) and issubclass(origin, LirienList)

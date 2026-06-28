@@ -129,7 +129,7 @@ pub fn init_values<
                 bit_width,
             );
             ctx.z3_arrays.insert(val, payload_val);
-        } else if let Type::Buffer(_) | Type::List(_) = inner_ty {
+        } else if let Type::Buffer(_) | Type::List(_) | Type::Str = inner_ty {
             let z3_len = ctx
                 .backend
                 .bv_const(&format!("{}_v{}_len_{}", ctx.func.name, i, ctx.uid), 64);
@@ -959,6 +959,82 @@ pub fn translate<
                     ctx.z3_arrays.insert(*ptr, new_payload);
                 }
             }
+        }
+        InstructionKind::ConstStr(dest, val) => {
+            let len_bv = ctx.backend.bv_from_i64(val.len() as i64, 64);
+            let __inner = ctx.backend.bv_eq(ctx.z3_bvs.get(dest).unwrap(), &len_bv);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::StrLen(dest, str_val) => {
+            let z3_len = ctx.z3_bvs.get(str_val).cloned().unwrap();
+            let __inner = ctx.backend.bv_eq(ctx.z3_bvs.get(dest).unwrap(), &z3_len);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::StrConcat(dest, lhs, rhs) => {
+            let lhs_len = ctx.z3_bvs.get(lhs).cloned().unwrap();
+            let rhs_len = ctx.z3_bvs.get(rhs).cloned().unwrap();
+            let dest_len = ctx.backend.bv_add(&lhs_len, &rhs_len);
+            let __inner = ctx.backend.bv_eq(ctx.z3_bvs.get(dest).unwrap(), &dest_len);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::StrCompare(dest, lhs, rhs) => {
+            if let (Some(z3_dest), Some(l_len), Some(r_len)) = (
+                ctx.z3_bvs.get(dest),
+                ctx.z3_bvs.get(lhs),
+                ctx.z3_bvs.get(rhs),
+            ) {
+                let is_true = ctx.backend.bv_eq(l_len, r_len);
+                let bit_width = z3_dest.get_size();
+                let one = ctx.backend.bv_from_i64(1, bit_width);
+                let __is_true_eq_one = ctx.backend.bv_eq(z3_dest, &one);
+                let __implies = ctx.backend.bool_implies(&__is_true_eq_one, &is_true);
+                let __tmp = ctx.backend.bool_implies(path_cond, &__implies);
+                ctx.backend.assert(&__tmp);
+            }
+        }
+        InstructionKind::StrIndex(dest, str_val, index) => {
+            let str_len = ctx.z3_bvs.get(str_val).cloned().unwrap();
+            let idx_bv = ctx.z3_bvs.get(index).cloned().unwrap();
+            let zero = ctx.backend.bv_from_i64(0, 64);
+            let cond_slt = ctx.backend.bv_slt(&idx_bv, &zero);
+            ctx.check_safety(
+                path_cond,
+                &cond_slt,
+                format!(
+                    "Potential out-of-bounds string access (negative index) at v{}",
+                    dest.0
+                ),
+                inst.location,
+            )?;
+            let cond_sge = ctx.backend.bv_sge(&idx_bv, &str_len);
+            ctx.check_safety(
+                path_cond,
+                &cond_sge,
+                format!(
+                    "Potential out-of-bounds string access (index >= length) at v{}",
+                    dest.0
+                ),
+                inst.location,
+            )?;
+
+            let one = ctx.backend.bv_from_i64(1, 64);
+            let __inner = ctx.backend.bv_eq(ctx.z3_bvs.get(dest).unwrap(), &one);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
+        }
+        InstructionKind::StrSlice(dest, _str_val, start, end) => {
+            let start_bv = ctx.z3_bvs.get(start).cloned().unwrap();
+            let end_bv = ctx.z3_bvs.get(end).cloned().unwrap();
+            let cond = ctx.backend.bv_sgt(&end_bv, &start_bv);
+            let diff = ctx.backend.bv_sub(&end_bv, &start_bv);
+            let zero = ctx.backend.bv_from_i64(0, 64);
+            let slice_len = ctx.backend.bool_ite(&cond, &diff, &zero);
+            let __inner = ctx.backend.bv_eq(ctx.z3_bvs.get(dest).unwrap(), &slice_len);
+            let __tmp = ctx.backend.bool_implies(path_cond, &__inner);
+            ctx.backend.assert(&__tmp);
         }
         _ => {}
     }

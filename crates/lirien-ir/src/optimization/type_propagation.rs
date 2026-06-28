@@ -406,6 +406,32 @@ pub fn propagate_types(func: &mut Function) {
                             new_types.insert(*d, func.get_type(*list));
                         }
                     }
+                    InstructionKind::ConstStr(d, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Str);
+                        }
+                    }
+                    InstructionKind::StrLen(d, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::I64);
+                        }
+                    }
+                    InstructionKind::StrConcat(d, _, _)
+                    | InstructionKind::StrIndex(d, _, _)
+                    | InstructionKind::StrSlice(d, _, _, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Str);
+                        }
+                    }
+                    InstructionKind::StrCompare(d, _, _) => {
+                        let current_ty = func.get_type(*d);
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Bool);
+                        }
+                    }
                     InstructionKind::IToF(d, _, ty)
                     | InstructionKind::FToI(d, _, ty)
                     | InstructionKind::FConv(d, _, ty) => {
@@ -654,6 +680,8 @@ pub fn propagate_types(func: &mut Function) {
                     let r_ty = func.get_type(*r);
                     if l_ty.is_float() || r_ty.is_float() {
                         Some(InstructionKind::FAdd(*d, *l, *r))
+                    } else if l_ty == Type::Str || r_ty == Type::Str {
+                        Some(InstructionKind::StrConcat(*d, *l, *r))
                     } else {
                         None
                     }
