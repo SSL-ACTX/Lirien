@@ -47,6 +47,7 @@ from .decorators import (
     ensures,
     invariant,
 )
+from . import num
 from .diagnostics import (
     get_cpu_info,
     VerificationError,
@@ -118,4 +119,5 @@ __all__ = [
     "V",
     "TypeExpr",
     "TypeVar",
+    "num",
 ]

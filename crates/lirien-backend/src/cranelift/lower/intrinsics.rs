@@ -9,6 +9,64 @@ pub fn lower<M: Module>(
     func: &str,
     args: &[Value],
 ) -> Result<(), LoweringError> {
+    let is_math_intrinsic = matches!(
+        func,
+        "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "exp"
+            | "log"
+            | "log10"
+            | "pow"
+            | "floor"
+            | "ceil"
+            | "trunc"
+            | "nearest"
+    );
+
+    if is_math_intrinsic {
+        let mut sig = ctx.module.make_signature();
+        for _ in args {
+            sig.params.push(AbiParam::new(types::F64));
+        }
+        let ret_ty = ctx.ssa_func.get_type(dest);
+        if ret_ty.is_float() {
+            sig.returns.push(AbiParam::new(types::F64));
+        } else {
+            sig.returns
+                .push(AbiParam::new(super::super::translate_type(&ret_ty)));
+        }
+
+        let callee = ctx.module.declare_function(func, Linkage::Import, &sig)?;
+        let local_callee = ctx.module.declare_func_in_func(callee, ctx.builder.func);
+
+        let mut arg_vals = Vec::new();
+        for arg in args {
+            let cl_val = get_all_cl_values(ctx, arg)[0];
+            let arg_ty = ctx.ssa_func.get_type(*arg);
+            if arg_ty.is_float32() {
+                arg_vals.push(ctx.builder.ins().fpromote(types::F64, cl_val));
+            } else {
+                arg_vals.push(cl_val);
+            }
+        }
+
+        let call = ctx.builder.ins().call(local_callee, &arg_vals);
+        let res = ctx.builder.inst_results(call)[0];
+
+        if ret_ty.is_float32() {
+            let demoted = ctx.builder.ins().fdemote(types::F32, res);
+            ctx.values.insert(dest, demoted);
+        } else {
+            ctx.values.insert(dest, res);
+        }
+
+        return Ok(());
+    }
+
     let mut arg_types = Vec::new();
     for arg in args {
         arg_types.push(ctx.ssa_func.get_type(*arg));

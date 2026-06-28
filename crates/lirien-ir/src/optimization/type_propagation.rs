@@ -152,11 +152,7 @@ pub fn propagate_types(func: &mut Function) {
                     | InstructionKind::ULt(d, l, r)
                     | InstructionKind::ULe(d, l, r)
                     | InstructionKind::UGt(d, l, r)
-                    | InstructionKind::UGe(d, l, r)
-                    | InstructionKind::FLt(d, l, r)
-                    | InstructionKind::FLe(d, l, r)
-                    | InstructionKind::FGt(d, l, r)
-                    | InstructionKind::FGe(d, l, r) => {
+                    | InstructionKind::UGe(d, l, r) => {
                         let l_ty = func.get_type(*l);
                         let r_ty = func.get_type(*r);
                         let current_ty = func.get_type(*d);
@@ -167,6 +163,29 @@ pub fn propagate_types(func: &mut Function) {
                             } else if r_ty != Type::Unknown {
                                 new_types.insert(*d, r_ty);
                             }
+                        }
+                    }
+                    InstructionKind::FLt(d, l, r)
+                    | InstructionKind::FLe(d, l, r)
+                    | InstructionKind::FGt(d, l, r)
+                    | InstructionKind::FGe(d, l, r) => {
+                        let l_ty = func.get_type(*l);
+                        let r_ty = func.get_type(*r);
+                        let current_ty = func.get_type(*d);
+
+                        if current_ty == Type::Unknown {
+                            new_types.insert(*d, Type::Bool);
+                        }
+
+                        if l_ty.is_float32() && (r_ty == Type::Unknown || r_ty.is_float64()) {
+                            new_types.insert(*r, Type::F32);
+                        } else if r_ty.is_float32() && (l_ty == Type::Unknown || l_ty.is_float64())
+                        {
+                            new_types.insert(*l, Type::F32);
+                        } else if l_ty.is_float64() && r_ty == Type::Unknown {
+                            new_types.insert(*r, Type::F64);
+                        } else if r_ty.is_float64() && l_ty == Type::Unknown {
+                            new_types.insert(*l, Type::F64);
                         }
                     }
                     InstructionKind::FAdd(d, l, r)
@@ -489,10 +508,23 @@ pub fn propagate_types(func: &mut Function) {
                             }
                         }
                     }
-                    InstructionKind::TensorStore(d, tensor, _, _) => {
+                    InstructionKind::TensorStore(d, tensor, _, val) => {
                         let current_ty = func.get_type(*d);
                         if current_ty == Type::Unknown {
                             new_types.insert(*d, func.get_type(*tensor));
+                        }
+                        // Propagate type from tensor element to the stored value
+                        let val_ty = func.get_type(*val);
+                        if val_ty == Type::Unknown || val_ty.is_float64() {
+                            let tensor_ty = match func.get_type(*tensor) {
+                                Type::Refined(inner, _) => *inner,
+                                other => other,
+                            };
+                            if let Type::Tensor(inner, _) = tensor_ty {
+                                if val_ty != *inner {
+                                    new_types.insert(*val, *inner.clone());
+                                }
+                            }
                         }
                     }
                     InstructionKind::TensorAdd(d, lhs, _)

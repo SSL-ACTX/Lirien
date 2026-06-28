@@ -140,7 +140,11 @@ pub struct TranslationContext<'a, B: SolverBackend> {
 impl<'a, B: SolverBackend> TranslationContext<'a, B> {
     /// Generates a solver Int constant representing a named tensor dimension.
     pub fn get_dim_var(&mut self, dim_name: &str) -> B::Int {
-        self.backend.int_const(dim_name)
+        if let Ok(val) = dim_name.parse::<i64>() {
+            self.backend.int_from_i64(val)
+        } else {
+            self.backend.int_const(dim_name)
+        }
     }
 
     /// Evaluates safety violation satisfiability in isolation using push/pop scopes.

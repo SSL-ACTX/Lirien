@@ -41,7 +41,7 @@ fn lower_instruction_internal<M: Module>(
     current_ssa_block: SsaBlockId,
 ) -> Result<(), LoweringError> {
     match &inst.kind {
-        InstructionKind::Phi(_, _) => Ok(()), // Handled in Pass 1
+        InstructionKind::Phi(_, _) => Ok(()),
 
         InstructionKind::ConstInt(dest, val) => {
             let ty = ctx.ssa_func.get_type(*dest);

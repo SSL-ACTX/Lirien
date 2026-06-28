@@ -260,6 +260,13 @@ pub fn analyze(func: &Function) -> IntervalAnalysisResults {
                             false
                         }
                     }
+                    InstructionKind::FExp(d, _) => {
+                        let res = Interval {
+                            low: Bound::Finite(0.0),
+                            high: Bound::PosInf,
+                        };
+                        update_interval(&mut intervals, *d, res)
+                    }
                     InstructionKind::Phi(d, mappings) => {
                         let mut joined: Option<Interval> = None;
                         for (pred_id, src_val) in mappings {

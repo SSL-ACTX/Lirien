@@ -694,6 +694,15 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
                                 .builder
                                 .append_block_param(current_cl_block, types::I64);
                             cg_ctx.buffer_lengths.insert(*dest, cl_len);
+                        } else if let SsaType::Tensor(_, ref dims) = ty {
+                            let mut dim_vals = Vec::new();
+                            for _ in 0..dims.len() {
+                                let cl_dim = cg_ctx
+                                    .builder
+                                    .append_block_param(current_cl_block, types::I64);
+                                dim_vals.push(cl_dim);
+                            }
+                            cg_ctx.tensor_dims.insert(*dest, dim_vals);
                         }
                     }
                 }
@@ -811,7 +820,10 @@ pub fn compile(ssa_func: &SsaFunction) -> Result<usize, String> {
 
     module
         .define_function(func_id, &mut ctx)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            tracing::error!(target: "lirien::jit", "[Cranelift Compilation Error] Detailed error: {:?}", e);
+            e.to_string()
+        })?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let code = module.get_finalized_function(func_id);
     Ok(code as usize)

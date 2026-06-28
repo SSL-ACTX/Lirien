@@ -820,13 +820,25 @@ pub fn translate<
                     | InstructionKind::FAsin(_, _)
                     | InstructionKind::FAcos(_, _)
                     | InstructionKind::FAtan(_, _)
-                    | InstructionKind::FExp(_, _)
                     | InstructionKind::FLog(_, _)
                     | InstructionKind::FLog10(_, _)
                     | InstructionKind::FFloor(_, _)
                     | InstructionKind::FCeil(_, _)
                     | InstructionKind::FTrunc(_, _)
                     | InstructionKind::FNearest(_, _) => {}
+                    InstructionKind::FExp(_, _) => {
+                        if let Some(z3_dest) = ctx.z3_floats.get(dest) {
+                            let ty = ctx.func.get_type(*dest);
+                            let zero = if ty.is_float32() {
+                                ctx.backend.float_from_f32(0.0)
+                            } else {
+                                ctx.backend.float_from_f64(0.0)
+                            };
+                            let gt_zero = ctx.backend.float_gt(z3_dest, &zero);
+                            let __tmp = ctx.backend.bool_implies(path_cond, &gt_zero);
+                            ctx.backend.assert(&__tmp);
+                        }
+                    }
                     InstructionKind::FSqrt(_, _) => {
                         if let Some(z3_src) = ctx.z3_floats.get(s_val) {
                             let ty = ctx.func.get_type(*s_val);
