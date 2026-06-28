@@ -95,6 +95,13 @@ Lirien is an experimental research compiler. It is under active development and 
   - [ ] Bounded Loop Unrolling & Peeling
 - [ ] Verification & SMT Enhancements
   - [ ] Counterexample-Guided Debugging (SMT model extraction)
+- [ ] Numerical Library (num) Expansions
+  - [x] Modern DL Activations:
+    - [x] GELU
+    - [x] SwiGLU
+  - [x] In-place Optimization Steps (SGD with Momentum, AdamW)
+  - [x] Numerically Stable Loss Functions (Softmax Cross-Entropy with Log-Sum-Exp)
+  - [x] Batched & SIMD Operations (Batch Matrix Multiplication - BMM, SIMD RMSNorm/LayerNorm)
 
 ---
 

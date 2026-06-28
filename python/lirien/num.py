@@ -2,6 +2,7 @@ import math
 from lirien import verify, f32, Tensor, TypeVar, f32x4
 
 # Dimension TypeVars
+B = TypeVar("B")
 M = TypeVar("M")
 N = TypeVar("N")
 K = TypeVar("K")
@@ -714,3 +715,163 @@ def dot(a: Tensor[f32, M], b: Tensor[f32, M], out: Tensor[f32, 1]):
     for i in range(M):
         sum_val = sum_val + a[i] * b[i]
     out[0] = sum_val
+
+
+@verify
+def gelu(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise GELU (tanh approximation) activation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            x = a[i, j]
+            # z = sqrt(2/pi) * (x + 0.044715 * x^3)
+            # sqrt(2/pi) is approx 0.79788456
+            z = 0.79788456 * (x + 0.044715 * x * x * x)
+            # tanh(z) = (exp(2z) - 1) / (exp(2z) + 1)
+            exp_2z = math.exp(2.0 * z)
+            tanh_z = (exp_2z - 1.0) / (exp_2z + 1.0)
+            out[i, j] = 0.5 * x * (1.0 + tanh_z)
+
+
+@verify
+def swiglu(x: Tensor[f32, M, N], gate: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise SwiGLU activation: Swish(gate) * x, storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    for i in range(M):
+        for j in range(N):
+            g = gate[i, j]
+            swish_g = g / (1.0 + math.exp(-g))
+            out[i, j] = swish_g * x[i, j]
+
+
+@verify
+def sgd_momentum_step(
+    param: Tensor[f32, M, N],
+    grad: Tensor[f32, M, N],
+    velocity: Tensor[f32, M, N],
+    lr: f32,
+    momentum: f32,
+):
+    """
+    Perform an in-place SGD step with momentum.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            v = momentum * velocity[i, j] + lr * grad[i, j]
+            velocity[i, j] = v
+            param[i, j] = param[i, j] - v
+
+
+@verify
+def adamw_step(
+    param: Tensor[f32, M, N],
+    grad: Tensor[f32, M, N],
+    m: Tensor[f32, M, N],
+    v: Tensor[f32, M, N],
+    lr: f32,
+    beta1: f32,
+    beta2: f32,
+    epsilon: f32,
+    wd: f32,
+    bias_correction1: f32,
+    bias_correction2: f32,
+):
+    """
+    Perform an in-place AdamW step.
+    Requires 'epsilon > 0.0', 'bias_correction1 > 0.0', and 'bias_correction2 > 0.0'.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    assert bias_correction1 > 0.0
+    assert bias_correction2 > 0.0
+    for i in range(M):
+        for j in range(N):
+            g = grad[i, j]
+            m_t = beta1 * m[i, j] + (1.0 - beta1) * g
+            v_t = beta2 * v[i, j] + (1.0 - beta2) * g * g
+            m[i, j] = m_t
+            v[i, j] = v_t
+
+            m_hat = m_t / bias_correction1
+            v_hat = v_t / bias_correction2
+
+            denom = math.sqrt(abs(v_hat)) + epsilon
+            assert denom > 0.0
+            param[i, j] = param[i, j] - lr * (m_hat / denom + wd * param[i, j])
+
+
+@verify
+def softmax_cross_entropy_with_logits(
+    logits: Tensor[f32, M, N],
+    targets: Tensor[f32, M, N],
+    out: Tensor[f32, M],
+):
+    """
+    Compute multi-class cross entropy loss per batch element.
+    Uses the log-sum-exp trick to prevent underflow/overflow.
+    Statically verified by Z3 to be memory-safe, division-safe, and log-safe.
+    """
+    for i in range(M):
+        # Find max logit for stability
+        max_val = logits[i, 0]
+        for j in range(N):
+            if logits[i, j] > max_val:
+                max_val = logits[i, j]
+
+        # Compute log-sum-exp
+        sum_exp = 0.0
+        for j in range(N):
+            sum_exp = sum_exp + math.exp(logits[i, j] - max_val)
+
+        assert sum_exp > 0.0
+        lse = max_val + math.log(sum_exp)
+
+        # Compute cross entropy: sum(target * (lse - logit))
+        loss = 0.0
+        for j in range(N):
+            loss = loss + targets[i, j] * (lse - logits[i, j])
+
+        out[i] = loss
+
+
+@verify
+def bmm(
+    a: Tensor[f32, B, M, N],
+    b: Tensor[f32, B, N, K],
+    out: Tensor[f32, B, M, K],
+):
+    """
+    Batch matrix multiplication: out[b] = a[b] @ b[b]
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for batch in range(B):
+        for i in range(M):
+            for j in range(K):
+                sum_val: f32 = 0.0
+                for l in range(N):
+                    sum_val = sum_val + a[batch, i, l] * b[batch, l, j]
+                out[batch, i, j] = sum_val
+
+
+@verify
+def bmm_simd(
+    a: Tensor[f32x4, B, M, K],
+    b: Tensor[f32x4, B, K, N],
+    out: Tensor[f32, B, M, N],
+):
+    """
+    SIMD-accelerated batch matrix multiplication.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for batch in range(B):
+        for i in range(M):
+            for j in range(N):
+                acc = a[batch, i, 0] - a[batch, i, 0]  # Initialize zero vector
+                for k in range(K):
+                    acc = acc + a[batch, i, k] * b[batch, k, j]
+                out[batch, i, j] = acc[0] + acc[1] + acc[2] + acc[3]
