@@ -580,6 +580,40 @@ def relu_simd(a: Tensor[f32x4, M, N], out: Tensor[f32x4, M, N]):
 
 
 @verify
+def div_simd(
+    a: Tensor[f32x4, M, N],
+    b: Tensor[f32x4, M, N],
+    out: Tensor[f32x4, M, N],
+):
+    """
+    SIMD-accelerated element-wise division of two tensors of f32x4.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] / b[i, j]
+
+
+@verify
+def matmul_simd(
+    a: Tensor[f32x4, M, K],
+    b: Tensor[f32x4, K, N],
+    out: Tensor[f32, M, N],
+):
+    """
+    SIMD-accelerated 2D matrix multiplication.
+    Computes parallel row-column vector products and performs a horizontal sum.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            acc = a[i, 0] - a[i, 0]  # Initialize zero vector
+            for k in range(K):
+                acc = acc + a[i, k] * b[k, j]
+            out[i, j] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
 def hardsigmoid(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
     """
     Apply element-wise Hard Sigmoid activation.

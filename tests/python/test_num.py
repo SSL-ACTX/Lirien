@@ -871,6 +871,46 @@ class TestLirienNum(unittest.TestCase):
         self.assertEqual(res[2], 2.5)
         self.assertEqual(res[3], 0.0)
 
+    def test_div_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        b = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(10.0, 20.0, 30.0, 40.0)
+        b[0, 0] = f32x4(2.0, 5.0, 10.0, 4.0)
+
+        num.div_simd(a, b, out)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 5.0)
+        self.assertEqual(res[1], 4.0)
+        self.assertEqual(res[2], 3.0)
+        self.assertEqual(res[3], 10.0)
+
+    def test_matmul_simd(self):
+        # M = 2, K = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        b = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[0, 1] = f32x4(5.0, 6.0, 7.0, 8.0)
+        a[1, 0] = f32x4(0.0, 1.0, 2.0, 3.0)
+        a[1, 1] = f32x4(1.0, 1.0, 1.0, 1.0)
+
+        b[0, 0] = f32x4(2.0, 1.0, 0.5, 0.25)
+        b[0, 1] = f32x4(0.0, 2.0, 4.0, 6.0)
+        b[1, 0] = f32x4(0.0, 1.0, 2.0, 3.0)
+        b[1, 1] = f32x4(1.0, 0.0, 1.0, 0.0)
+
+        num.matmul_simd(a, b, out)
+
+        self.assertAlmostEqual(out[0, 0], 50.5, places=5)
+        self.assertAlmostEqual(out[0, 1], 52.0, places=5)
+        self.assertAlmostEqual(out[1, 0], 8.75, places=5)
+        self.assertAlmostEqual(out[1, 1], 30.0, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()
