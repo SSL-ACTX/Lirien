@@ -394,6 +394,55 @@ class TestLirienNum(unittest.TestCase):
         self.assertAlmostEqual(out[1], 0.0)
         self.assertAlmostEqual(out[2], 1.0)
 
+    def test_matvec(self):
+        # M = 2, N = 3
+        matrix = Tensor.alloc((2, 3), f32)
+        vector = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((2,), f32)
+
+        matrix[0, 0] = 1.0; matrix[0, 1] = 2.0; matrix[0, 2] = 3.0
+        matrix[1, 0] = 4.0; matrix[1, 1] = 5.0; matrix[1, 2] = 6.0
+
+        vector[0] = 2.0
+        vector[1] = 1.0
+        vector[2] = 3.0
+
+        num.matvec(matrix, vector, out)
+
+        self.assertEqual(out[0], 13.0)
+        self.assertEqual(out[1], 31.0)
+
+    def test_outer(self):
+        # M = 3, N = 2
+        a = Tensor.alloc((3,), f32)
+        b = Tensor.alloc((2,), f32)
+        out = Tensor.alloc((3, 2), f32)
+
+        a[0] = 1.0; a[1] = 2.0; a[2] = 3.0
+        b[0] = 4.0; b[1] = 5.0
+
+        num.outer(a, b, out)
+
+        self.assertEqual(out[0, 0], 4.0)
+        self.assertEqual(out[0, 1], 5.0)
+        self.assertEqual(out[1, 0], 8.0)
+        self.assertEqual(out[1, 1], 10.0)
+        self.assertEqual(out[2, 0], 12.0)
+        self.assertEqual(out[2, 1], 15.0)
+
+    def test_dot(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        b = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = 1.0; a[1] = 2.0; a[2] = 3.0
+        b[0] = 4.0; b[1] = 5.0; b[2] = 6.0
+
+        num.dot(a, b, out)
+
+        self.assertEqual(out[0], 32.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -261,3 +261,39 @@ def standardize(a: Tensor[f32, M], out: Tensor[f32, M], mean_val: f32, std_val: 
     assert std_val > 0.0
     for i in range(M):
         out[i] = (a[i] - mean_val) / std_val
+
+
+@verify
+def matvec(matrix: Tensor[f32, M, N], vector: Tensor[f32, N], out: Tensor[f32, M]):
+    """
+    Matrix-vector multiplication, storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        sum_val: f32 = 0.0
+        for j in range(N):
+            sum_val = sum_val + matrix[i, j] * vector[j]
+        out[i] = sum_val
+
+
+@verify
+def outer(a: Tensor[f32, M], b: Tensor[f32, N], out: Tensor[f32, M, N]):
+    """
+    Compute the outer product of vectors 'a' and 'b', storing in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i] * b[j]
+
+
+@verify
+def dot(a: Tensor[f32, M], b: Tensor[f32, M], out: Tensor[f32, 1]):
+    """
+    Compute the dot product of vectors 'a' and 'b', storing in 'out[0]'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    sum_val: f32 = 0.0
+    for i in range(M):
+        sum_val = sum_val + a[i] * b[i]
+    out[0] = sum_val
