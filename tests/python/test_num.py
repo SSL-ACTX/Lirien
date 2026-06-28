@@ -509,6 +509,63 @@ class TestLirienNum(unittest.TestCase):
 
         self.assertAlmostEqual(out[0], 1.0, places=5)
 
+    def test_silu(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        a[0, 0] = 0.0
+        a[0, 1] = 1.0
+        a[1, 0] = -1.0
+        a[1, 1] = 2.0
+
+        num.silu(a, out)
+
+        self.assertAlmostEqual(out[0, 0], 0.0)
+        self.assertAlmostEqual(out[0, 1], 1.0 / (1.0 + math.exp(-1.0)), places=5)
+        self.assertAlmostEqual(out[1, 0], -1.0 / (1.0 + math.exp(1.0)), places=5)
+        self.assertAlmostEqual(out[1, 1], 2.0 / (1.0 + math.exp(-2.0)), places=5)
+
+    def test_rms_norm(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+
+        num.rms_norm(a, out, 1e-9, 3.0)
+
+        rms = math.sqrt(14.0 / 3.0)
+        self.assertAlmostEqual(out[0], 1.0 / rms, places=5)
+        self.assertAlmostEqual(out[1], 2.0 / rms, places=5)
+        self.assertAlmostEqual(out[2], 3.0 / rms, places=5)
+
+    def test_layer_norm(self):
+        # M = 3
+        a = Tensor.alloc((3,), f32)
+        gamma = Tensor.alloc((3,), f32)
+        beta = Tensor.alloc((3,), f32)
+        out = Tensor.alloc((3,), f32)
+
+        a[0] = 1.0
+        a[1] = 2.0
+        a[2] = 3.0
+        gamma[0] = 1.0
+        gamma[1] = 1.0
+        gamma[2] = 1.0
+        beta[0] = 0.0
+        beta[1] = 0.0
+        beta[2] = 0.0
+
+        num.layer_norm(a, out, gamma, beta, 1e-9, 3.0)
+
+        std_val = math.sqrt(2.0 / 3.0)
+        self.assertAlmostEqual(out[0], -1.0 / std_val, places=5)
+        self.assertAlmostEqual(out[1], 0.0, places=5)
+        self.assertAlmostEqual(out[2], 1.0 / std_val, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

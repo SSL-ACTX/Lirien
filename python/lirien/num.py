@@ -324,6 +324,71 @@ def cosine_similarity(
 
 
 @verify
+def silu(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
+    """
+    Apply element-wise Sigmoid Linear Unit (SiLU) / Swish activation.
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            out[i, j] = val / (1.0 + math.exp(-val))
+
+
+@verify
+def rms_norm(a: Tensor[f32, M], out: Tensor[f32, M], epsilon: f32, n: f32):
+    """
+    Root Mean Square Normalization (RMSNorm) of 'a', storing in 'out'.
+    Requires 'epsilon > 0.0' and 'n > 0.0' (where n is float(M)).
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    assert n > 0.0
+    sum_sq: f32 = 0.0
+    for i in range(M):
+        sum_sq = sum_sq + a[i] * a[i]
+    rms = math.sqrt(abs(sum_sq / n) + epsilon)
+    assert rms > 0.0
+    for i in range(M):
+        out[i] = a[i] / rms
+
+
+@verify
+def layer_norm(
+    a: Tensor[f32, M],
+    out: Tensor[f32, M],
+    gamma: Tensor[f32, M],
+    beta: Tensor[f32, M],
+    epsilon: f32,
+    n: f32,
+):
+    """
+    Layer Normalization of 'a' with scale 'gamma' and shift 'beta'.
+    Requires 'epsilon > 0.0' and 'n > 0.0' (where n is float(M)).
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert epsilon > 0.0
+    assert n > 0.0
+
+    # Compute mean and sum of squares in a single loop
+    sum_val: f32 = 0.0
+    sum_sq: f32 = 0.0
+    for i in range(M):
+        val = a[i]
+        sum_val = sum_val + val
+        sum_sq = sum_sq + val * val
+
+    mean_val = sum_val / n
+    var_val = sum_sq / n - mean_val * mean_val
+
+    # Normalize and scale/shift
+    std_val = math.sqrt(abs(var_val) + epsilon)
+    assert std_val > 0.0
+    for i in range(M):
+        out[i] = (a[i] - mean_val) / std_val * gamma[i] + beta[i]
+
+
+@verify
 def matvec(matrix: Tensor[f32, M, N], vector: Tensor[f32, N], out: Tensor[f32, M]):
     """
     Matrix-vector multiplication, storing the result in 'out'.
