@@ -641,6 +641,58 @@ class TestLirienNum(unittest.TestCase):
             out[1, 1], scale * alpha * (math.exp(-2.0) - 1.0), places=5
         )
 
+    def test_matvec_bias(self):
+        # M = 2, N = 3
+        matrix = Tensor.alloc((2, 3), f32)
+        vector = Tensor.alloc((3,), f32)
+        bias = Tensor.alloc((2,), f32)
+        out = Tensor.alloc((2,), f32)
+
+        matrix[0, 0] = 1.0; matrix[0, 1] = 2.0; matrix[0, 2] = 3.0
+        matrix[1, 0] = 4.0; matrix[1, 1] = 5.0; matrix[1, 2] = 6.0
+
+        vector[0] = 2.0; vector[1] = 1.0; vector[2] = 3.0
+        bias[0] = 0.5; bias[1] = -1.5
+
+        num.matvec_bias(matrix, vector, bias, out)
+
+        self.assertEqual(out[0], 13.5)
+        self.assertEqual(out[1], 29.5)
+
+    def test_sigmoid_cross_entropy(self):
+        # M = 2, N = 2
+        logits = Tensor.alloc((2, 2), f32)
+        targets = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((2, 2), f32)
+
+        logits[0, 0] = 0.0; targets[0, 0] = 0.5
+        logits[0, 1] = 1.0; targets[0, 1] = 1.0
+        logits[1, 0] = -2.0; targets[1, 0] = 0.0
+        logits[1, 1] = 10.0; targets[1, 1] = 0.0
+
+        num.sigmoid_cross_entropy(logits, targets, out)
+
+        self.assertAlmostEqual(out[0, 0], 0.693147, places=5)
+        self.assertAlmostEqual(out[0, 1], 0.3132617, places=5)
+        self.assertAlmostEqual(out[1, 0], 0.126928, places=5)
+        self.assertAlmostEqual(out[1, 1], 10.000045, places=5)
+
+    def test_l2_loss(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32)
+        b = Tensor.alloc((2, 2), f32)
+        out = Tensor.alloc((1,), f32)
+
+        a[0, 0] = 1.0; a[0, 1] = 2.0
+        a[1, 0] = 3.0; a[1, 1] = 4.0
+
+        b[0, 0] = 2.0; b[0, 1] = 1.0
+        b[1, 0] = 4.0; b[1, 1] = 2.0
+
+        num.l2_loss(a, b, out, 8.0)
+
+        self.assertAlmostEqual(out[0], 0.875, places=5)
+
 
 if __name__ == "__main__":
     unittest.main()

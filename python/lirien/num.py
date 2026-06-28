@@ -389,6 +389,67 @@ def layer_norm(
 
 
 @verify
+def matvec_bias(
+    matrix: Tensor[f32, M, N],
+    vector: Tensor[f32, N],
+    bias: Tensor[f32, M],
+    out: Tensor[f32, M],
+):
+    """
+    Matrix-vector multiplication with a bias vector, storing the result in 'out'.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        sum_val: f32 = 0.0
+        for j in range(N):
+            sum_val = sum_val + matrix[i, j] * vector[j]
+        out[i] = sum_val + bias[i]
+
+
+@verify
+def sigmoid_cross_entropy(
+    logits: Tensor[f32, M, N],
+    targets: Tensor[f32, M, N],
+    out: Tensor[f32, M, N],
+):
+    """
+    Compute element-wise sigmoid cross entropy loss.
+    Statically verified by Z3 to be memory-safe, division-safe, and log-safe.
+    """
+    for i in range(M):
+        for j in range(N):
+            x = logits[i, j]
+            y = targets[i, j]
+            # Stable formula: max(x, 0) - x * y + log(1 + exp(-abs(x)))
+            max_val = x
+            if 0.0 > max_val:
+                max_val = 0.0
+
+            out[i, j] = max_val - x * y + math.log(1.0 + math.exp(-abs(x)))
+
+
+@verify
+def l2_loss(
+    a: Tensor[f32, M, N],
+    b: Tensor[f32, M, N],
+    out: Tensor[f32, 1],
+    n: f32,
+):
+    """
+    Compute L2 loss (Mean Squared Error) between 'a' and 'b'.
+    Requires 'n > 0.0' (where n is float(2 * M * N)).
+    Statically verified by Z3 to be memory-safe and division-by-zero safe.
+    """
+    assert n > 0.0
+    sum_sq: f32 = 0.0
+    for i in range(M):
+        for j in range(N):
+            diff = a[i, j] - b[i, j]
+            sum_sq = sum_sq + diff * diff
+    out[0] = sum_sq / n
+
+
+@verify
 def hardsigmoid(a: Tensor[f32, M, N], out: Tensor[f32, M, N]):
     """
     Apply element-wise Hard Sigmoid activation.
