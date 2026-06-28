@@ -1,6 +1,6 @@
 import unittest
 import math
-from lirien import Tensor, f32, num
+from lirien import Tensor, f32, num, f32x4
 
 
 class TestLirienNum(unittest.TestCase):
@@ -648,11 +648,18 @@ class TestLirienNum(unittest.TestCase):
         bias = Tensor.alloc((2,), f32)
         out = Tensor.alloc((2,), f32)
 
-        matrix[0, 0] = 1.0; matrix[0, 1] = 2.0; matrix[0, 2] = 3.0
-        matrix[1, 0] = 4.0; matrix[1, 1] = 5.0; matrix[1, 2] = 6.0
+        matrix[0, 0] = 1.0
+        matrix[0, 1] = 2.0
+        matrix[0, 2] = 3.0
+        matrix[1, 0] = 4.0
+        matrix[1, 1] = 5.0
+        matrix[1, 2] = 6.0
 
-        vector[0] = 2.0; vector[1] = 1.0; vector[2] = 3.0
-        bias[0] = 0.5; bias[1] = -1.5
+        vector[0] = 2.0
+        vector[1] = 1.0
+        vector[2] = 3.0
+        bias[0] = 0.5
+        bias[1] = -1.5
 
         num.matvec_bias(matrix, vector, bias, out)
 
@@ -665,10 +672,14 @@ class TestLirienNum(unittest.TestCase):
         targets = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((2, 2), f32)
 
-        logits[0, 0] = 0.0; targets[0, 0] = 0.5
-        logits[0, 1] = 1.0; targets[0, 1] = 1.0
-        logits[1, 0] = -2.0; targets[1, 0] = 0.0
-        logits[1, 1] = 10.0; targets[1, 1] = 0.0
+        logits[0, 0] = 0.0
+        targets[0, 0] = 0.5
+        logits[0, 1] = 1.0
+        targets[0, 1] = 1.0
+        logits[1, 0] = -2.0
+        targets[1, 0] = 0.0
+        logits[1, 1] = 10.0
+        targets[1, 1] = 0.0
 
         num.sigmoid_cross_entropy(logits, targets, out)
 
@@ -683,15 +694,182 @@ class TestLirienNum(unittest.TestCase):
         b = Tensor.alloc((2, 2), f32)
         out = Tensor.alloc((1,), f32)
 
-        a[0, 0] = 1.0; a[0, 1] = 2.0
-        a[1, 0] = 3.0; a[1, 1] = 4.0
+        a[0, 0] = 1.0
+        a[0, 1] = 2.0
+        a[1, 0] = 3.0
+        a[1, 1] = 4.0
 
-        b[0, 0] = 2.0; b[0, 1] = 1.0
-        b[1, 0] = 4.0; b[1, 1] = 2.0
+        b[0, 0] = 2.0
+        b[0, 1] = 1.0
+        b[1, 0] = 4.0
+        b[1, 1] = 2.0
 
         num.l2_loss(a, b, out, 8.0)
 
         self.assertAlmostEqual(out[0], 0.875, places=5)
+
+    def test_dot_simd(self):
+        # M = 2
+        a = Tensor.alloc((2,), f32x4)
+        b = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[1] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        b[0] = f32x4(2.0, 1.0, 0.5, 0.25)
+        b[1] = f32x4(0.0, 1.0, 2.0, 3.0)
+
+        num.dot_simd(a, b, out)
+
+        # a[0]*b[0] = [2.0, 2.0, 1.5, 1.0], sum = 6.5
+        # a[1]*b[1] = [0.0, 6.0, 14.0, 24.0], sum = 44.0
+        # Total sum = 6.5 + 44.0 = 50.5
+        self.assertAlmostEqual(out[0], 50.5, places=5)
+
+    def test_matvec_simd(self):
+        # M = 2, N = 2
+        matrix = Tensor.alloc((2, 2), f32x4)
+        vector = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((2,), f32)
+
+        matrix[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        matrix[0, 1] = f32x4(5.0, 6.0, 7.0, 8.0)
+        matrix[1, 0] = f32x4(0.0, 1.0, 2.0, 3.0)
+        matrix[1, 1] = f32x4(1.0, 1.0, 1.0, 1.0)
+
+        vector[0] = f32x4(2.0, 1.0, 0.5, 0.25)
+        vector[1] = f32x4(0.0, 1.0, 2.0, 3.0)
+
+        num.matvec_simd(matrix, vector, out)
+
+        # Row 0: matrix[0,0]*vector[0] + matrix[0,1]*vector[1]
+        # [2.0, 2.0, 1.5, 1.0] + [0.0, 6.0, 14.0, 24.0] = [2.0, 8.0, 15.5, 25.0]
+        # Sum = 50.5
+        # Row 1: matrix[1,0]*vector[0] + matrix[1,1]*vector[1]
+        # [0.0, 1.0, 1.0, 0.75] + [0.0, 1.0, 2.0, 3.0] = [0.0, 2.0, 3.0, 3.75]
+        # Sum = 8.75
+        self.assertAlmostEqual(out[0], 50.5, places=5)
+        self.assertAlmostEqual(out[1], 8.75, places=5)
+
+    def test_mse_simd(self):
+        # M = 2
+        a = Tensor.alloc((2,), f32x4)
+        b = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[1] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        b[0] = f32x4(2.0, 1.0, 4.0, 2.0)
+        b[1] = f32x4(4.0, 7.0, 5.0, 9.0)
+
+        num.mse_simd(a, b, out)
+
+        # diff0 = [-1.0, 1.0, -1.0, 2.0], diff0^2 = [1, 1, 1, 4] -> sum = 7
+        # diff1 = [1.0, -1.0, 2.0, -1.0], diff1^2 = [1, 1, 4, 1] -> sum = 7
+        # Total sum = 14.0
+        self.assertAlmostEqual(out[0], 14.0, places=5)
+
+    def test_mae_simd(self):
+        # M = 2
+        a = Tensor.alloc((2,), f32x4)
+        b = Tensor.alloc((2,), f32x4)
+        out = Tensor.alloc((1,), f32)
+
+        a[0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        a[1] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        b[0] = f32x4(2.0, 1.0, 4.0, 2.0)
+        b[1] = f32x4(4.0, 7.0, 5.0, 9.0)
+
+        num.mae_simd(a, b, out)
+
+        # abs(diff0) = [1.0, 1.0, 1.0, 2.0] -> sum = 5.0
+        # abs(diff1) = [1.0, 1.0, 2.0, 1.0] -> sum = 5.0
+        # Total sum = 10.0
+        self.assertAlmostEqual(out[0], 10.0, places=5)
+
+    def test_add_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        b = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        b[0, 0] = f32x4(10.0, 20.0, 30.0, 40.0)
+
+        num.add_simd(a, b, out)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 11.0)
+        self.assertEqual(res[1], 22.0)
+        self.assertEqual(res[2], 33.0)
+        self.assertEqual(res[3], 44.0)
+
+    def test_sub_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        b = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(10.0, 20.0, 30.0, 40.0)
+        b[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+
+        num.sub_simd(a, b, out)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 9.0)
+        self.assertEqual(res[1], 18.0)
+        self.assertEqual(res[2], 27.0)
+        self.assertEqual(res[3], 36.0)
+
+    def test_mul_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        b = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+        b[0, 0] = f32x4(5.0, 6.0, 7.0, 8.0)
+
+        num.mul_simd(a, b, out)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 5.0)
+        self.assertEqual(res[1], 12.0)
+        self.assertEqual(res[2], 21.0)
+        self.assertEqual(res[3], 32.0)
+
+    def test_scale_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(1.0, 2.0, 3.0, 4.0)
+
+        num.scale_simd(a, out, 5.0)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 5.0)
+        self.assertEqual(res[1], 10.0)
+        self.assertEqual(res[2], 15.0)
+        self.assertEqual(res[3], 20.0)
+
+    def test_relu_simd(self):
+        # M = 2, N = 2
+        a = Tensor.alloc((2, 2), f32x4)
+        out = Tensor.alloc((2, 2), f32x4)
+
+        a[0, 0] = f32x4(-1.5, 0.0, 2.5, -0.5)
+
+        num.relu_simd(a, out)
+
+        res = out[0, 0]
+        self.assertEqual(res[0], 0.0)
+        self.assertEqual(res[1], 0.0)
+        self.assertEqual(res[2], 2.5)
+        self.assertEqual(res[3], 0.0)
 
 
 if __name__ == "__main__":

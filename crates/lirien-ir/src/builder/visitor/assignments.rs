@@ -94,7 +94,53 @@ impl CFGBuilder {
                     _ => {
                         let mut idx = self.visit_expr(*sub.slice.clone())?;
                         idx = self.auto_load(idx);
-                        match arr_ty {
+
+                        let simd_info = match arr_ty {
+                            Type::F32X4 => Some((Type::F32, 4)),
+                            Type::I32X4 => Some((Type::I32, 4)),
+                            Type::F64X2 => Some((Type::F64, 2)),
+                            Type::I64X2 => Some((Type::I64, 2)),
+                            Type::I8X16 => Some((Type::I8, 16)),
+                            Type::U8X16 => Some((Type::U8, 16)),
+                            Type::I16X8 => Some((Type::I16, 8)),
+                            Type::U16X8 => Some((Type::U16, 8)),
+                            _ => None,
+                        };
+
+                        if let Some((_inner_ty, lanes)) = simd_info {
+                            let mut idx_val = None;
+                            for block in &self.func.blocks {
+                                for inst in &block.instructions {
+                                    if let InstructionKind::ConstInt(v, val) = inst.kind {
+                                        if v == idx {
+                                            idx_val = Some(val as usize);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(lane) = idx_val {
+                                if lane < lanes {
+                                    push_inst!(self, InstructionKind::SIMDInsertLane(dest_arr, arr, value, lane));
+                                    self.func.set_type(dest_arr, arr_ty.clone());
+                                    // Let the fallthrough update the local variable SSA map
+                                } else {
+                                    return Err(builder_error!(
+                                        General,
+                                        "SIMD lane index out of bounds: {} for {:?}",
+                                        lane,
+                                        arr_ty
+                                    ));
+                                }
+                            } else {
+                                return Err(builder_error!(
+                                    General,
+                                    "SIMD lane index must be a constant"
+                                ));
+                            }
+                        } else {
+                            match arr_ty {
                             Type::Buffer(inner) => {
                                 push_inst!(
                                     self,
@@ -141,6 +187,7 @@ impl CFGBuilder {
                                 );
                             }
                         }
+                    }
                     }
                 }
 

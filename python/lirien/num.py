@@ -1,5 +1,5 @@
 import math
-from lirien import verify, f32, Tensor, TypeVar
+from lirien import verify, f32, Tensor, TypeVar, f32x4
 
 # Dimension TypeVars
 M = TypeVar("M")
@@ -447,6 +447,136 @@ def l2_loss(
             diff = a[i, j] - b[i, j]
             sum_sq = sum_sq + diff * diff
     out[0] = sum_sq / n
+
+
+@verify
+def dot_simd(a: Tensor[f32x4, M], b: Tensor[f32x4, M], out: Tensor[f32, 1]):
+    """
+    SIMD-accelerated dot product of two tensors of f32x4.
+    Computes parallel vector products and performs a horizontal sum.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    acc = a[0] - a[0]  # Initialize zero vector
+    for i in range(M):
+        acc = acc + a[i] * b[i]
+    out[0] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
+def matvec_simd(
+    matrix: Tensor[f32x4, M, N],
+    vector: Tensor[f32x4, N],
+    out: Tensor[f32, M],
+):
+    """
+    SIMD-accelerated matrix-vector multiplication.
+    Computes parallel row-vector dot products.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        acc = matrix[i, 0] - matrix[i, 0]  # Initialize zero vector
+        for j in range(N):
+            acc = acc + matrix[i, j] * vector[j]
+        out[i] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
+def mse_simd(a: Tensor[f32x4, M], b: Tensor[f32x4, M], out: Tensor[f32, 1]):
+    """
+    SIMD-accelerated Mean Squared Error (MSE) accumulation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    acc = a[0] - a[0]
+    for i in range(M):
+        diff = a[i] - b[i]
+        acc = acc + diff * diff
+    out[0] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
+def mae_simd(a: Tensor[f32x4, M], b: Tensor[f32x4, M], out: Tensor[f32, 1]):
+    """
+    SIMD-accelerated Mean Absolute Error (MAE) accumulation.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    acc = a[0] - a[0]
+    for i in range(M):
+        diff = a[i] - b[i]
+        acc = acc + abs(diff)
+    out[0] = acc[0] + acc[1] + acc[2] + acc[3]
+
+
+@verify
+def add_simd(
+    a: Tensor[f32x4, M, N],
+    b: Tensor[f32x4, M, N],
+    out: Tensor[f32x4, M, N],
+):
+    """
+    SIMD-accelerated element-wise addition of two tensors of f32x4.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] + b[i, j]
+
+
+@verify
+def sub_simd(
+    a: Tensor[f32x4, M, N],
+    b: Tensor[f32x4, M, N],
+    out: Tensor[f32x4, M, N],
+):
+    """
+    SIMD-accelerated element-wise subtraction of two tensors of f32x4.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] - b[i, j]
+
+
+@verify
+def mul_simd(
+    a: Tensor[f32x4, M, N],
+    b: Tensor[f32x4, M, N],
+    out: Tensor[f32x4, M, N],
+):
+    """
+    SIMD-accelerated element-wise multiplication of two tensors of f32x4.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] * b[i, j]
+
+
+@verify
+def scale_simd(
+    a: Tensor[f32x4, M, N],
+    out: Tensor[f32x4, M, N],
+    factor: f32,
+):
+    """
+    SIMD-accelerated element-wise scaling of a tensor of f32x4 by a scalar factor.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            out[i, j] = a[i, j] * factor
+
+
+@verify
+def relu_simd(a: Tensor[f32x4, M, N], out: Tensor[f32x4, M, N]):
+    """
+    SIMD-accelerated element-wise branchless ReLU of a tensor of f32x4.
+    Statically verified by Z3 to be memory-safe and in-bounds.
+    """
+    for i in range(M):
+        for j in range(N):
+            val = a[i, j]
+            zero = val * 0.0
+            out[i, j] = max(val, zero)
 
 
 @verify

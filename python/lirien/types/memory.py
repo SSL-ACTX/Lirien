@@ -192,11 +192,13 @@ class Tensor(Generic[T]):
         item_cty = ctypes.c_float
         if getattr(base_type, "__lirien_struct__", False):
             item_cty = base_type.__lirien_ctypes__
+        elif isinstance(base_type, type) and issubclass(base_type, ctypes.Structure):
+            item_cty = base_type
         else:
             item_ty_str = str(base_type).lower()
-            for name, cty in TYPE_MAP.items():
+            for name in sorted(TYPE_MAP.keys(), key=len, reverse=True):
                 if name in item_ty_str:
-                    item_cty = cty
+                    item_cty = TYPE_MAP[name]
                     break
         size = 1
         for dim in shape:
