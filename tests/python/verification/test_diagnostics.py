@@ -76,6 +76,21 @@ class TestDiagnostics(unittest.TestCase):
         self.assertEqual(dummy_func_1(42), 43)
         self.assertEqual(dummy_func_2(42), 43)
 
+    def test_counterexample_debugging(self):
+        from lirien.diagnostics import VerificationError
+
+        try:
+
+            @verify
+            def unsafe_div(n: i64, d: i64) -> i64:
+                return n // d
+        except VerificationError as e:
+            self.assertIn("division by zero", str(e))
+            self.assertIn("counterexample:", str(e))
+            self.assertIn("d = #x0000000000000000", str(e))
+        else:
+            self.fail("VerificationError not raised for unsafe division")
+
 
 if __name__ == "__main__":
     unittest.main()

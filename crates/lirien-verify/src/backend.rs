@@ -137,4 +137,14 @@ pub trait SolverBackend {
         val: &Self::Int,
     ) -> Self::Array;
     fn array_eq(&mut self, a: &Self::Array, b: &Self::Array) -> Self::Bool;
+
+    /// Evaluates a boolean expression in the current model.
+    fn eval_bool(&self, val: &Self::Bool) -> Option<String>;
+    /// Evaluates an integer expression in the current model.
+    fn eval_int(&self, val: &Self::Int) -> Option<String>;
+    /// Evaluates a float expression in the current model.
+    fn eval_float(&self, val: &Self::Float) -> Option<String>;
+    /// Evaluates a bitvector expression in the current model.
+    fn eval_bv(&self, val: &Self::BV) -> Option<String>;
 }
+

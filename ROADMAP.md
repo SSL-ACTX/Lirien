@@ -94,7 +94,7 @@ Lirien is an experimental research compiler. It is under active development and 
   - [ ] Auto-Vectorization (SIMD)
   - [ ] Bounded Loop Unrolling & Peeling
 - [ ] Verification & SMT Enhancements
-  - [ ] Counterexample-Guided Debugging (SMT model extraction)
+  - [x] Counterexample-Guided Debugging (SMT model extraction)
 - [ ] Numerical Library (num) Expansions
   - [x] Modern DL Activations:
     - [x] GELU

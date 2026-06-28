@@ -137,6 +137,37 @@ pub struct TranslationContext<'a, B: SolverBackend> {
     pub safety_checks: Vec<SafetyCheck<B>>,
 }
 
+fn get_counterexample_string<B: SolverBackend>(
+    t_ctx: &TranslationContext<'_, B>,
+) -> String {
+    let mut parts = Vec::new();
+    for i in 1..t_ctx.func.arg_count {
+        let val = Value(i);
+        let name = t_ctx.func.arg_names.get(i)
+            .cloned()
+            .unwrap_or_else(|| format!("arg{}", i - 1));
+        
+        if let Some(bv_val) = t_ctx.z3_bvs.get(&val) {
+            if let Some(s) = t_ctx.backend.eval_bv(bv_val) {
+                parts.push(format!("{} = {}", name, s));
+            }
+        } else if let Some(float_val) = t_ctx.z3_floats.get(&val) {
+            if let Some(s) = t_ctx.backend.eval_float(float_val) {
+                parts.push(format!("{} = {}", name, s));
+            }
+        } else if let Some(int_val) = t_ctx.z3_ints.get(&val) {
+            if let Some(s) = t_ctx.backend.eval_int(int_val) {
+                parts.push(format!("{} = {}", name, s));
+            }
+        }
+    }
+    if parts.is_empty() {
+        "".to_string()
+    } else {
+        format!(" (counterexample: {})", parts.join(", "))
+    }
+}
+
 impl<'a, B: SolverBackend> TranslationContext<'a, B> {
     /// Generates a solver Int constant representing a named tensor dimension.
     pub fn get_dim_var(&mut self, dim_name: &str) -> B::Int {
@@ -162,16 +193,19 @@ impl<'a, B: SolverBackend> TranslationContext<'a, B> {
         self.backend.assert(path_cond);
         self.backend.assert(violation_cond);
         let violated = self.backend.check()?;
-        self.backend.pop(1);
 
         if violated {
+            let counterexample = get_counterexample_string(self);
             let loc_info = location.map(|l| format!(" at {}", l)).unwrap_or_default();
-            Err(format!("{}{}", error_message, loc_info))
+            self.backend.pop(1);
+            Err(format!("{}{}{}", error_message, counterexample, loc_info))
         } else {
+            self.backend.pop(1);
             Ok(())
         }
     }
 }
+
 
 /// Formally verifies a Lirien JIT function using SMT context building and safety checks.
 ///
@@ -235,14 +269,17 @@ pub fn verify_with_context<
         t_ctx.backend.assert(&check.path_cond);
         t_ctx.backend.assert(&check.violation_cond);
         if t_ctx.backend.check()? {
+            let counterexample = get_counterexample_string(&t_ctx);
             let loc_info = check
                 .location
                 .map(|l| format!(" at {}", l))
                 .unwrap_or_default();
-            return Err(format!("{}{}", check.error_message, loc_info));
+            t_ctx.backend.pop(1);
+            return Err(format!("{}{}{}", check.error_message, counterexample, loc_info));
         }
         t_ctx.backend.pop(1);
     }
+
 
     returns::verify_return_refinements(&mut t_ctx)?;
 

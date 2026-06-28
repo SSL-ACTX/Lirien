@@ -938,4 +938,3 @@ def layer_norm_simd(
 
     for i in range(M):
         out[i] = (a[i] - mean_val) * inv_std * gamma[i] + beta[i]
-

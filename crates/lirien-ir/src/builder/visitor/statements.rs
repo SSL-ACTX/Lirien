@@ -11,6 +11,10 @@ impl CFGBuilder {
     pub fn visit_function_def(&mut self, s: ast::StmtFunctionDef) -> BuilderResult<()> {
         self.update_location(s.range().start().to_usize());
         self.func.arg_count = s.args.args.len() + 1;
+        self.func.arg_names = vec!["__exception_ptr".to_string()];
+        for arg in &s.args.args {
+            self.func.arg_names.push(arg.def.arg.to_string());
+        }
 
         // Prepend implicit exception pointer parameter at index 0
         let exc_val = self.func.next_value();

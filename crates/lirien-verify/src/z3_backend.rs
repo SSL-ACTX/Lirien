@@ -686,4 +686,21 @@ impl<'ctx> SolverBackend for Z3Backend<'ctx> {
     fn array_eq(&mut self, a: &Self::Array, b: &Self::Array) -> Self::Bool {
         a.eq(b)
     }
+
+    fn eval_bool(&self, val: &Self::Bool) -> Option<String> {
+        self.solver.get_model()?.eval(val, true).map(|v| format!("{}", v))
+    }
+
+    fn eval_int(&self, val: &Self::Int) -> Option<String> {
+        self.solver.get_model()?.eval(val, true).map(|v| format!("{}", v))
+    }
+
+    fn eval_float(&self, val: &Self::Float) -> Option<String> {
+        self.solver.get_model()?.eval(val, true).map(|v| format!("{}", v))
+    }
+
+    fn eval_bv(&self, val: &Self::BV) -> Option<String> {
+        self.solver.get_model()?.eval(val, true).map(|v| format!("{}", v))
+    }
 }
+

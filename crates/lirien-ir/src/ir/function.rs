@@ -53,6 +53,8 @@ pub struct Function {
     pub block_count: usize,
     /// Number of arguments accepted by the function.
     pub arg_count: usize,
+    /// Names of the arguments accepted by the function.
+    pub arg_names: Vec<String>,
     /// Expected return type.
     pub return_type: Type,
     /// Optional Z3-compatible refinement predicate for the return value.
@@ -83,6 +85,7 @@ impl Function {
             value_count: 0,
             block_count: 0,
             arg_count: 0,
+            arg_names: Vec::new(),
             return_type: Type::Unknown,
             ret_refinement: None,
             value_types: HashMap::new(),
